@@ -6,8 +6,8 @@ export async function GET(req: Request) {
   const workerId = url.searchParams.get("workerId");
   if (!workerId) return NextResponse.json({ error: "workerId required" }, { status: 400 });
 
-  const { data, error } = await supabaseAdmin
-    .from("work_items")
+  const { data, error } = await supabaseAdmin()
+      .from("work_items")
     .select("status,reward_inr,started_at,completed_at,due_at,sla_minutes")
     .eq("worker_id", workerId);
 

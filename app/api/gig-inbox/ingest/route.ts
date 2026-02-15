@@ -102,7 +102,9 @@ export async function POST(req: Request) {
 
     const parsed = await simpleParser(raw);
     const parsedTo =
-      parsed.to?.value?.map((v) => normalizeEmail(v.address)).filter(Boolean) ?? [];
+      parsed.to?.value
+        ?.map((v: { address?: string | null }) => normalizeEmail(v.address))
+        .filter((value: string | null): value is string => Boolean(value)) ?? [];
     const toEmail =
       extractFirstEmail(body?.to) ||
       parsedTo[0] ||

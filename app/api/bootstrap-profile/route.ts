@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
 
     // Ensure profile exists
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin()
       .from("profiles")
       .upsert(
         {

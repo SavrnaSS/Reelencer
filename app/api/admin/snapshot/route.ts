@@ -7,7 +7,7 @@ export async function GET(req: Request) {
 
   const sb = supabaseAdmin();
 
-  let workersRes = await sb.from("workers").select("id,name,email,active,user_id,timezone").order("id", { ascending: true });
+  let workersRes: any = await sb.from("workers").select("id,name,email,active,user_id,timezone").order("id", { ascending: true });
   if (workersRes.error && workersRes.error.message.includes("column")) {
     workersRes = await sb.from("workers").select("id,name,email,active").order("id", { ascending: true });
   }
@@ -55,7 +55,7 @@ export async function GET(req: Request) {
     }
   }
 
-  let workItemsRes = await sb.from("work_items").select("*").order("createdAt", { ascending: false });
+  let workItemsRes: any = await sb.from("work_items").select("*").order("createdAt", { ascending: false });
   if (workItemsRes.error) {
     workItemsRes = await sb.from("work_items").select("*").order("created_at", { ascending: false });
   }

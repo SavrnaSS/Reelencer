@@ -407,6 +407,7 @@ export default function AdminGigsPage() {
       workload: "",
       payout: "",
       payoutType: "Per post",
+      gigType: "Part-time",
       requirements: "",
       status: "Open",
     });
@@ -771,6 +772,7 @@ export default function AdminGigsPage() {
                         workload: "",
                         payout: "",
                         payoutType: "Per post",
+                        gigType: "Part-time",
                         requirements: "",
                         status: "Open",
                       });

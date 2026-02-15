@@ -18,7 +18,7 @@ async function resolveWorkerUuid(sb: ReturnType<typeof supabaseAdmin>, workerId:
 }
 
 async function fetchRows(sb: ReturnType<typeof supabaseAdmin>, accountId: string) {
-  let res = await sb
+  let res: any = await sb
     .from("work_items")
     .select("id,public_id,due_at,dueAt,status,account_id,accountId")
     .or(`account_id.eq.${accountId},accountId.eq.${accountId}`)

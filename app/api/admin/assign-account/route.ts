@@ -14,15 +14,16 @@ function parseHHMM(s: string, fallback: { hour: number; minute: number }) {
   return { hour, minute };
 }
 
-function normalizeSchedule(input: any) {
+function normalizeSchedule(input: any): { times: string[]; days: number[]; deadlineMin: number; timezone: string } {
   const deadlineMin = Math.max(60, Math.min(720, Number(input?.deadlineMin ?? DEFAULT_DEADLINE_MIN)));
   const times = Array.isArray(input?.times) && input.times.length ? input.times : [input?.morning, input?.evening];
   const normalized = times
     .map((t: any) => String(t || "").trim())
     .filter((t: string) => /^\d{2}:\d{2}$/.test(t));
-  const unique = Array.from(new Set(normalized.length ? normalized : DEFAULT_TIMES));
-  const daysRaw = Array.isArray(input?.days) ? input.days : DEFAULT_DAYS;
-  const days = Array.from(new Set(daysRaw.filter((d: any) => Number.isInteger(d) && d >= 0 && d <= 6))).sort((a, b) => a - b);
+  const unique = Array.from(new Set<string>(normalized.length ? normalized : DEFAULT_TIMES));
+  const daysRaw: unknown[] = Array.isArray(input?.days) ? input.days : DEFAULT_DAYS;
+  const validDays = daysRaw.filter((d): d is number => typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 6);
+  const days = Array.from(new Set<number>(validDays)).sort((a, b) => a - b);
   const timezone = String(input?.timezone || DEFAULT_TIMEZONE);
   return { times: unique, days: days.length ? days : DEFAULT_DAYS, deadlineMin, timezone };
 }

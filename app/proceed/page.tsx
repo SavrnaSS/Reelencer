@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -97,7 +97,7 @@ function readLS<T>(key: string, fallback: T): T {
 const emptyRows = () =>
   new Array(5).fill(null).map(() => ({ handle: "", email: "", password: "", phone: "" }));
 
-export default function ProceedPage() {
+function ProceedPageInner() {
   const searchParams = useSearchParams();
   const gigId = searchParams.get("gigId");
 
@@ -781,5 +781,13 @@ export default function ProceedPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function ProceedPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <ProceedPageInner />
+    </Suspense>
   );
 }

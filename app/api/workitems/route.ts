@@ -17,15 +17,16 @@ function parseHHMM(s: string, fallback: { hour: number; minute: number }) {
   return { hour, minute };
 }
 
-function normalizeSchedule(input: any) {
+function normalizeSchedule(input: any): { times: string[]; days: number[]; deadlineMin: number; timezone: string } {
   const deadlineMin = Math.max(60, Math.min(720, Number(input?.deadlineMin ?? DEFAULT_DEADLINE_MIN)));
   const times = Array.isArray(input?.times) && input.times.length ? input.times : [input?.morning, input?.evening];
   const normalized = times
     .map((t: any) => String(t || "").trim())
     .filter((t: string) => /^\d{2}:\d{2}$/.test(t));
-  const unique = Array.from(new Set(normalized.length ? normalized : DEFAULT_TIMES));
-  const daysRaw = Array.isArray(input?.days) ? input.days : DEFAULT_DAYS;
-  const days = Array.from(new Set(daysRaw.filter((d: any) => Number.isInteger(d) && d >= 0 && d <= 6))).sort((a, b) => a - b);
+  const unique = Array.from(new Set<string>(normalized.length ? normalized : DEFAULT_TIMES));
+  const daysRaw: unknown[] = Array.isArray(input?.days) ? input.days : DEFAULT_DAYS;
+  const validDays = daysRaw.filter((d): d is number => typeof d === "number" && Number.isInteger(d) && d >= 0 && d <= 6);
+  const days = Array.from(new Set<number>(validDays)).sort((a, b) => a - b);
   const timezone = String(input?.timezone || DEFAULT_TIMEZONE);
   return { times: unique, days: days.length ? days : DEFAULT_DAYS, deadlineMin, timezone };
 }
@@ -171,7 +172,7 @@ async function fetchAccountSchedule(sb: ReturnType<typeof supabaseAdmin>, accoun
   const fallbackFull = { times: DEFAULT_TIMES, days: DEFAULT_DAYS, deadlineMin: DEFAULT_DEADLINE_MIN, timezone: DEFAULT_TIMEZONE };
 
   let account: any = null;
-  let res = await sb
+      let res: any = await sb
     .from("accounts")
     .select("id,handle,policyTier,policy_tier,schedule,schedule_days,schedule_timezone,timezone")
     .eq("id", accountId)
@@ -209,7 +210,6 @@ async function fetchAccountSchedule(sb: ReturnType<typeof supabaseAdmin>, accoun
   const timezone = String(account?.schedule_timezone ?? account?.timezone ?? schedule.timezone ?? DEFAULT_TIMEZONE);
   const deadlineRaw =
     schedule.deadlineMin ??
-    schedule.deadlineMinutes ??
     account?.deadline_minutes ??
     account?.deadlineMin ??
     account?.deadlineMinutes ??
@@ -232,7 +232,7 @@ async function fetchAssignmentSchedule(
   const fallbackFull = { times: DEFAULT_TIMES, days: DEFAULT_DAYS, deadlineMin: DEFAULT_DEADLINE_MIN, timezone: DEFAULT_TIMEZONE };
   const workers = workerIds.filter(Boolean);
 
-  let res = await sb
+  let res: any = await sb
     .from("assignments")
     .select(
       "schedule,schedule_morning,schedule_evening,deadline_minutes,scheduleMorning,scheduleEvening,deadlineMin,deadlineMinutes,schedule_days,schedule_timezone,timezone,workerId,worker_id,accountId,account_id"
@@ -455,7 +455,7 @@ export async function GET(req: Request) {
         ]
       : []),
     async () => {
-      let res = await sb
+      let res: any = await sb
         .from("assignments")
         .select("accountId,account_id,workerId,worker_id")
         .or(workerUuidResolved ? `workerId.eq.${workerId},worker_id.eq.${workerUuidResolved}` : `workerId.eq.${workerId}`);
@@ -490,7 +490,7 @@ export async function GET(req: Request) {
     const hasFutureOpen = new Map<string, boolean>();
 
     let existing: any[] = [];
-    let resExisting = await sb
+    let resExisting: any = await sb
       .from("work_items")
       .select("account_id,status,due_at,worker_id")
       .in("account_id", accountIds)
@@ -567,7 +567,7 @@ export async function GET(req: Request) {
   } else {
     const workerIdOr = workerUuidResolved ? `worker_id.eq.${workerUuidResolved}` : "";
     const workerCodeOr = `workerId.eq.${workerId}`;
-    let res = await sb
+    let res: any = await sb
       .from("work_items")
       .select("*")
       .or([workerIdOr, workerCodeOr].filter(Boolean).join(","))

@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     const { data: accountsRaw } = await sb.from("accounts").select("id,handle");
     const handleById = new Map<string, string>((accountsRaw ?? []).map((a: any) => [String(a.id), String(a.handle ?? "")]));
 
-    let itemsRes = await sb
+    let itemsRes: any = await sb
       .from("work_items")
       .select("id,worker_id,account_id,reward_inr,status")
       .eq("worker_id", workerUuid)
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: itemsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
     }
 
-    const approvedItems = (itemsRes.data ?? []).map((it: any) => ({
+    const approvedItems: Array<{ id: string; workerId: string; accountId: string; rewardINR: number }> = (itemsRes.data ?? []).map((it: any) => ({
       id: String(it.id),
       workerId: String(it.worker_id ?? it.workerId ?? ""),
       accountId: String(it.account_id ?? it.accountId ?? ""),

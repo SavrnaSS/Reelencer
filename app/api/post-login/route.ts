@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const user = userRes.user;
 
     // Ensure profile exists
-    const { data: existing, error: readErr } = await supabaseAdmin
+    const { data: existing, error: readErr } = await supabaseAdmin()
       .from("profiles")
       .select("id, role")
       .eq("id", user.id)
@@ -42,7 +42,7 @@ export async function POST(req: Request) {
     }
 
     // Read role again
-    const { data: prof, error: profErr } = await supabaseAdmin
+    const { data: prof, error: profErr } = await supabaseAdmin()
       .from("profiles")
       .select("id, role")
       .eq("id", user.id)

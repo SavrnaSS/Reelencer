@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     return json(500, { ok: false, error: upsertProfile.error?.message || "Failed to create profile" });
   }
 
-  let workersInsert = await sb
+  let workersInsert: any = await sb
     .from("workers")
     .insert({ id: workerId, user_id: authUserId, name, email, active })
     .select("id,name,email,active")

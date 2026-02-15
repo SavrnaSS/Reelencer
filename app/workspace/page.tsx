@@ -120,6 +120,8 @@ type PayoutBatch = {
 
 type WorkerProfile = {
   id: string;
+  userId?: string;
+  workerId?: string;
   name: string;
   level: "L1" | "L2" | "L3";
   assignedAccountIds: string[];

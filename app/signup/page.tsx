@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -9,7 +9,7 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-export default function SignupPage() {
+function SignupPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextParam = searchParams.get("next");
@@ -253,5 +253,13 @@ export default function SignupPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <SignupPageInner />
+    </Suspense>
   );
 }

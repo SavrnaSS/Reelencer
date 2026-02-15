@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -69,7 +69,7 @@ async function resolveWorkerCode(profile: ProfileRow) {
   return match?.workerId ?? match?.id ?? undefined;
 }
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextParam = searchParams.get("next");
@@ -271,5 +271,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <LoginPageInner />
+    </Suspense>
   );
 }
