@@ -6,17 +6,27 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "deploy:worker": "wrangler deploy",
+    "worker:secrets": "wrangler secret put GIG_INGEST_SECRET",
+    "worker:update-url": "node scripts/update-tunnel-url.mjs",
+    "backfill:assigned-emails": "node scripts/backfill-assigned-emails.mjs"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.91.0",
+    "imapflow": "^1.2.8",
+    "mailparser": "^3.9.3",
     "next": "16.1.4",
+    "nodemailer": "^7.0.13",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@types/node": "20.19.30",
+    "@types/react": "19.2.9",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.4",

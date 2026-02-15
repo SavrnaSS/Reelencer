@@ -1,0 +1,7 @@
+name = "gig-inbox-email-worker"
+main = "cloudflare/email-worker.ts"
+compatibility_date = "2026-02-04"
+
+[vars]
+# Set these for local testing via wrangler; production should use secrets.
+GIG_INGEST_URL = "https://hire-collaborative-shipped-maps.trycloudflare.com/api/gig-inbox/ingest"
