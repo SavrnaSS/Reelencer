@@ -2,6 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -87,17 +88,24 @@ function SignupPageInner() {
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl items-start px-4 py-4 sm:px-6 sm:py-8 lg:items-center">
         <div className="grid w-full gap-4 sm:gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-8">
-            <div className="mb-3 flex items-center justify-between lg:hidden">
+          <section className="rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-6 lg:p-8">
+            <div className="mb-5 flex items-center justify-between py-2 lg:hidden">
               <Link className="text-xs font-semibold text-slate-600 hover:text-slate-900" href="/">
-                Back to home
+                Back
               </Link>
               <Link className="text-xs font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" href={loginHref}>
                 Sign in
               </Link>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#0b5cab] text-lg font-black text-white">RG</div>
+            <div className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center">
+              <Image
+                src="/reelencer-logo-transparent-v1.png"
+                alt="Reelencer"
+                width={1160}
+                height={508}
+                className="h-auto w-[120px] sm:w-[145px]"
+                priority
+              />
               <div>
                 <p className="text-xl font-bold text-slate-900">Create your account</p>
                 <p className="text-sm text-slate-600">Set up your profile for verified gigs and managed payouts.</p>
@@ -211,7 +219,7 @@ function SignupPageInner() {
                   </Link>
                 </p>
                 <Link className="font-semibold text-slate-600 hover:text-slate-900" href="/">
-                  Back to home
+                  Back
                 </Link>
               </div>
             </div>
