@@ -234,34 +234,49 @@ export async function POST(req: Request) {
         ? normalizeEmail(parsed.from.value[0].address)
         : extractFirstEmail(String(parsed.headers?.get?.("from") ?? ""));
 
-    const { data: inserted, error: insertError } = assignment?.id
-      ? await sb
-          .from("gig_inbox")
-          .insert({
-            assignment_id: assignment.id,
-            to_email: toEmail,
-            subject,
-            body: storedBody,
-            otp_code: otp,
-            message_id: messageId,
-            created_at: createdAt,
-          })
-          .select("*")
-          .single()
-      : await sb
-          .from("work_email_inbox")
-          .insert({
-            account_id: workEmailAccount.id,
-            to_email: toEmail,
-            from_email: fromEmail || null,
-            subject,
-            body: storedBody,
-            otp_code: otp,
-            message_id: messageId,
-            created_at: createdAt,
-          })
-          .select("*")
-          .single();
+    let inserted: { id?: string } | null = null;
+    let insertError: { message: string } | null = null;
+    if (assignment?.id) {
+      const ins = await sb
+        .from("gig_inbox")
+        .insert({
+          assignment_id: assignment.id,
+          to_email: toEmail,
+          subject,
+          body: storedBody,
+          otp_code: otp,
+          message_id: messageId,
+          created_at: createdAt,
+        })
+        .select("*")
+        .single();
+      inserted = ins.data as { id?: string } | null;
+      insertError = ins.error ? { message: String(ins.error.message || "Insert failed") } : null;
+    } else {
+      const workAccountId = workEmailAccount?.id;
+      if (!workAccountId) {
+        return NextResponse.json(
+          { error: "Work email account not found for recipient" },
+          { status: 404, headers: NO_STORE_HEADERS }
+        );
+      }
+      const ins = await sb
+        .from("work_email_inbox")
+        .insert({
+          account_id: workAccountId,
+          to_email: toEmail,
+          from_email: fromEmail || null,
+          subject,
+          body: storedBody,
+          otp_code: otp,
+          message_id: messageId,
+          created_at: createdAt,
+        })
+        .select("*")
+        .single();
+      inserted = ins.data as { id?: string } | null;
+      insertError = ins.error ? { message: String(ins.error.message || "Insert failed") } : null;
+    }
 
     if (insertError) {
       return NextResponse.json(

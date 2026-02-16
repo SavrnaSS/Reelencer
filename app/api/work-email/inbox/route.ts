@@ -26,39 +26,6 @@ function mapInbox(row: WorkEmailInboxRow) {
   };
 }
 
-async function ensureOwnership(
-  sb: {
-    from: (table: string) => {
-      select: (columns: string) => {
-        eq: (column: string, value: string) => {
-          eq: (column: string, value: string) => {
-            eq: (column: string, value: string) => {
-              neq: (column: string, value: string) => {
-                maybeSingle: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
-              };
-            };
-          };
-        };
-      };
-    };
-  },
-  accountId: string,
-  userId: string,
-  codeId: string
-) {
-  const { data, error } = await sb
-    .from("work_email_accounts")
-    .select("id")
-    .eq("id", accountId)
-    .eq("owner_user_id", userId)
-    .eq("secret_code_id", codeId)
-    .neq("status", "deleted")
-    .maybeSingle();
-  if (error) return { ok: false as const, status: 500, error: error.message };
-  if (!data) return { ok: false as const, status: 404, error: "Work email account not found." };
-  return { ok: true as const };
-}
-
 export async function GET(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
@@ -79,15 +46,24 @@ export async function GET(req: Request) {
   const hours = Math.max(1, Math.min(72, Number(url.searchParams.get("hours") || 24)));
   if (!accountId) return json(400, { ok: false, error: "accountId is required." });
 
-  const ownership = await ensureOwnership(guard.admin, accountId, guard.userId, String(valid.code.id));
-  if (!ownership.ok) {
-    if (tableMissing(ownership.error)) {
+  const { data: owned, error: ownErr } = await guard.admin
+    .from("work_email_accounts")
+    .select("id")
+    .eq("id", accountId)
+    .eq("owner_user_id", guard.userId)
+    .eq("secret_code_id", String(valid.code.id))
+    .neq("status", "deleted")
+    .maybeSingle();
+
+  if (ownErr || !owned) {
+    const ownMsg = ownErr?.message || "Work email account not found.";
+    if (tableMissing(ownMsg)) {
       return json(500, {
         ok: false,
         error: "Work email tables are missing. Run scripts/work-email-creator-schema.sql in Supabase SQL Editor.",
       });
     }
-    return json(ownership.status, { ok: false, error: ownership.error });
+    return json(404, { ok: false, error: "Work email account not found." });
   }
 
   const cutoffIso = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
@@ -130,15 +106,24 @@ export async function PATCH(req: Request) {
   const accountId = String(body?.accountId || "");
   if (!accountId) return json(400, { ok: false, error: "accountId is required." });
 
-  const ownership = await ensureOwnership(guard.admin, accountId, guard.userId, String(valid.code.id));
-  if (!ownership.ok) {
-    if (tableMissing(ownership.error)) {
+  const { data: owned, error: ownErr } = await guard.admin
+    .from("work_email_accounts")
+    .select("id")
+    .eq("id", accountId)
+    .eq("owner_user_id", guard.userId)
+    .eq("secret_code_id", String(valid.code.id))
+    .neq("status", "deleted")
+    .maybeSingle();
+
+  if (ownErr || !owned) {
+    const ownMsg = ownErr?.message || "Work email account not found.";
+    if (tableMissing(ownMsg)) {
       return json(500, {
         ok: false,
         error: "Work email tables are missing. Run scripts/work-email-creator-schema.sql in Supabase SQL Editor.",
       });
     }
-    return json(ownership.status, { ok: false, error: ownership.error });
+    return json(404, { ok: false, error: "Work email account not found." });
   }
 
   const messageIds = Array.isArray(body?.messageIds) ? body.messageIds.map((x: unknown) => String(x)) : [];
