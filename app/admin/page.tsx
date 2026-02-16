@@ -117,6 +117,7 @@ type ApiSnapshot = {
   assignments: Assignment[];
   workItems: WorkItem[];
   upiConfigs?: UpiConfig[];
+  errors?: Array<{ table?: string; message?: string }>;
 };
 
 type UpiConfig = {
@@ -127,6 +128,34 @@ type UpiConfig = {
   verifiedAt?: string;
   payoutSchedule?: string;
   payoutDay?: string;
+};
+
+type WorkEmailSecretCode = {
+  id: string;
+  label?: string | null;
+  code_hint: string;
+  status: "active" | "blocked";
+  use_count: number;
+  max_uses?: number | null;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  created_at: string;
+  blocked_at?: string | null;
+};
+
+type WorkEmailManagedAccount = {
+  id: string;
+  ownerUserId: string;
+  ownerDisplayName?: string;
+  ownerWorkerCode?: string;
+  ownerRole?: string;
+  email: string;
+  username: string;
+  hasSocialPassword: boolean;
+  platform: string;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type AdminPayoutItem = {
@@ -248,6 +277,12 @@ function nowStamp() {
 }
 function nowISO() {
   const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function isoToLocalInput(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 function parseLocalISO(s: string) {
@@ -726,7 +761,7 @@ function AdminReviewList({
 }
 
 /** ===================== Sidebar ===================== */
-type AdminSection = "Overview" | "Workers" | "Assignments" | "Work" | "Reviews" | "Payouts" | "Gigs";
+type AdminSection = "Overview" | "Workers" | "Assignments" | "Work" | "Reviews" | "Payouts" | "Gigs" | "Email Access";
 
 function AdminSidebar({
   active,
@@ -737,8 +772,9 @@ function AdminSidebar({
   onPick: (s: AdminSection) => void;
   onLogout: () => void;
 }) {
-  const Item = ({ id, label, icon }: { id: AdminSection; label: string; icon: string }) => (
+  const renderItem = (id: AdminSection, label: string, icon: string) => (
     <button
+      key={id}
       onClick={() => onPick(id)}
       className={cx(
         "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-sm font-extrabold transition",
@@ -771,13 +807,14 @@ function AdminSidebar({
         </Chip>
       </div>
       <nav className="space-y-1 px-4 py-4">
-        <Item id="Overview" label="Overview" icon="briefcase" />
-        <Item id="Workers" label="Workers" icon="users" />
-        <Item id="Assignments" label="Assignments" icon="briefcase" />
-        <Item id="Work" label="Work items" icon="briefcase" />
-        <Item id="Reviews" label="Reviews" icon="shield" />
-        <Item id="Payouts" label="Payouts" icon="wallet" />
-        <Item id="Gigs" label="Gigs" icon="briefcase" />
+        {renderItem("Overview", "Overview", "briefcase")}
+        {renderItem("Workers", "Workers", "users")}
+        {renderItem("Assignments", "Assignments", "briefcase")}
+        {renderItem("Work", "Work items", "briefcase")}
+        {renderItem("Reviews", "Reviews", "shield")}
+        {renderItem("Payouts", "Payouts", "wallet")}
+        {renderItem("Gigs", "Gigs", "briefcase")}
+        {renderItem("Email Access", "Email access", "shield")}
       </nav>
       <div className="mt-auto px-4 py-4 space-y-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
@@ -1218,6 +1255,25 @@ function AdminConsole() {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [upiConfigs, setUpiConfigs] = useState<UpiConfig[]>([]);
   const [payoutBatchesAdmin, setPayoutBatchesAdmin] = useState<AdminPayoutBatch[]>([]);
+  const [workEmailCodes, setWorkEmailCodes] = useState<WorkEmailSecretCode[]>([]);
+  const [workEmailSchemaMissing, setWorkEmailSchemaMissing] = useState(false);
+  const [newCodeLabel, setNewCodeLabel] = useState("");
+  const [newCodeMaxUses, setNewCodeMaxUses] = useState<number>(0);
+  const [newCodeExpiry, setNewCodeExpiry] = useState<string>("");
+  const [newlyGeneratedCode, setNewlyGeneratedCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [codeQuery, setCodeQuery] = useState("");
+  const [codeFilter, setCodeFilter] = useState<"all" | "active" | "blocked" | "expired" | "exhausted">("all");
+  const [codeSort, setCodeSort] = useState<"newest" | "oldest" | "usage-desc" | "expiry-soon">("newest");
+  const [workEmailAccountsAdmin, setWorkEmailAccountsAdmin] = useState<WorkEmailManagedAccount[]>([]);
+  const [workEmailAccountQuery, setWorkEmailAccountQuery] = useState("");
+  const [revealedSocialPasswords, setRevealedSocialPasswords] = useState<Record<string, string>>({});
+  const [revealingPasswordFor, setRevealingPasswordFor] = useState<string | null>(null);
+  const [renewModalOpen, setRenewModalOpen] = useState(false);
+  const [renewCodeTarget, setRenewCodeTarget] = useState<WorkEmailSecretCode | null>(null);
+  const [renewExpiry, setRenewExpiry] = useState<string>("");
+  const [renewResetUsage, setRenewResetUsage] = useState<boolean>(false);
+  const [renewSaving, setRenewSaving] = useState(false);
 
   // selection / drawers
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
@@ -1295,7 +1351,7 @@ function AdminConsole() {
       // 1) try API snapshot first (kept)
       const snap = await fetchWithAuth<ApiSnapshot>("/api/admin/snapshot", { method: "GET" });
       if (snap) {
-        const snapErrors = (snap as any).errors as Array<{ table?: string; message?: string }> | undefined;
+        const snapErrors = snap.errors;
         const accountsErrored = !!snapErrors?.some((e) => e.table === "accounts");
         if (!accountsErrored) {
           setAccounts(snap.accounts);
@@ -1401,6 +1457,290 @@ function AdminConsole() {
     loadSnapshot();
   };
 
+  const workEmailAdminRequest = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return { ok: false as const, error: "Session expired. Please sign in again." };
+
+    const res = await fetch("/api/admin/work-email-codes", {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const parsed = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false as const,
+        error: String((parsed as { error?: string })?.error || `Request failed (${res.status})`),
+      };
+    }
+    return { ok: true as const, data: parsed as Record<string, unknown> };
+  }, []);
+
+  const loadWorkEmailCodes = useCallback(async () => {
+    const res = await workEmailAdminRequest("GET");
+    if (!res.ok) {
+      setToast({ message: res.error || "Unable to load email access codes.", tone: "danger" });
+      return;
+    }
+    const payload = res.data as { codes?: WorkEmailSecretCode[]; missingSchema?: boolean };
+    setWorkEmailCodes(Array.isArray(payload.codes) ? payload.codes : []);
+    setWorkEmailSchemaMissing(!!payload.missingSchema);
+  }, [workEmailAdminRequest]);
+
+  const loadWorkEmailAccountsAdmin = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) return;
+    const res = await fetch("/api/admin/work-email-accounts", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const parsed = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      accounts?: WorkEmailManagedAccount[];
+      missingSchema?: boolean;
+      error?: string;
+    };
+    if (!res.ok || !parsed.ok) {
+      setToast({ message: parsed.error || "Unable to load created work emails.", tone: "danger" });
+      return;
+    }
+    setWorkEmailAccountsAdmin(Array.isArray(parsed.accounts) ? parsed.accounts : []);
+    setRevealedSocialPasswords({});
+    if (parsed.missingSchema) {
+      setWorkEmailSchemaMissing(true);
+    }
+  }, []);
+
+  const generateWorkEmailCode = useCallback(async () => {
+    const payload = {
+      label: newCodeLabel.trim() || null,
+      maxUses: newCodeMaxUses > 0 ? newCodeMaxUses : null,
+      expiresAt: newCodeExpiry || null,
+    };
+    const res = await workEmailAdminRequest("POST", payload);
+    if (!res.ok) {
+      setToast({ message: res.error || "Unable to generate code.", tone: "danger" });
+      return;
+    }
+    const data = res.data as { code?: string };
+    if (!data.code) {
+      setToast({ message: "No code returned by server.", tone: "danger" });
+      return;
+    }
+    setNewlyGeneratedCode(data.code);
+    setNewCodeLabel("");
+    setNewCodeMaxUses(0);
+    setNewCodeExpiry("");
+    setToast({ message: "Secret code generated.", tone: "success" });
+    loadWorkEmailCodes();
+  }, [newCodeLabel, newCodeMaxUses, newCodeExpiry, loadWorkEmailCodes, workEmailAdminRequest]);
+
+  const updateWorkEmailCode = useCallback(
+    async (
+      id: string,
+      action: "block" | "unblock" | "renew",
+      opts?: { expiresAt?: string | null; resetUsage?: boolean }
+    ): Promise<boolean> => {
+      const res = await workEmailAdminRequest("PATCH", { id, action, ...(opts ?? {}) });
+      if (!res.ok) {
+        setToast({ message: res.error || "Unable to update code.", tone: "danger" });
+        return false;
+      }
+      setToast({
+        message: action === "block" ? "Code blocked." : action === "unblock" ? "Code activated." : "Code renewed.",
+        tone: "success",
+      });
+      loadWorkEmailCodes();
+      return true;
+    },
+    [loadWorkEmailCodes, workEmailAdminRequest]
+  );
+
+  const renewWorkEmailCode = useCallback(
+    (row: WorkEmailSecretCode) => {
+      setRenewCodeTarget(row);
+      setRenewExpiry(isoToLocalInput(row.expires_at));
+      setRenewResetUsage(false);
+      setRenewModalOpen(true);
+    },
+    []
+  );
+
+  const submitRenewCode = useCallback(async () => {
+    if (!renewCodeTarget) return;
+    setRenewSaving(true);
+    try {
+      const ok = await updateWorkEmailCode(renewCodeTarget.id, "renew", {
+        expiresAt: renewExpiry.trim() || null,
+        resetUsage: renewResetUsage,
+      });
+      if (ok) {
+        setRenewModalOpen(false);
+        setRenewCodeTarget(null);
+      }
+    } finally {
+      setRenewSaving(false);
+    }
+  }, [renewCodeTarget, renewExpiry, renewResetUsage, updateWorkEmailCode]);
+
+  const deleteWorkEmailCode = useCallback(
+    async (id: string) => {
+      const confirmed = window.confirm("Delete this secret code permanently?");
+      if (!confirmed) return;
+      const res = await workEmailAdminRequest("DELETE", { id });
+      if (!res.ok) {
+        setToast({ message: res.error || "Unable to delete code.", tone: "danger" });
+        return;
+      }
+      setToast({ message: "Code deleted.", tone: "success" });
+      loadWorkEmailCodes();
+    },
+    [loadWorkEmailCodes, workEmailAdminRequest]
+  );
+
+  useEffect(() => {
+    if (activeSection === "Email Access") {
+      void loadWorkEmailCodes();
+      void loadWorkEmailAccountsAdmin();
+    }
+  }, [activeSection, loadWorkEmailCodes, loadWorkEmailAccountsAdmin]);
+
+  const visibleWorkEmailAccountsAdmin = useMemo(() => {
+    const q = workEmailAccountQuery.trim().toLowerCase();
+    if (!q) return workEmailAccountsAdmin;
+    return workEmailAccountsAdmin.filter((row) => {
+      const owner = `${row.ownerDisplayName || ""} ${row.ownerWorkerCode || ""} ${row.ownerUserId}`.toLowerCase();
+      return (
+        row.email.toLowerCase().includes(q) ||
+        row.username.toLowerCase().includes(q) ||
+        row.platform.toLowerCase().includes(q) ||
+        owner.includes(q)
+      );
+    });
+  }, [workEmailAccountsAdmin, workEmailAccountQuery]);
+
+  const revealSocialPassword = useCallback(async (id: string) => {
+    const existing = revealedSocialPasswords[id];
+    if (existing !== undefined) {
+      setRevealedSocialPasswords((prev) => {
+        const copy = { ...prev };
+        delete copy[id];
+        return copy;
+      });
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) {
+      setToast({ message: "Session expired. Please sign in again.", tone: "danger" });
+      return;
+    }
+    setRevealingPasswordFor(id);
+    try {
+      const res = await fetch("/api/admin/work-email-accounts/reveal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ id }),
+      });
+      const parsed = (await res.json().catch(() => ({}))) as { ok?: boolean; password?: string; error?: string };
+      if (!res.ok || !parsed.ok) {
+        setToast({ message: parsed.error || "Unable to reveal password.", tone: "danger" });
+        return;
+      }
+      setRevealedSocialPasswords((prev) => ({ ...prev, [id]: String(parsed.password ?? "") }));
+    } finally {
+      setRevealingPasswordFor(null);
+    }
+  }, [revealedSocialPasswords]);
+
+  const copySecretCode = useCallback(async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedCode(value);
+      window.setTimeout(() => {
+        setCopiedCode((prev) => (prev === value ? null : prev));
+      }, 1400);
+    } catch {
+      setToast({ message: "Unable to copy code.", tone: "danger" });
+    }
+  }, []);
+
+  const workEmailCodeStats = useMemo(() => {
+    const now = Date.now();
+    let active = 0;
+    let blocked = 0;
+    let expired = 0;
+    let exhausted = 0;
+    for (const row of workEmailCodes) {
+      const isExpired = !!row.expires_at && Date.parse(row.expires_at) <= now;
+      const isExhausted = !!row.max_uses && row.max_uses > 0 && row.use_count >= row.max_uses;
+      if (row.status === "active") active += 1;
+      if (row.status === "blocked") blocked += 1;
+      if (isExpired) expired += 1;
+      if (isExhausted) exhausted += 1;
+    }
+    return { total: workEmailCodes.length, active, blocked, expired, exhausted };
+  }, [workEmailCodes]);
+
+  const visibleWorkEmailCodes = useMemo(() => {
+    const now = Date.now();
+    const query = codeQuery.trim().toLowerCase();
+    const rows = workEmailCodes
+      .map((row) => {
+        const expiresAtMs = row.expires_at ? Date.parse(row.expires_at) : null;
+        const isExpired = typeof expiresAtMs === "number" && Number.isFinite(expiresAtMs) ? expiresAtMs <= now : false;
+        const isExhausted = !!row.max_uses && row.max_uses > 0 && row.use_count >= row.max_uses;
+        const usagePct = row.max_uses && row.max_uses > 0 ? Math.min(100, Math.round((row.use_count / row.max_uses) * 100)) : null;
+        return {
+          ...row,
+          isExpired,
+          isExhausted,
+          usagePct,
+        };
+      })
+      .filter((row) => {
+        if (!query) return true;
+        const label = String(row.label ?? "").toLowerCase();
+        return row.code_hint.toLowerCase().includes(query) || label.includes(query);
+      })
+      .filter((row) => {
+        if (codeFilter === "all") return true;
+        if (codeFilter === "active") return row.status === "active" && !row.isExpired && !row.isExhausted;
+        if (codeFilter === "blocked") return row.status === "blocked";
+        if (codeFilter === "expired") return row.isExpired;
+        if (codeFilter === "exhausted") return row.isExhausted;
+        return true;
+      });
+
+    rows.sort((a, b) => {
+      if (codeSort === "oldest") return Date.parse(a.created_at) - Date.parse(b.created_at);
+      if (codeSort === "usage-desc") {
+        const aScore = a.usagePct ?? a.use_count;
+        const bScore = b.usagePct ?? b.use_count;
+        return bScore - aScore;
+      }
+      if (codeSort === "expiry-soon") {
+        const aExp = a.expires_at ? Date.parse(a.expires_at) : Number.MAX_SAFE_INTEGER;
+        const bExp = b.expires_at ? Date.parse(b.expires_at) : Number.MAX_SAFE_INTEGER;
+        return aExp - bExp;
+      }
+      return Date.parse(b.created_at) - Date.parse(a.created_at);
+    });
+    return rows;
+  }, [workEmailCodes, codeQuery, codeFilter, codeSort]);
+
   const workerById = useMemo(() => {
     const m = new Map(workers.map((w) => [w.id, w]));
     return (id: string) => m.get(id);
@@ -1446,9 +1786,11 @@ function AdminConsole() {
     [workItems, selectedWorkId]
   );
 
-  const dueMeta = useMemo(() => {
+  const dueMeta = useMemo<(
+    id: string
+  ) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined>(() => {
     if (!mounted) {
-      return (_id: string) => undefined as any;
+      return () => undefined;
     }
     const now = new Date();
     const map = new Map<string, { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean }>();
@@ -2724,6 +3066,279 @@ function AdminConsole() {
                       </table>
                     </div>
                   </Card>
+
+                  <Card title="Created work emails" subtitle="Stored credentials submitted by users before email generation.">
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+                      <input
+                        value={workEmailAccountQuery}
+                        onChange={(e) => setWorkEmailAccountQuery(e.target.value)}
+                        placeholder="Search by email, username, platform, or owner..."
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      />
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                        Passwords are encrypted at rest and revealed on demand.
+                      </div>
+                      <Button variant="secondary" onClick={loadWorkEmailAccountsAdmin}>
+                        Refresh
+                      </Button>
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="min-w-[1040px] w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
+                          <tr>
+                            <th className="px-3 py-3">Email</th>
+                            <th className="px-3 py-3">Social username</th>
+                            <th className="px-3 py-3">Social password</th>
+                            <th className="px-3 py-3">Platform</th>
+                            <th className="px-3 py-3">Owner</th>
+                            <th className="px-3 py-3">Created</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {visibleWorkEmailAccountsAdmin.map((row) => (
+                            <tr key={row.id} className="bg-white">
+                              <td className="px-3 py-3 font-extrabold text-slate-900">{row.email}</td>
+                              <td className="px-3 py-3 text-slate-700">@{row.username}</td>
+                              <td className="px-3 py-3 text-slate-700">
+                                {!row.hasSocialPassword ? (
+                                  "—"
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-xs">
+                                      {revealedSocialPasswords[row.id] !== undefined ? revealedSocialPasswords[row.id] || "(empty)" : "••••••••"}
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      onClick={() => revealSocialPassword(row.id)}
+                                      disabled={revealingPasswordFor === row.id}
+                                    >
+                                      {revealedSocialPasswords[row.id] !== undefined
+                                        ? "Hide"
+                                        : revealingPasswordFor === row.id
+                                        ? "Revealing..."
+                                        : "Reveal"}
+                                    </Button>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-slate-700">{row.platform || "—"}</td>
+                              <td className="px-3 py-3 text-slate-600">
+                                {row.ownerDisplayName || row.ownerWorkerCode || row.ownerUserId}
+                              </td>
+                              <td className="px-3 py-3 text-slate-600">{row.createdAt ? row.createdAt.slice(0, 16).replace("T", " ") : "—"}</td>
+                            </tr>
+                          ))}
+                          {visibleWorkEmailAccountsAdmin.length === 0 && (
+                            <tr>
+                              <td colSpan={6} className="px-3 py-6 text-sm text-slate-600">
+                                No created work emails found.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* Email Access */}
+            {activeSection === "Email Access" && (
+              <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-12 lg:col-span-5 space-y-6">
+                  <Card title="Generate secret code" subtitle="Only admin can create code access for Work Email Creator.">
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-xs font-extrabold text-slate-600">Label</div>
+                        <input
+                          value={newCodeLabel}
+                          onChange={(e) => setNewCodeLabel(e.target.value)}
+                          placeholder="Team A, Batch 3, Night shift..."
+                          className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                        />
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-extrabold text-slate-600">Max uses (0 = unlimited)</div>
+                          <input
+                            value={newCodeMaxUses}
+                            onChange={(e) => setNewCodeMaxUses(Number(e.target.value || 0))}
+                            type="number"
+                            min={0}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <div className="text-xs font-extrabold text-slate-600">Expires at (optional)</div>
+                          <input
+                            value={newCodeExpiry}
+                            onChange={(e) => setNewCodeExpiry(e.target.value)}
+                            type="datetime-local"
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                          />
+                        </div>
+                      </div>
+                      <Button variant="primary" onClick={generateWorkEmailCode}>
+                        <Icon name="plus" />
+                        Generate code
+                      </Button>
+                      {newlyGeneratedCode && (
+                        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                          <div className="text-xs text-emerald-700">New code (copy now):</div>
+                          <div className="mt-1 text-sm font-extrabold text-emerald-900">{newlyGeneratedCode}</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button variant="secondary" onClick={() => copySecretCode(newlyGeneratedCode)}>
+                              {copiedCode === newlyGeneratedCode ? "Copied" : "Copy code"}
+                            </Button>
+                            <Button variant="ghost" onClick={() => setNewlyGeneratedCode(null)}>
+                              Hide
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </Card>
+                </div>
+                <div className="col-span-12 lg:col-span-7 space-y-6">
+                  <Card title="Manage secret codes" subtitle="Block, activate, or delete access codes.">
+                    <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Total</div>
+                        <div className="mt-1 text-lg font-black text-slate-900">{workEmailCodeStats.total}</div>
+                      </div>
+                      <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-emerald-700">Active</div>
+                        <div className="mt-1 text-lg font-black text-emerald-900">{workEmailCodeStats.active}</div>
+                      </div>
+                      <div className="rounded-md border border-rose-200 bg-rose-50 p-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700">Blocked</div>
+                        <div className="mt-1 text-lg font-black text-rose-900">{workEmailCodeStats.blocked}</div>
+                      </div>
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700">Expired</div>
+                        <div className="mt-1 text-lg font-black text-amber-900">{workEmailCodeStats.expired}</div>
+                      </div>
+                      <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
+                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-blue-700">Exhausted</div>
+                        <div className="mt-1 text-lg font-black text-blue-900">{workEmailCodeStats.exhausted}</div>
+                      </div>
+                    </div>
+
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[1.4fr_0.9fr_0.9fr_auto]">
+                      <input
+                        value={codeQuery}
+                        onChange={(e) => setCodeQuery(e.target.value)}
+                        placeholder="Search by code hint or label..."
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      />
+                      <select
+                        value={codeFilter}
+                        onChange={(e) => setCodeFilter(e.target.value as "all" | "active" | "blocked" | "expired" | "exhausted")}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      >
+                        <option value="all">All statuses</option>
+                        <option value="active">Active only</option>
+                        <option value="blocked">Blocked only</option>
+                        <option value="expired">Expired only</option>
+                        <option value="exhausted">Exhausted only</option>
+                      </select>
+                      <select
+                        value={codeSort}
+                        onChange={(e) => setCodeSort(e.target.value as "newest" | "oldest" | "usage-desc" | "expiry-soon")}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      >
+                        <option value="newest">Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="usage-desc">Highest usage</option>
+                        <option value="expiry-soon">Expiry soon</option>
+                      </select>
+                      <Button variant="secondary" onClick={loadWorkEmailCodes}>
+                        Refresh
+                      </Button>
+                    </div>
+
+                    {workEmailSchemaMissing && (
+                      <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        Schema missing. Run <code>scripts/work-email-creator-schema.sql</code> in Supabase SQL Editor.
+                      </div>
+                    )}
+                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="min-w-[1160px] w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
+                          <tr>
+                            <th className="px-3 py-3">Code hint</th>
+                            <th className="px-3 py-3">Label</th>
+                            <th className="px-3 py-3">Status</th>
+                            <th className="px-3 py-3">Usage</th>
+                            <th className="px-3 py-3">Expires</th>
+                            <th className="px-3 py-3">Created</th>
+                            <th className="px-3 py-3">Last used</th>
+                            <th className="px-3 py-3">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200">
+                          {visibleWorkEmailCodes.map((row) => (
+                            <tr key={row.id} className="bg-white">
+                              <td className="px-3 py-3 font-extrabold text-slate-900">{row.code_hint}</td>
+                              <td className="px-3 py-3 text-slate-700">{row.label || "—"}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Chip tone={row.status === "active" ? "success" : "danger"}>{row.status}</Chip>
+                                  {row.isExpired && <Chip tone="warn">expired</Chip>}
+                                  {row.isExhausted && <Chip tone="info">limit reached</Chip>}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-slate-700">
+                                <div className="min-w-[130px]">
+                                  <div>
+                                    {row.use_count}
+                                    {row.max_uses ? ` / ${row.max_uses}` : " / unlimited"}
+                                  </div>
+                                  {typeof row.usagePct === "number" && (
+                                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                                      <div className="h-full rounded-full bg-[#0b5cab]" style={{ width: `${row.usagePct}%` }} />
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-3 text-slate-600">{row.expires_at ? row.expires_at.slice(0, 16).replace("T", " ") : "—"}</td>
+                              <td className="px-3 py-3 text-slate-600">{row.created_at ? row.created_at.slice(0, 16).replace("T", " ") : "—"}</td>
+                              <td className="px-3 py-3 text-slate-600">{row.last_used_at ? row.last_used_at.slice(0, 16).replace("T", " ") : "—"}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex flex-wrap gap-2">
+                                  {(row.isExpired || row.isExhausted) && (
+                                    <Button variant="secondary" onClick={() => renewWorkEmailCode(row)}>
+                                      Renew
+                                    </Button>
+                                  )}
+                                  {row.status === "active" ? (
+                                    <Button variant="secondary" onClick={() => updateWorkEmailCode(row.id, "block")}>
+                                      Block
+                                    </Button>
+                                  ) : (
+                                    <Button variant="secondary" onClick={() => updateWorkEmailCode(row.id, "unblock")}>
+                                      Activate
+                                    </Button>
+                                  )}
+                                  <Button variant="ghost" onClick={() => deleteWorkEmailCode(row.id)}>
+                                    Delete
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                          {visibleWorkEmailCodes.length === 0 && (
+                            <tr>
+                              <td colSpan={8} className="px-3 py-6 text-sm text-slate-600">
+                                No codes match this filter.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
                 </div>
               </div>
             )}
@@ -2843,6 +3458,63 @@ function AdminConsole() {
                 className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
               />
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Renew Code modal */}
+      {renewModalOpen && renewCodeTarget && (
+        <Modal
+          title="Renew secret code"
+          subtitle={`Code ${renewCodeTarget.code_hint} • ${renewCodeTarget.label || "Unlabeled"}`}
+          onClose={() => {
+            if (renewSaving) return;
+            setRenewModalOpen(false);
+            setRenewCodeTarget(null);
+          }}
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (renewSaving) return;
+                  setRenewModalOpen(false);
+                  setRenewCodeTarget(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={submitRenewCode} disabled={renewSaving}>
+                <Icon name="check" />
+                {renewSaving ? "Renewing..." : "Renew code"}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              Usage: {renewCodeTarget.use_count}
+              {renewCodeTarget.max_uses ? ` / ${renewCodeTarget.max_uses}` : " / unlimited"}
+            </div>
+            <div>
+              <div className="text-sm font-extrabold text-slate-800">New expiry (optional)</div>
+              <input
+                type="datetime-local"
+                value={renewExpiry}
+                onChange={(e) => setRenewExpiry(e.target.value)}
+                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
+              />
+              <div className="mt-2 text-xs text-slate-500">Leave empty for no expiry.</div>
+            </div>
+            <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800">
+              <input
+                type="checkbox"
+                checked={renewResetUsage}
+                onChange={() => setRenewResetUsage((v) => !v)}
+                className="h-4 w-4 accent-[#0078d4]"
+              />
+              Reset usage count to zero
+            </label>
           </div>
         </Modal>
       )}

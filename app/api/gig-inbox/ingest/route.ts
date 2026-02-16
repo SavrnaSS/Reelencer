@@ -105,10 +105,11 @@ export async function POST(req: Request) {
       parsed.to?.value
         ?.map((v: { address?: string | null }) => normalizeEmail(v.address))
         .filter((value: string | null): value is string => Boolean(value)) ?? [];
+    const deliveredToHeader = parsed.headers?.get?.("delivered-to");
     const toEmail =
       extractFirstEmail(body?.to) ||
       parsedTo[0] ||
-      normalizeEmail(parsed.headers?.get?.("delivered-to") as any);
+      normalizeEmail(typeof deliveredToHeader === "string" ? deliveredToHeader : "");
 
     if (!toEmail) {
       return NextResponse.json(
@@ -118,7 +119,8 @@ export async function POST(req: Request) {
     }
 
     const sb = supabaseAdmin();
-    let assignment: any = null;
+    let assignment: { id: string } | null = null;
+    let workEmailAccount: { id: string } | null = null;
     const { data: assignmentByList, error: listError } = await sb
       .from("gig_assignments")
       .select("id, assigned_email, assigned_emails, subject_filter")
@@ -148,8 +150,31 @@ export async function POST(req: Request) {
     }
 
     if (!assignment?.id) {
+      const { data: workEmailMatch, error: workEmailErr } = await sb
+        .from("work_email_accounts")
+        .select("id,email,status")
+        .ilike("email", toEmail)
+        .neq("status", "deleted")
+        .maybeSingle();
+
+      if (workEmailErr) {
+        const msg = String(workEmailErr.message || "").toLowerCase();
+        const missingSchema =
+          msg.includes("relation") || msg.includes("does not exist") || msg.includes("undefined table");
+        if (!missingSchema) {
+          return NextResponse.json(
+            { error: workEmailErr.message },
+            { status: 500, headers: NO_STORE_HEADERS }
+          );
+        }
+      } else {
+        workEmailAccount = workEmailMatch;
+      }
+    }
+
+    if (!assignment?.id && !workEmailAccount?.id) {
       return NextResponse.json(
-        { error: "Assignment not found for recipient" },
+        { error: "No recipient mapping found for inbound email" },
         { status: 404, headers: NO_STORE_HEADERS }
       );
     }
@@ -170,18 +195,33 @@ export async function POST(req: Request) {
       normalizeText(parsed.messageId) ||
       createHash("sha1").update(raw).digest("hex");
 
-    const { data: existing } = await sb
-      .from("gig_inbox")
-      .select("id")
-      .eq("assignment_id", assignment.id)
-      .eq("message_id", messageId)
-      .maybeSingle();
+    if (assignment?.id) {
+      const { data: existing } = await sb
+        .from("gig_inbox")
+        .select("id")
+        .eq("assignment_id", assignment.id)
+        .eq("message_id", messageId)
+        .maybeSingle();
 
-    if (existing?.id) {
-      return NextResponse.json(
-        { ok: true, deduped: true },
-        { headers: NO_STORE_HEADERS }
-      );
+      if (existing?.id) {
+        return NextResponse.json(
+          { ok: true, deduped: true },
+          { headers: NO_STORE_HEADERS }
+        );
+      }
+    } else if (workEmailAccount?.id) {
+      const { data: existing } = await sb
+        .from("work_email_inbox")
+        .select("id")
+        .eq("account_id", workEmailAccount.id)
+        .eq("message_id", messageId)
+        .maybeSingle();
+      if (existing?.id) {
+        return NextResponse.json(
+          { ok: true, deduped: true },
+          { headers: NO_STORE_HEADERS }
+        );
+      }
     }
 
     const createdAt =
@@ -189,19 +229,39 @@ export async function POST(req: Request) {
     const otp = extractOtp(bodyFull);
     const storedBody = bodyFull ? clampText(bodyFull, 20000) : "(No message body)";
 
-    const { data: inserted, error: insertError } = await sb
-      .from("gig_inbox")
-      .insert({
-        assignment_id: assignment.id,
-        to_email: toEmail,
-        subject,
-        body: storedBody,
-        otp_code: otp,
-        message_id: messageId,
-        created_at: createdAt,
-      })
-      .select("*")
-      .single();
+    const fromEmail =
+      parsed.from?.value?.[0]?.address
+        ? normalizeEmail(parsed.from.value[0].address)
+        : extractFirstEmail(String(parsed.headers?.get?.("from") ?? ""));
+
+    const { data: inserted, error: insertError } = assignment?.id
+      ? await sb
+          .from("gig_inbox")
+          .insert({
+            assignment_id: assignment.id,
+            to_email: toEmail,
+            subject,
+            body: storedBody,
+            otp_code: otp,
+            message_id: messageId,
+            created_at: createdAt,
+          })
+          .select("*")
+          .single()
+      : await sb
+          .from("work_email_inbox")
+          .insert({
+            account_id: workEmailAccount.id,
+            to_email: toEmail,
+            from_email: fromEmail || null,
+            subject,
+            body: storedBody,
+            otp_code: otp,
+            message_id: messageId,
+            created_at: createdAt,
+          })
+          .select("*")
+          .single();
 
     if (insertError) {
       return NextResponse.json(
@@ -214,9 +274,10 @@ export async function POST(req: Request) {
       { ok: true, insertedId: inserted?.id },
       { headers: NO_STORE_HEADERS }
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Ingest failed";
     return NextResponse.json(
-      { error: e?.message || "Ingest failed" },
+      { error: message },
       { status: 500, headers: NO_STORE_HEADERS }
     );
   }

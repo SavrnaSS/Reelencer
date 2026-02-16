@@ -441,6 +441,11 @@ function ProceedPageInner() {
           <div className="mt-2 text-sm text-slate-600">
             Use these five emails to create the five Twitter accounts. Each email must be used once.
           </div>
+          <div className="mt-2 text-xs">
+            <Link href="/work-email-creator" className="font-semibold text-[#0b5cab] hover:text-[#0f6bc7]">
+              Need custom emails? Open Work Email Creator (secret code required)
+            </Link>
+          </div>
 
           <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
             {assignment?.assignedEmails?.length ? (

@@ -25,6 +25,12 @@ function SignupPageInner() {
   const [info, setInfo] = useState<string | null>(null);
 
   const emailNorm = useMemo(() => email.trim().toLowerCase(), [email]);
+  const emailRedirectTo = useMemo(() => {
+    const envSiteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/+$/, "");
+    const origin = typeof window !== "undefined" ? window.location.origin : null;
+    const base = envSiteUrl || origin;
+    return base ? `${base}/login` : undefined;
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -61,7 +67,10 @@ function SignupPageInner() {
       const { data, error } = await supabase.auth.signUp({
         email: emailNorm,
         password,
-        options: { data: { name } },
+        options: {
+          data: { name },
+          emailRedirectTo,
+        },
       });
       if (error) {
         setErr(error.message || "Unable to create account right now.");
