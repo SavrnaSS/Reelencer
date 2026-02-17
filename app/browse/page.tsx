@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseClient";
 
 type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
@@ -185,6 +186,7 @@ export default function BrowsePage() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [displayName, setDisplayName] = useState<string>("User");
   const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">("none");
   const isGuest = !role;
@@ -195,6 +197,17 @@ export default function BrowsePage() {
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
   const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Part-time" | "Full-time">("All");
   const [sortBy, setSortBy] = useState<"recent" | "payout-high" | "payout-low">("recent");
+  const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
+
+  const computeMenuAnchor = React.useCallback(() => {
+    const el = menuButtonRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const popupWidth = 320;
+    const margin = 12;
+    const left = Math.max(margin, Math.min(rect.right - popupWidth, window.innerWidth - popupWidth - margin));
+    setMenuAnchor({ top: rect.bottom + 8, left });
+  }, []);
 
   useEffect(() => {
     const session = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -244,6 +257,18 @@ export default function BrowsePage() {
   }, [menuOpen]);
 
   useEffect(() => {
+    if (!menuOpen) return;
+    computeMenuAnchor();
+    const onLayout = () => computeMenuAnchor();
+    window.addEventListener("resize", onLayout);
+    window.addEventListener("scroll", onLayout, true);
+    return () => {
+      window.removeEventListener("resize", onLayout);
+      window.removeEventListener("scroll", onLayout, true);
+    };
+  }, [menuOpen, computeMenuAnchor]);
+
+  useEffect(() => {
     if (!workerId) return;
     let timer: number | null = null;
     const tick = () => {
@@ -265,7 +290,7 @@ export default function BrowsePage() {
     if (!menuOpen) return;
     const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-profile-menu]")) {
+      if (!target.closest("[data-profile-menu]") && !target.closest("[data-profile-menu-panel]")) {
         closeMenu();
       }
     };
@@ -466,9 +491,79 @@ export default function BrowsePage() {
     setGigTypeFilter("All");
   };
 
+  const renderProfileMenu = (desktop = false) => (
+    <>
+      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Navigation</div>
+        <button
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-sm hover:border-slate-300 cursor-pointer"
+          onClick={closeMenu}
+          aria-label="Close menu"
+        >
+          ✕
+        </button>
+      </div>
+      <div className={desktop ? "px-4 pb-4 pt-4" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0b5cab] text-lg font-bold text-white">
+              {displayName.slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <div className="text-base font-semibold text-slate-900">{displayName}</div>
+              <div className="text-xs text-slate-500">{role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}</div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {isGuest ? (
+              <>
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">Sign in required</span>
+                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-blue-700">Guest access</span>
+              </>
+            ) : (
+              <>
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">KYC: {kycStatus}</span>
+                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-700">Trusted</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {isGuest ? (
+          <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-4">
+            <div className="text-sm font-semibold text-slate-900">Sign in to unlock the workspace</div>
+            <p className="mt-1 text-xs text-slate-600">Access assignments, payouts, and verified gigs once you’re signed in.</p>
+            <div className="mt-3 grid gap-2">
+              <Link className="rounded-xl bg-[#0b5cab] px-3 py-3 text-center text-xs font-semibold text-white hover:bg-[#0f6bc7] cursor-pointer" href="/login" onClick={closeMenu}>Sign in</Link>
+              <Link className="rounded-xl border border-blue-200 bg-white px-3 py-3 text-center text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 cursor-pointer" href="/signup" onClick={closeMenu}>Create account</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/workspace" onClick={closeMenu}>Workspace</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+            </div>
+            <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Quick links</div>
+            <div className="mt-2 space-y-1">
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-slate-400">›</span></Link>
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/workspace" onClick={closeMenu}>Go to workspace<span className="text-slate-400">›</span></Link>
+              {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-slate-400">›</span></Link>}
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/workspace" onClick={closeMenu}>My assignments<span className="text-slate-400">›</span></Link>
+            </div>
+            <div className="mt-4 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2">
+              <button className="w-full text-left text-sm font-semibold text-rose-600 cursor-pointer" onClick={signOut}>Sign out</button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 via-[#f5faff] to-slate-50 text-slate-900">
-      <div className="border-b border-slate-200 bg-white/90 backdrop-blur">
+      <div className="relative z-0 border-b border-slate-200 bg-white">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-5 sm:py-5">
           <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
             <Link href="/" className="shrink-0" aria-label="Go to home">
@@ -491,6 +586,7 @@ export default function BrowsePage() {
           <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="relative" data-profile-menu>
               <button
+                ref={menuButtonRef}
                 className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer"
                 onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
               >
@@ -499,162 +595,32 @@ export default function BrowsePage() {
                 </span>
                 <span className="text-slate-400">▾</span>
               </button>
-              {menuOpen && (
-                <div className="fixed inset-0 z-[120] flex items-stretch justify-end bg-slate-900/45 sm:absolute sm:inset-auto sm:top-full sm:right-0 sm:z-[90] sm:items-start sm:justify-end sm:bg-transparent">
-                  <div
-                    className={`relative z-[130] flex h-full w-[88vw] max-w-[420px] flex-col rounded-none border-l border-slate-200 bg-white shadow-2xl transition-all duration-200 ease-out sm:h-auto sm:w-80 sm:rounded-2xl sm:border sm:animate-none ${
-                      menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Navigation</div>
-                      <button
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-sm hover:border-slate-300 cursor-pointer"
-                        onClick={closeMenu}
-                        aria-label="Close menu"
+              {menuOpen &&
+                typeof document !== "undefined" &&
+                createPortal(
+                  <>
+                    <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/45 md:hidden">
+                      <div
+                        data-profile-menu-panel
+                        className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-slate-200 bg-white shadow-2xl transition-all duration-200 ease-out ${
+                          menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
+                        }`}
                       >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-auto px-4 pb-4 pt-4">
-                      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-4 shadow-sm">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0b5cab] text-lg font-bold text-white">
-                            {displayName.slice(0, 1).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="text-base font-semibold text-slate-900">{displayName}</div>
-                            <div className="text-xs text-slate-500">
-                              {role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {isGuest ? (
-                            <>
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                                Sign in required
-                              </span>
-                              <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-blue-700">
-                                Guest access
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                                KYC: {kycStatus}
-                              </span>
-                              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-700">
-                                Trusted
-                              </span>
-                            </>
-                          )}
-                        </div>
+                        {renderProfileMenu(false)}
                       </div>
-
-                      {isGuest ? (
-                        <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-4">
-                          <div className="text-sm font-semibold text-slate-900">Sign in to unlock the workspace</div>
-                          <p className="mt-1 text-xs text-slate-600">
-                            Access assignments, payouts, and verified gigs once you’re signed in.
-                          </p>
-                          <div className="mt-3 grid gap-2">
-                            <Link
-                              className="rounded-xl bg-[#0b5cab] px-3 py-3 text-center text-xs font-semibold text-white hover:bg-[#0f6bc7] cursor-pointer"
-                              href="/login"
-                              onClick={closeMenu}
-                            >
-                              Sign in
-                            </Link>
-                            <Link
-                              className="rounded-xl border border-blue-200 bg-white px-3 py-3 text-center text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 cursor-pointer"
-                              href="/signup"
-                              onClick={closeMenu}
-                            >
-                              Create account
-                            </Link>
-                            <Link
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer"
-                              href="/browse"
-                              onClick={closeMenu}
-                            >
-                              Browse gigs
-                            </Link>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="mt-4 grid grid-cols-2 gap-2">
-                            <Link
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer"
-                              href="/workspace"
-                              onClick={closeMenu}
-                            >
-                              Workspace
-                            </Link>
-                            <Link
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer"
-                              href="/browse"
-                              onClick={closeMenu}
-                            >
-                              Browse gigs
-                            </Link>
-                          </div>
-
-                          <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                            Quick links
-                          </div>
-                          <div className="mt-2 space-y-1">
-                            <Link
-                              className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              href="/"
-                              onClick={closeMenu}
-                            >
-                              Home
-                              <span className="text-slate-400">›</span>
-                            </Link>
-                            <Link
-                              className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              href="/workspace"
-                              onClick={closeMenu}
-                            >
-                              Go to workspace
-                              <span className="text-slate-400">›</span>
-                            </Link>
-                            {role === "Admin" && (
-                              <Link
-                                className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                href="/addgigs"
-                                onClick={closeMenu}
-                              >
-                                Admin console
-                                <span className="text-slate-400">›</span>
-                              </Link>
-                            )}
-                            <Link
-                              className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                              href="/workspace"
-                              onClick={closeMenu}
-                            >
-                              My assignments
-                              <span className="text-slate-400">›</span>
-                            </Link>
-                          </div>
-
-                          <div className="mt-4 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2">
-                            <button
-                              className="w-full text-left text-sm font-semibold text-rose-600 cursor-pointer"
-                              onClick={signOut}
-                            >
-                              Sign out
-                            </button>
-                          </div>
-                        </>
-                      )}
                     </div>
-                  </div>
-                </div>
-              )}
+                    <div
+                      data-profile-menu-panel
+                      className={`fixed z-[9991] hidden w-80 rounded-2xl border border-slate-200 bg-white shadow-2xl md:block ${
+                        menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
+                      }`}
+                      style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left } : { top: 80, right: 24 }}
+                    >
+                      {renderProfileMenu(true)}
+                    </div>
+                  </>,
+                  document.body
+                )}
             </div>
           </div>
         </div>
@@ -794,7 +760,7 @@ export default function BrowsePage() {
           </aside>
 
           <section className="space-y-4">
-            <div className="sticky top-2 z-20 -mx-1 rounded-2xl border border-slate-200 bg-white/90 px-3 py-3 text-sm text-slate-600 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/75 sm:mx-0 sm:px-4">
+            <div className="sticky top-2 z-10 -mx-1 rounded-2xl border border-slate-200 bg-white/90 px-3 py-3 text-sm text-slate-600 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/75 sm:mx-0 sm:px-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                 <span className="font-semibold text-slate-900">Available gigs</span>
