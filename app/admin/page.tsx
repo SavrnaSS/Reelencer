@@ -1274,6 +1274,10 @@ function AdminConsole() {
   const [renewExpiry, setRenewExpiry] = useState<string>("");
   const [renewResetUsage, setRenewResetUsage] = useState<boolean>(false);
   const [renewSaving, setRenewSaving] = useState(false);
+  const [deleteWorkerModalOpen, setDeleteWorkerModalOpen] = useState(false);
+  const [deleteWorkerTarget, setDeleteWorkerTarget] = useState<Worker | null>(null);
+  const [deleteWorkerConfirmText, setDeleteWorkerConfirmText] = useState("");
+  const [deleteWorkerSaving, setDeleteWorkerSaving] = useState(false);
 
   // selection / drawers
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
@@ -1605,6 +1609,40 @@ function AdminConsole() {
       loadWorkEmailCodes();
     },
     [loadWorkEmailCodes, workEmailAdminRequest]
+  );
+
+  const openDeleteWorkerModal = useCallback((worker: Worker) => {
+    setDeleteWorkerTarget(worker);
+    setDeleteWorkerConfirmText("");
+    setDeleteWorkerModalOpen(true);
+  }, []);
+
+  const deleteWorker = useCallback(
+    async (worker: Worker) => {
+      setDeleteWorkerSaving(true);
+      const res = await fetchWithAuth<{ ok: boolean; error?: string }>("/api/admin/delete-worker", {
+        method: "POST",
+        body: JSON.stringify({ workerId: worker.id }),
+      });
+      if (!res?.ok) {
+        setToast({ message: res?.error || "Unable to delete worker.", tone: "danger" });
+        setDeleteWorkerSaving(false);
+        return;
+      }
+
+      setWorkers((prev) => prev.filter((w) => w.id !== worker.id && w.userId !== worker.userId));
+      setAssignments((prev) => prev.filter((a) => a.workerId !== worker.id && a.workerId !== (worker.userId ?? "")));
+      setWorkItems((prev) => prev.filter((w) => w.workerId !== worker.id && w.workerId !== (worker.userId ?? "")));
+      setUpiConfigs((prev) => prev.filter((u) => u.workerId !== worker.id && u.workerId !== (worker.userId ?? "")));
+      setSelectedWorkerId((prev) => (prev === worker.id ? null : prev));
+      setToast({ message: "Worker deleted.", tone: "success" });
+      setDeleteWorkerModalOpen(false);
+      setDeleteWorkerTarget(null);
+      setDeleteWorkerConfirmText("");
+      setDeleteWorkerSaving(false);
+      loadSnapshot();
+    },
+    [loadSnapshot]
   );
 
   useEffect(() => {
@@ -2774,6 +2812,11 @@ function AdminConsole() {
                             </div>
                             <Chip tone="info">{accountsForWorker(selectedWorker.id).length} assigned accounts</Chip>
                           </div>
+                          <div className="mt-3">
+                            <Button variant="danger" onClick={() => openDeleteWorkerModal(selectedWorker)}>
+                              Delete this worker
+                            </Button>
+                          </div>
                         </div>
 
                         <div className="grid gap-3 md:grid-cols-2">
@@ -3515,6 +3558,60 @@ function AdminConsole() {
               />
               Reset usage count to zero
             </label>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Worker modal */}
+      {deleteWorkerModalOpen && deleteWorkerTarget && (
+        <Modal
+          title="Delete worker permanently"
+          subtitle={`Type "${deleteWorkerTarget.id}" to confirm`}
+          onClose={() => {
+            if (deleteWorkerSaving) return;
+            setDeleteWorkerModalOpen(false);
+            setDeleteWorkerTarget(null);
+            setDeleteWorkerConfirmText("");
+          }}
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (deleteWorkerSaving) return;
+                  setDeleteWorkerModalOpen(false);
+                  setDeleteWorkerTarget(null);
+                  setDeleteWorkerConfirmText("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => void deleteWorker(deleteWorkerTarget)}
+                disabled={deleteWorkerSaving || deleteWorkerConfirmText.trim() !== deleteWorkerTarget.id}
+              >
+                {deleteWorkerSaving ? "Deleting..." : "Delete worker"}
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4">
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              This action removes worker login access and related worker records.
+            </div>
+            <div className="text-sm text-slate-700">
+              Worker: <span className="font-extrabold text-slate-900">{deleteWorkerTarget.name}</span> ({deleteWorkerTarget.id})
+            </div>
+            <div>
+              <div className="text-sm font-extrabold text-slate-800">Confirm worker ID</div>
+              <input
+                value={deleteWorkerConfirmText}
+                onChange={(e) => setDeleteWorkerConfirmText(e.target.value)}
+                placeholder={deleteWorkerTarget.id}
+                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
+              />
+            </div>
           </div>
         </Modal>
       )}
