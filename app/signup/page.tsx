@@ -91,57 +91,54 @@ function SignupPageInner() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 font-sans">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,#dbeafe,transparent_45%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(15,23,42,0.04)_1px,transparent_1px),linear-gradient(180deg,rgba(15,23,42,0.04)_1px,transparent_1px)] bg-[size:54px_54px]" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl items-start px-4 py-4 sm:px-6 sm:py-8 lg:items-center">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-5xl items-start px-3 py-3 sm:px-6 sm:py-8 lg:items-center">
         <div className="grid w-full gap-4 sm:gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-6 lg:p-8">
-            <div className="mb-5 flex items-center justify-between py-2 lg:hidden">
-              <Link className="text-xs font-semibold text-slate-600 hover:text-slate-900" href="/">
+          <section className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/70 backdrop-blur sm:rounded-3xl sm:p-6 lg:p-8">
+            <div className="mb-4 flex items-center justify-between py-2 lg:hidden">
+              <Link className="text-sm font-semibold text-slate-600 hover:text-slate-900" href="/">
                 Back
               </Link>
-              <Link className="text-xs font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" href={loginHref}>
+              <Link className="text-sm font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" href={loginHref}>
                 Sign in
               </Link>
             </div>
-            <div className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center">
+            <div className="flex flex-col items-start gap-3 py-2 sm:flex-row sm:items-center">
               <Image
                 src="/reelencer-logo-transparent-v1.png"
                 alt="Reelencer"
                 width={1160}
                 height={508}
-                className="h-auto w-[120px] sm:w-[145px]"
+                className="h-auto w-[112px] sm:w-[140px]"
                 priority
               />
               <div>
-                <p className="text-xl font-bold text-slate-900">Create your account</p>
-                <p className="text-sm text-slate-600">Set up your profile for verified gigs and managed payouts.</p>
+                <p className="text-balance text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Create your account</p>
+                <p className="text-sm text-slate-600 sm:text-base">Get started with verified gigs.</p>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Verified onboarding
               </span>
-              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
-                Role-aware access
-              </span>
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">Role-aware access</span>
             </div>
 
-            <div className="mt-6 grid gap-4">
+            <div className="mt-5 grid gap-4 sm:mt-6">
               <div>
                 <label className="text-sm font-semibold text-slate-800" htmlFor="signup-name">
                   Full name
                 </label>
-                <p className="text-xs text-slate-500">Displayed on your creator profile and workspace activity.</p>
                 <input
                   id="signup-name"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder="Jane Creator"
-                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                   autoComplete="name"
                 />
               </div>
@@ -150,13 +147,12 @@ function SignupPageInner() {
                 <label className="text-sm font-semibold text-slate-800" htmlFor="signup-email">
                   Email
                 </label>
-                <p className="text-xs text-slate-500">Use a reliable address you can verify immediately.</p>
                 <input
                   id="signup-email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@domain.com"
-                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                   autoComplete="email"
                 />
               </div>
@@ -166,14 +162,13 @@ function SignupPageInner() {
                   <label className="text-sm font-semibold text-slate-800" htmlFor="signup-password">
                     Password
                   </label>
-                  <p className="text-xs text-slate-500">At least 6 characters.</p>
                   <input
                     id="signup-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
                     type="password"
-                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                     autoComplete="new-password"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void signUp();
@@ -184,14 +179,13 @@ function SignupPageInner() {
                   <label className="text-sm font-semibold text-slate-800" htmlFor="signup-confirm">
                     Confirm password
                   </label>
-                  <p className="text-xs text-slate-500">Re-enter to avoid typos.</p>
                   <input
                     id="signup-confirm"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
                     placeholder="••••••••"
                     type="password"
-                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                     autoComplete="new-password"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void signUp();
@@ -206,7 +200,7 @@ function SignupPageInner() {
               <button
                 onClick={() => void signUp()}
                 disabled={loading}
-                className="w-full rounded-xl bg-[#0b5cab] px-4 py-3 text-sm font-bold text-white hover:bg-[#0f6bc7] disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-2xl bg-[#0b5cab] px-4 py-3 text-base font-bold text-white hover:bg-[#0f6bc7] disabled:cursor-not-allowed disabled:opacity-60 sm:rounded-xl sm:text-sm"
               >
                 {loading ? "Creating account..." : "Create account"}
               </button>
@@ -237,33 +231,24 @@ function SignupPageInner() {
           <section className="hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-200/70 sm:p-8 lg:block">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Workspace management</p>
             <h1 className="mt-3 text-2xl font-semibold text-slate-900 sm:text-3xl">
-              Advanced creator operations, from onboarding to payout.
+              Creator operations from onboarding to payout.
             </h1>
             <p className="mt-3 text-sm text-slate-600">
-              Reelencer centralizes gig matching, assignment tracking, and approval workflows so teams scale without operational chaos.
+              Reelencer centralizes assignments, approvals, and payout tracking.
             </p>
 
             <div className="mt-6 grid gap-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm font-semibold text-slate-900">Talent-quality screening</div>
-                <div className="mt-1 text-xs text-slate-600">Standardized requirements and role fit before task assignment.</div>
+                <div className="mt-1 text-xs text-slate-600">Standardized role-fit checks.</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm font-semibold text-slate-900">Execution visibility</div>
-                <div className="mt-1 text-xs text-slate-600">Track progress, blockers, and delivery confidence in real time.</div>
+                <div className="mt-1 text-xs text-slate-600">Track progress in real time.</div>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-sm font-semibold text-slate-900">Payment governance</div>
-                <div className="mt-1 text-xs text-slate-600">Approved outputs flow into verified payout cycles and audit-safe history.</div>
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">Onboarding flow</div>
-              <div className="mt-2 grid gap-1 text-sm text-slate-700">
-                <div>1. Create account and profile identity</div>
-                <div>2. Verify email and account ownership</div>
-                <div>3. Access marketplace and start applying</div>
+                <div className="mt-1 text-xs text-slate-600">Verified payout cycles.</div>
               </div>
             </div>
           </section>

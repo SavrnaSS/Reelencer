@@ -144,37 +144,37 @@ function LoginPageInner() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 font-sans">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,#dbeafe,transparent_45%)]" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(15,23,42,0.04)_1px,transparent_1px),linear-gradient(180deg,rgba(15,23,42,0.04)_1px,transparent_1px)] bg-[size:52px_52px]" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl items-start px-4 py-4 sm:px-6 sm:py-8 lg:items-center">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-5xl items-start px-3 py-3 sm:px-6 sm:py-8 lg:items-center">
         <div className="grid w-full gap-4 sm:gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-6 lg:p-8">
-            <div className="mb-5 flex items-center justify-between py-2 lg:hidden">
-              <Link className="text-xs font-semibold text-slate-600 hover:text-slate-900" href="/">
+          <section className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl shadow-slate-200/70 backdrop-blur sm:rounded-3xl sm:p-6 lg:p-8">
+            <div className="mb-4 flex items-center justify-between py-2 lg:hidden">
+              <Link className="text-sm font-semibold text-slate-600 hover:text-slate-900" href="/">
                 Back
               </Link>
-              <Link className="text-xs font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" href={signupHref}>
+              <Link className="text-sm font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" href={signupHref}>
                 Create account
               </Link>
             </div>
-            <div className="mt-2 flex flex-col items-start gap-3 py-3 sm:mt-0 sm:flex-row sm:items-center">
+            <div className="mt-1 flex flex-col items-start gap-3 py-2 sm:mt-0 sm:flex-row sm:items-center">
               <Image
                 src="/reelencer-logo-transparent-v1.png"
                 alt="Reelencer"
                 width={1160}
                 height={508}
-                className="h-auto w-[120px] sm:w-[145px]"
+                className="h-auto w-[112px] sm:w-[140px]"
                 priority
               />
               <div>
-                <p className="text-xl font-bold text-slate-900">Sign in</p>
-                <p className="text-sm text-slate-600">Access workspace, approvals, payouts, and assignments.</p>
+                <p className="text-balance text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">Sign in</p>
+                <p className="text-sm text-slate-600 sm:text-base">Access workspace, approvals, payouts, and assignments.</p>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Enterprise access
               </span>
@@ -183,7 +183,7 @@ function LoginPageInner() {
               </span>
             </div>
 
-            <div className="mt-6 space-y-4">
+            <div className="mt-5 space-y-4 sm:mt-6">
               <div>
                 <label className="text-sm font-semibold text-slate-800" htmlFor="login-email">
                   Work email
@@ -194,7 +194,7 @@ function LoginPageInner() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
-                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                   autoComplete="email"
                 />
               </div>
@@ -210,7 +210,7 @@ function LoginPageInner() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   type="password"
-                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3.5 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20"
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/20 sm:py-3.5"
                   autoComplete="current-password"
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void signIn();
@@ -224,7 +224,7 @@ function LoginPageInner() {
               <button
                 onClick={() => void signIn()}
                 disabled={loading}
-                className="w-full rounded-xl bg-[#0b5cab] px-4 py-3 text-sm font-bold text-white hover:bg-[#0f6bc7] disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-2xl bg-[#0b5cab] px-4 py-3 text-base font-bold text-white hover:bg-[#0f6bc7] disabled:cursor-not-allowed disabled:opacity-60 sm:rounded-xl sm:text-sm"
               >
                 {loading ? "Signing in..." : "Sign in securely"}
               </button>

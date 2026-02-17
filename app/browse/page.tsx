@@ -147,6 +147,7 @@ const seedGigs: Gig[] = [
 ];
 
 const STATUS_OPTIONS: GigStatus[] = ["Open", "Paused", "Closed"];
+const PLATFORM_OPTIONS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -466,9 +467,9 @@ export default function BrowsePage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="border-b border-slate-200 bg-white/95">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-5">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-[#f5faff] to-slate-50 text-slate-900">
+      <div className="border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-5 sm:py-5">
           <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
             <Link href="/" className="shrink-0" aria-label="Go to home">
               <Image
@@ -659,16 +660,18 @@ export default function BrowsePage() {
         </div>
       </div>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 sm:py-8">
-        <section className="grid gap-6 md:grid-cols-[1.2fr_0.8fr] md:items-center">
+      <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-5 sm:py-8">
+        <section className="relative grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
+          <div className="pointer-events-none absolute -left-10 -top-10 hidden h-32 w-32 rounded-full bg-blue-100/70 blur-3xl lg:block" />
+          <div className="pointer-events-none absolute -bottom-10 right-10 hidden h-32 w-32 rounded-full bg-emerald-100/50 blur-3xl lg:block" />
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700">
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700">
               Corporate marketplace
             </div>
-            <h1 className="mt-4 text-3xl font-semibold text-slate-900 md:text-4xl">
+            <h1 className="mt-4 text-balance text-3xl font-semibold leading-tight text-slate-900 sm:text-4xl">
               Browse verified gigs from admins and trusted businesses.
             </h1>
-            <p className="mt-3 text-sm text-slate-600 md:text-base">
+            <p className="text-pretty mt-3 text-sm leading-relaxed text-slate-600 sm:text-base">
               Explore structured opportunities with clear requirements, workload expectations, and transparent payout
               structures. Apply directly to roles that match your platform expertise and earning goals.
             </p>
@@ -680,20 +683,20 @@ export default function BrowsePage() {
           </div>
           <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <div className="text-xs font-semibold text-slate-500">Marketplace summary</div>
-            <div className="mt-4 grid grid-flow-col auto-cols-[78%] gap-3 overflow-x-auto pb-1 text-sm text-slate-600 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-slate-600 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4">
                 <div className="text-xs text-slate-500">Active gigs</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-900">{gigs.filter((g) => g.status === "Open").length}</div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-blue-200 bg-blue-50/45 p-4">
                 <div className="text-xs text-slate-500">Verified employers</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-900">18</div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-violet-200 bg-violet-50/45 p-4">
                 <div className="text-xs text-slate-500">Median payout</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-900">₹52k</div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/55 p-4">
                 <div className="text-xs text-slate-500">Avg. response</div>
                 <div className="mt-2 text-2xl font-semibold text-slate-900">36h</div>
               </div>
@@ -702,7 +705,7 @@ export default function BrowsePage() {
         </section>
 
         <section className="mt-7 grid gap-6 lg:mt-10 lg:grid-cols-[320px_1fr]">
-          <aside className="hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:block">
+          <aside className="sticky top-20 hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:block">
             <div className="text-sm font-semibold text-slate-900">Filters</div>
             <div className="mt-4 space-y-4 text-sm text-slate-600">
               <div>
@@ -717,7 +720,7 @@ export default function BrowsePage() {
               <div>
                 <div className="text-xs font-semibold text-slate-500">Platform</div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
-                  {(["Instagram", "X", "YouTube", "LinkedIn", "TikTok"] as Platform[]).map((p) => (
+                  {PLATFORM_OPTIONS.map((p) => (
                     <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
                       <input
                         type="checkbox"
@@ -791,7 +794,7 @@ export default function BrowsePage() {
           </aside>
 
           <section className="space-y-4">
-            <div className="sticky top-0 z-20 -mx-1 rounded-2xl border border-slate-200 bg-white/95 px-3 py-3 text-sm text-slate-600 shadow-sm backdrop-blur sm:mx-0 sm:px-4">
+            <div className="sticky top-2 z-20 -mx-1 rounded-2xl border border-slate-200 bg-white/90 px-3 py-3 text-sm text-slate-600 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/75 sm:mx-0 sm:px-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                 <span className="font-semibold text-slate-900">Available gigs</span>
@@ -801,7 +804,9 @@ export default function BrowsePage() {
               </div>
                 <div className="flex flex-wrap items-center gap-2">
                 <button
-                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-400 lg:hidden"
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold lg:hidden ${
+                    filtersOpen ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-700 hover:border-slate-400"
+                  }`}
                   onClick={() => setFiltersOpen((v) => !v)}
                 >
                   {filtersOpen ? "Hide filters" : "Filters"}
@@ -809,7 +814,7 @@ export default function BrowsePage() {
                 </button>
                 <span className="text-xs text-slate-500">Sort by</span>
                 <select
-                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 shadow-sm"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as "recent" | "payout-high" | "payout-low")}
                 >
@@ -820,12 +825,15 @@ export default function BrowsePage() {
               </div>
             </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/15"
-                  placeholder="Search title, brand, platform..."
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                />
+                <label className="relative block">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">⌕</span>
+                  <input
+                    className="w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 py-2.5 text-sm text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/15"
+                    placeholder="Search title, brand, platform..."
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                  />
+                </label>
                 {activeFilterCount > 0 && (
                   <button
                     className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-slate-400"
@@ -835,12 +843,20 @@ export default function BrowsePage() {
                   </button>
                 )}
               </div>
+              {activeFilterCount > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                  {platforms.length > 0 && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Platforms: {platforms.join(", ")}</span>}
+                  {payoutType !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Payout: {payoutType}</span>}
+                  {statusFilter !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Status: {statusFilter}</span>}
+                  {gigTypeFilter !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Type: {gigTypeFilter}</span>}
+                </div>
+              )}
             </div>
 
             {filtersOpen && (
               <div className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden">
                 <div className="absolute inset-0" onClick={() => setFiltersOpen(false)} />
-                <div className="absolute bottom-0 left-0 right-0 max-h-[85vh] overflow-auto rounded-t-3xl border border-slate-200 bg-white p-5 shadow-2xl">
+                <div className="absolute bottom-0 left-0 right-0 max-h-[85vh] overflow-auto rounded-t-3xl border border-slate-200 bg-white p-5 pb-24 shadow-2xl">
                   <div className="flex items-center justify-between">
                     <div className="text-sm font-semibold text-slate-900">Filters</div>
                     <button
@@ -863,7 +879,7 @@ export default function BrowsePage() {
                   <div>
                     <div className="text-xs font-semibold text-slate-500">Platform</div>
                     <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
-                      {(["Instagram", "X", "YouTube", "LinkedIn", "TikTok"] as Platform[]).map((p) => (
+                      {PLATFORM_OPTIONS.map((p) => (
                         <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
                           <input
                             type="checkbox"
@@ -927,18 +943,22 @@ export default function BrowsePage() {
                       ))}
                     </div>
                   </div>
-                  <button
-                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                    onClick={resetFilters}
-                  >
-                    Reset filters
-                  </button>
-                  <button
-                    className="w-full rounded-md bg-[#0b5cab] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0f6bc7]"
-                    onClick={() => setFiltersOpen(false)}
-                  >
-                    Show results ({visibleGigs.length})
-                  </button>
+                  <div className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 px-5 py-3 backdrop-blur lg:hidden">
+                    <div className="mx-auto flex max-w-6xl gap-2">
+                      <button
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                        onClick={resetFilters}
+                      >
+                        Reset
+                      </button>
+                      <button
+                        className="w-full rounded-lg bg-[#0b5cab] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0f6bc7]"
+                        onClick={() => setFiltersOpen(false)}
+                      >
+                        Show {visibleGigs.length}
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 </div>
               </div>
@@ -947,6 +967,19 @@ export default function BrowsePage() {
             {loading && (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
                 Loading marketplace...
+              </div>
+            )}
+
+            {!loading && visibleGigs.length === 0 && (
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">
+                <div className="text-base font-semibold text-slate-900">No gigs match your filters</div>
+                <p className="mt-1">Try clearing filters or broadening your search terms.</p>
+                <button
+                  className="mt-3 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                  onClick={resetFilters}
+                >
+                  Reset all filters
+                </button>
               </div>
             )}
 
@@ -971,6 +1004,14 @@ export default function BrowsePage() {
                     : derivedStatus === "Applied" || derivedStatus === "Assigned"
                     ? "border-blue-200 bg-blue-50 text-blue-700"
                     : "border-slate-200 bg-slate-50 text-slate-600";
+                const gigStatusTone =
+                  gig.status === "Open"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : gig.status === "Paused"
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-slate-200 bg-slate-100 text-slate-600";
+                const applyLabel = needsSignIn ? "Sign in to apply" : assignment ? "Assigned" : app ? "Applied" : "Apply now";
+                const applyBtnClass = !canApply || !!app || !!assignment ? "bg-slate-300 text-white" : "bg-[#0b5cab] text-white shadow-sm hover:bg-[#0f6bc7]";
                 if (partTimeLocked) {
                   return (
                     <div
@@ -1041,18 +1082,23 @@ export default function BrowsePage() {
                   );
                 }
                 return (
-                  <div key={gig.id} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div
+                    key={gig.id}
+                    className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/70 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md animate-[slideDown_220ms_ease-out] sm:p-6"
+                  >
+                    <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-blue-100/50 blur-2xl" />
                     <div>
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
                           <span>{gig.postedAt}</span>
                           <span className="h-1 w-1 rounded-full bg-slate-300" />
                           <span>{gig.id}</span>
+                          {gig.status === "Open" && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Hiring now</span>}
                         </div>
-                        <div className="mt-2 text-xl font-semibold text-slate-900">{gig.title}</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                          <span className="font-semibold text-slate-800">{gig.company}</span>
+                        <div className="mt-2 text-balance text-[1.9rem] font-semibold leading-tight text-slate-900 sm:text-2xl">{gig.title}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800">{gig.company}</span>
                           {gig.verified && (
                             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                               Verified
@@ -1075,7 +1121,7 @@ export default function BrowsePage() {
                             </span>
                           )}
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">{gig.location}</span>
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">{gig.status}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-xs ${gigStatusTone}`}>{gig.status}</span>
                         </div>
                       </div>
                       <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
@@ -1084,23 +1130,21 @@ export default function BrowsePage() {
                         </span>
                         <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
                           <button
-                            className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:border-slate-400"
+                            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400 sm:text-xs"
                             onClick={() => setSelectedGig(gig)}
                           >
                             View details
                           </button>
                           <button
-                            className={`rounded-full px-4 py-2 text-xs font-semibold text-white ${
-                              canApply ? "bg-[#0b5cab] hover:bg-[#0f6bc7]" : "bg-slate-300"
-                            }`}
+                            className={`rounded-full px-4 py-2 text-sm font-semibold sm:text-xs ${applyBtnClass}`}
                             onClick={() => applyForGig(gig)}
                             disabled={!canApply || !!app || !!assignment}
                           >
-                            {needsSignIn ? "Sign in to apply" : assignment ? "Assigned" : app ? "Update application" : "Apply now"}
+                            {applyLabel}
                           </button>
                           {canProceed && (
                             <Link
-                              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-center text-xs font-semibold text-emerald-700"
+                              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-center text-sm font-semibold text-emerald-700 sm:text-xs"
                               href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               {isFullTime ? "Go to workspace" : "Proceed"}
@@ -1116,17 +1160,17 @@ export default function BrowsePage() {
                       </div>
                     )}
 
-                    <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
                         <div className="text-xs text-slate-500">Workload</div>
                         <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{gig.workload}</div>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
                         <div className="text-xs text-slate-500">Payout</div>
                         <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{gig.payout}</div>
                         <div className="text-xs text-slate-500">{gig.payoutType}</div>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
                         <div className="text-xs text-slate-500">Application status</div>
                         <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{derivedStatus ?? "Not applied"}</div>
                         <div className="text-xs text-slate-500">Updated hourly</div>
@@ -1137,8 +1181,9 @@ export default function BrowsePage() {
                       <div className="text-xs font-semibold text-slate-500">Key requirements</div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {gig.requirements.map((req) => (
-                          <span key={req} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
-                            {req}
+                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                            <span>{req}</span>
                           </span>
                         ))}
                       </div>

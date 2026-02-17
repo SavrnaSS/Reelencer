@@ -6,7 +6,6 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
 const LOGIN_ADMIN = "/login?next=/admin";
-const WORKSPACE = "/workspace";
 type Role = "Admin" | "Worker";
 type AuthSession = { role: Role; workerId?: string; at: string };
 
@@ -392,47 +391,40 @@ export default function HomePage() {
         </header>
 
         <main className="relative z-10">
-          <section className="mx-auto grid w-full max-w-6xl gap-12 px-5 pb-16 pt-10 md:grid-cols-[1.1fr_0.9fr] md:items-center">
+          <section className="mx-auto grid w-full max-w-6xl gap-6 px-5 pb-10 pt-6 sm:gap-10 sm:pb-16 sm:pt-10 md:grid-cols-[1.1fr_0.9fr] md:items-center">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700">
-                Enterprise-grade creator platform
-              </div>
-              <h1 className="mt-6 text-4xl font-semibold leading-tight text-slate-900 md:text-5xl">
+              <h1 className="text-balance text-[2.35rem] font-bold leading-[1.1] tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                 Reelencer Workspace is where social media becomes a full-time job.
               </h1>
-              <p className="mt-5 text-base text-slate-600 md:text-lg">
+              <p className="text-pretty mt-3 max-w-2xl text-[1.05rem] font-medium leading-relaxed text-slate-600 sm:mt-5 md:text-lg">
                 Discover real work opportunities, complete structured tasks, and earn a stable income — all by simply using
                 the social media platforms you already know. Reelencer brings corporate structure to creator workflows so
                 teams move fast, stay compliant, and get paid on time.
               </p>
-              <div className="mt-8 flex flex-wrap items-center gap-3">
-                <Link
-                  className="rounded-full bg-[#0b5cab] px-6 py-3 text-sm font-semibold text-white hover:bg-[#0f6bc7]"
-                  href={WORKSPACE}
-                >
-                  Go to workspace
-                </Link>
+              <div className="mt-6 flex flex-wrap items-center gap-3 sm:mt-8">
                 {isGuest ? (
                   <Link
-                    className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                    className="inline-flex w-full items-center justify-center rounded-full bg-[#0b5cab] px-6 py-3.5 text-sm font-bold tracking-tight text-white hover:bg-[#0f6bc7] sm:w-auto sm:min-w-[240px]"
                     href="/login?next=/"
                   >
                     Sign in to continue
                   </Link>
-                ) : role === "Admin" ? (
-                  <Link
-                    className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                    href="/admin"
-                  >
-                    Open admin console
-                  </Link>
                 ) : (
-                  <Link
-                    className="rounded-full border border-slate-300 px-6 py-3 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                    href="/browse"
-                  >
-                    Browse gigs
-                  </Link>
+                  role === "Admin" ? (
+                    <Link
+                      className="inline-flex w-full items-center justify-center rounded-full border border-slate-300 px-6 py-3.5 text-sm font-bold tracking-tight text-slate-700 hover:border-slate-400 sm:w-auto sm:min-w-[240px]"
+                      href="/admin"
+                    >
+                      Open admin console
+                    </Link>
+                  ) : (
+                    <Link
+                      className="inline-flex w-full items-center justify-center rounded-full bg-[#0b5cab] px-6 py-3.5 text-sm font-bold tracking-tight text-white hover:bg-[#0f6bc7] sm:w-auto sm:min-w-[240px]"
+                      href="/browse"
+                    >
+                      Browse gigs
+                    </Link>
+                  )
                 )}
               </div>
               {isGuest ? (
@@ -442,23 +434,23 @@ export default function HomePage() {
               ) : (
                 <p className="mt-3 text-xs text-emerald-700">Signed in. Your workspace and account tools are ready.</p>
               )}
-              <div className="mt-8 grid grid-cols-3 gap-4 text-sm text-slate-600">
-                <div>
-                  <div className="text-2xl font-semibold text-slate-900">48h</div>
+              <div className="mt-6 grid grid-cols-3 gap-2 text-sm text-slate-600 sm:mt-8 sm:gap-4">
+                <div className="rounded-2xl border border-slate-200 bg-white/70 p-3">
+                  <div className="text-3xl font-semibold text-slate-900 sm:text-2xl">48h</div>
                   Avg. payout cycle
                 </div>
-                <div>
-                  <div className="text-2xl font-semibold text-slate-900">300+</div>
+                <div className="rounded-2xl border border-slate-200 bg-white/70 p-3">
+                  <div className="text-3xl font-semibold text-slate-900 sm:text-2xl">300+</div>
                   Live creator teams
                 </div>
-                <div>
-                  <div className="text-2xl font-semibold text-slate-900">99.2%</div>
+                <div className="rounded-2xl border border-slate-200 bg-white/70 p-3">
+                  <div className="text-3xl font-semibold text-slate-900 sm:text-2xl">99.2%</div>
                   On-time approvals
                 </div>
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-xl shadow-slate-200/70">
+            <div className="hidden rounded-3xl border border-slate-200 bg-white/90 p-5 shadow-xl shadow-slate-200/70 sm:p-6 md:block">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold text-slate-700">Creator Earnings Console</div>
                 <div className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Live</div>
