@@ -949,7 +949,7 @@ export default function BrowsePage() {
               </div>
             )}
 
-            <div className="grid gap-4">
+            <div className="grid gap-3 sm:gap-4">
               {visibleGigs.map((gig) => {
                 const app = appByGig.get(gig.id);
                 const assignment = assignmentByGig.get(gig.id);
@@ -1050,59 +1050,59 @@ export default function BrowsePage() {
                 return (
                   <div
                     key={gig.id}
-                    className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/70 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md animate-[slideDown_220ms_ease-out] sm:p-6"
+                    className="relative overflow-hidden rounded-[1.35rem] border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/60 p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md animate-[slideDown_220ms_ease-out] sm:rounded-[1.5rem] sm:p-4 lg:p-5"
                   >
-                    <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-blue-100/50 blur-2xl" />
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-blue-100/45 blur-2xl" />
                     <div>
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                        <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                    <div className="flex flex-col gap-2.5 sm:gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 sm:text-sm">
                           <span>{gig.postedAt}</span>
                           <span className="h-1 w-1 rounded-full bg-slate-300" />
                           <span>{gig.id}</span>
-                          {gig.status === "Open" && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Hiring now</span>}
+                          {gig.status === "Open" && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">Hiring now</span>}
                         </div>
-                        <div className="mt-2 text-balance text-[1.9rem] font-semibold leading-tight text-slate-900 sm:text-2xl">{gig.title}</div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800">{gig.company}</span>
+                        <div className="mt-1.5 text-balance text-[1.15rem] font-semibold leading-tight text-slate-900 sm:text-[1.35rem] lg:text-[1.55rem]">{gig.title}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:mt-3 sm:gap-2">
+                          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-800 sm:px-4 sm:py-1.5 sm:text-sm">{gig.company}</span>
                           {gig.verified && (
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 sm:px-3 sm:text-sm">
                               Verified
                             </span>
                           )}
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">{gig.platform}</span>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
                           {gig.gigType && (
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
                               {gig.gigType}
                             </span>
                           )}
                           {partTimeLocked && (
-                            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                            <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 sm:px-3 sm:text-sm">
                               Mini KYC required
                             </span>
                           )}
                           {gig.gigType === "Full-time" && (
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 sm:px-3 sm:text-sm">
                               Workspace ready
                             </span>
                           )}
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">{gig.location}</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-xs ${gigStatusTone}`}>{gig.status}</span>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.location}</span>
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold sm:px-3 sm:text-sm ${gigStatusTone}`}>{gig.status}</span>
                         </div>
                       </div>
-                      <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
-                        <span className={`rounded-full border px-3 py-1 text-xs ${statusTone}`}>
+                      <div className="flex w-full flex-col items-start gap-2 sm:gap-2.5 md:w-auto md:min-w-[220px] md:items-end">
+                        <span className={`rounded-full border px-3 py-1 text-xs sm:px-4 sm:py-1.5 sm:text-sm ${statusTone}`}>
                           {derivedStatus ? `Status: ${derivedStatus}` : "Not applied"}
                         </span>
-                        <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                        <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 md:grid-cols-1">
                           <button
-                            className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400 sm:text-xs"
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-400 sm:px-4 sm:py-2"
                             onClick={() => setSelectedGig(gig)}
                           >
                             View details
                           </button>
                           <button
-                            className={`rounded-full px-4 py-2 text-sm font-semibold sm:text-xs ${applyBtnClass}`}
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold sm:px-4 sm:py-2 ${applyBtnClass}`}
                             onClick={() => applyForGig(gig)}
                             disabled={!canApply || !!app || !!assignment}
                           >
@@ -1110,7 +1110,7 @@ export default function BrowsePage() {
                           </button>
                           {canProceed && (
                             <Link
-                              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-center text-sm font-semibold text-emerald-700 sm:text-xs"
+                              className="col-span-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-center text-xs font-semibold text-emerald-700 sm:px-4 sm:py-2 md:col-span-1"
                               href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               {isFullTime ? "Go to workspace" : "Proceed"}
@@ -1126,28 +1126,28 @@ export default function BrowsePage() {
                       </div>
                     )}
 
-                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                        <div className="text-xs text-slate-500">Workload</div>
-                        <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{gig.workload}</div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-2.5 md:grid-cols-3">
+                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-slate-500 sm:text-sm">Workload</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.workload}</div>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                        <div className="text-xs text-slate-500">Payout</div>
-                        <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{gig.payout}</div>
-                        <div className="text-xs text-slate-500">{gig.payoutType}</div>
+                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-slate-500 sm:text-sm">Payout</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.payout}</div>
+                        <div className="text-xs text-slate-500 sm:text-sm">{gig.payoutType}</div>
                       </div>
-                      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-                        <div className="text-xs text-slate-500">Application status</div>
-                        <div className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">{derivedStatus ?? "Not applied"}</div>
-                        <div className="text-xs text-slate-500">Updated hourly</div>
+                      <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5 md:col-span-1">
+                        <div className="text-xs text-slate-500 sm:text-sm">Application status</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
+                        <div className="text-xs text-slate-500 sm:text-sm">Updated hourly</div>
                       </div>
                     </div>
 
-                    <div className="mt-5">
-                      <div className="text-xs font-semibold text-slate-500">Key requirements</div>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-3 sm:mt-4">
+                      <div className="text-xs font-semibold text-slate-500 sm:text-sm">Key requirements</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5 sm:gap-2">
                         {gig.requirements.map((req) => (
-                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 sm:px-3 sm:py-1.5 sm:text-sm">
                             <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
                             <span>{req}</span>
                           </span>
