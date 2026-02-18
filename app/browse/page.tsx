@@ -183,7 +183,6 @@ export default function BrowsePage() {
   const [selectedGig, setSelectedGig] = useState<Gig | null>(null);
   const [workerId, setWorkerId] = useState<string | null>(null);
   const [role, setRole] = useState<Role | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
@@ -196,7 +195,7 @@ export default function BrowsePage() {
   const [payoutType, setPayoutType] = useState<PayoutType | "All">("All");
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
   const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Part-time" | "Full-time">("All");
-  const [sortBy, setSortBy] = useState<"recent" | "payout-high" | "payout-low">("recent");
+  const sortBy: "recent" | "payout-high" | "payout-low" = "recent";
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
   const computeMenuAnchor = React.useCallback(() => {
@@ -415,16 +414,6 @@ export default function BrowsePage() {
     assignments.forEach((a) => map.set(String(a.gigId ?? a.gig_id), a));
     return map;
   }, [assignments]);
-
-  const activeFilterCount = useMemo(() => {
-    let count = 0;
-    if (keyword.trim()) count += 1;
-    if (platforms.length > 0) count += 1;
-    if (payoutType !== "All") count += 1;
-    if (statusFilter !== "All") count += 1;
-    if (gigTypeFilter !== "All") count += 1;
-    return count;
-  }, [keyword, platforms, payoutType, statusFilter, gigTypeFilter]);
 
   const visibleGigs = useMemo(() => {
     const withPayout = (value: string) => {
@@ -760,176 +749,6 @@ export default function BrowsePage() {
           </aside>
 
           <section className="space-y-4">
-            <div className="sticky top-2 z-10 -mx-1 rounded-2xl border border-slate-200 bg-white/90 px-3 py-3 text-sm text-slate-600 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/75 sm:mx-0 sm:px-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                <span className="font-semibold text-slate-900">Available gigs</span>
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs">
-                  Showing {visibleGigs.length} of {gigs.length}
-                </span>
-              </div>
-                <div className="flex flex-wrap items-center gap-2">
-                <button
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold lg:hidden ${
-                    filtersOpen ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-300 text-slate-700 hover:border-slate-400"
-                  }`}
-                  onClick={() => setFiltersOpen((v) => !v)}
-                >
-                  {filtersOpen ? "Hide filters" : "Filters"}
-                  {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-                </button>
-                <span className="text-xs text-slate-500">Sort by</span>
-                <select
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 shadow-sm"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as "recent" | "payout-high" | "payout-low")}
-                >
-                  <option value="recent">Most recent</option>
-                  <option value="payout-high">Highest payout</option>
-                  <option value="payout-low">Lowest payout</option>
-                </select>
-              </div>
-            </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <label className="relative block">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">⌕</span>
-                  <input
-                    className="w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 py-2.5 text-sm text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/15"
-                    placeholder="Search title, brand, platform..."
-                    value={keyword}
-                    onChange={(e) => setKeyword(e.target.value)}
-                  />
-                </label>
-                {activeFilterCount > 0 && (
-                  <button
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                    onClick={resetFilters}
-                  >
-                    Clear all
-                  </button>
-                )}
-              </div>
-              {activeFilterCount > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                  {platforms.length > 0 && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Platforms: {platforms.join(", ")}</span>}
-                  {payoutType !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Payout: {payoutType}</span>}
-                  {statusFilter !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Status: {statusFilter}</span>}
-                  {gigTypeFilter !== "All" && <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">Type: {gigTypeFilter}</span>}
-                </div>
-              )}
-            </div>
-
-            {filtersOpen && (
-              <div className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden">
-                <div className="absolute inset-0" onClick={() => setFiltersOpen(false)} />
-                <div className="absolute bottom-0 left-0 right-0 max-h-[85vh] overflow-auto rounded-t-3xl border border-slate-200 bg-white p-5 pb-24 shadow-2xl">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-slate-900">Filters</div>
-                    <button
-                      className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
-                      onClick={() => setFiltersOpen(false)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="mt-4 space-y-4 text-sm text-slate-600">
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500">Keyword</div>
-                    <input
-                      className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/15"
-                      placeholder="Search title, brand, platform"
-                      value={keyword}
-                      onChange={(e) => setKeyword(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500">Platform</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
-                      {PLATFORM_OPTIONS.map((p) => (
-                        <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 accent-[#0b5cab]"
-                            checked={platforms.includes(p)}
-                            onChange={(e) => {
-                              setPlatforms((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)));
-                            }}
-                          />
-                          {p}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500">Payout model</div>
-                    <div className="mt-2 space-y-2">
-                      {(["All", "Per task", "Per post", "Monthly"] as const).map((p) => (
-                        <label key={p} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="radio"
-                            name="payout-mobile"
-                            className="h-4 w-4 accent-[#0b5cab]"
-                            checked={payoutType === p}
-                            onChange={() => setPayoutType(p)}
-                          />
-                          {p}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500">Status</div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                      {["All", ...STATUS_OPTIONS].map((s) => (
-                        <button
-                          key={s}
-                          className={`rounded-full border px-3 py-1 text-xs ${
-                            statusFilter === s ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-600"
-                          }`}
-                          onClick={() => setStatusFilter(s as GigStatus | "All")}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500">Gig type</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      {(["All", "Part-time", "Full-time"] as const).map((t) => (
-                        <button
-                          key={t}
-                          className={`rounded-full border px-3 py-1 text-xs ${
-                            gigTypeFilter === t ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-600"
-                          }`}
-                          onClick={() => setGigTypeFilter(t)}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white/95 px-5 py-3 backdrop-blur lg:hidden">
-                    <div className="mx-auto flex max-w-6xl gap-2">
-                      <button
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                        onClick={resetFilters}
-                      >
-                        Reset
-                      </button>
-                      <button
-                        className="w-full rounded-lg bg-[#0b5cab] px-3 py-2 text-sm font-semibold text-white hover:bg-[#0f6bc7]"
-                        onClick={() => setFiltersOpen(false)}
-                      >
-                        Show {visibleGigs.length}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                </div>
-              </div>
-            )}
-
             {loading && (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
                 Loading marketplace...
@@ -1061,10 +880,13 @@ export default function BrowsePage() {
                           <span className="h-1 w-1 rounded-full bg-slate-300" />
                           <span>{gig.id}</span>
                           {gig.status === "Open" && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">Hiring now</span>}
+                          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold md:hidden ${statusTone}`}>
+                            {derivedStatus ? derivedStatus : "Not applied"}
+                          </span>
                         </div>
                         <div className="mt-1.5 text-balance text-[1.15rem] font-semibold leading-tight text-slate-900 sm:text-[1.35rem] lg:text-[1.55rem]">{gig.title}</div>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:mt-3 sm:gap-2">
-                          <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-800 sm:px-4 sm:py-1.5 sm:text-sm">{gig.company}</span>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:mt-2.5 sm:gap-2">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
                           {gig.verified && (
                             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 sm:px-3 sm:text-sm">
                               Verified
@@ -1086,12 +908,11 @@ export default function BrowsePage() {
                               Workspace ready
                             </span>
                           )}
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.location}</span>
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold sm:px-3 sm:text-sm ${gigStatusTone}`}>{gig.status}</span>
                         </div>
                       </div>
                       <div className="flex w-full flex-col items-start gap-2 sm:gap-2.5 md:w-auto md:min-w-[220px] md:items-end">
-                        <span className={`rounded-full border px-3 py-1 text-xs sm:px-4 sm:py-1.5 sm:text-sm ${statusTone}`}>
+                        <span className={`hidden rounded-full border px-3 py-1 text-xs sm:px-4 sm:py-1.5 sm:text-sm md:inline-flex ${statusTone}`}>
                           {derivedStatus ? `Status: ${derivedStatus}` : "Not applied"}
                         </span>
                         <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 md:grid-cols-1">
@@ -1174,7 +995,6 @@ export default function BrowsePage() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.company}</span>
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.platform}</span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.location}</span>
                 </div>
               </div>
               <button
