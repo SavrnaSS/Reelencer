@@ -195,7 +195,6 @@ export default function BrowsePage() {
   const [payoutType, setPayoutType] = useState<PayoutType | "All">("All");
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
   const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Part-time" | "Full-time">("All");
-  const sortBy: "recent" | "payout-high" | "payout-low" = "recent";
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
 
   const computeMenuAnchor = React.useCallback(() => {
@@ -415,19 +414,7 @@ export default function BrowsePage() {
     return map;
   }, [assignments]);
 
-  const visibleGigs = useMemo(() => {
-    const withPayout = (value: string) => {
-      const numeric = Number(value.replace(/[^\d]/g, ""));
-      return Number.isFinite(numeric) ? numeric : 0;
-    };
-    const list = [...filtered];
-    if (sortBy === "payout-high") {
-      list.sort((a, b) => withPayout(b.payout) - withPayout(a.payout));
-    } else if (sortBy === "payout-low") {
-      list.sort((a, b) => withPayout(a.payout) - withPayout(b.payout));
-    }
-    return list;
-  }, [filtered, sortBy]);
+  const visibleGigs = useMemo(() => filtered, [filtered]);
 
   const applyForGig = async (gig: Gig) => {
     if (!workerId) {
