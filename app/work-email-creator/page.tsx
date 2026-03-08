@@ -377,16 +377,16 @@ export default function WorkEmailCreatorPage() {
   }, [secretCode, selectedAccountId, loadInbox]);
 
   if (loading) {
-    return <div className="min-h-screen bg-slate-50 p-6 text-sm text-slate-700">Loading...</div>;
+    return <div className="min-h-screen bg-[#eef4ea] p-6 text-sm text-slate-700">Loading...</div>;
   }
 
   if (!signedIn) {
     return (
-      <div className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6">
+      <div className="min-h-screen bg-[#eef4ea] p-6">
+        <div className="mx-auto max-w-xl rounded-2xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <p className="text-lg font-bold text-slate-900">Work Email Creator</p>
           <p className="mt-2 text-sm text-slate-600">Sign in first, then enter your secret code to access this page.</p>
-          <Link href="/login?next=/work-email-creator" className="mt-4 inline-block rounded-lg bg-[#0b5cab] px-4 py-2 text-sm font-semibold text-white">
+          <Link href="/login?next=/work-email-creator" className="mt-4 inline-block rounded-lg bg-[#1f4f43] px-4 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a]">
             Sign in
           </Link>
         </div>
@@ -395,16 +395,17 @@ export default function WorkEmailCreatorPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
+      <div className="relative mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-8">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <section className="rounded-3xl border border-[#cfdbc8] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,251,246,0.9))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-5">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xl font-bold text-slate-900">Work Email Creator</p>
-                <p className="text-sm text-slate-600">Create custom work emails for social signup and verification flows.</p>
+                <p className="text-lg font-bold text-slate-900 sm:text-xl">Work Email Creator</p>
+                <p className="text-xs text-slate-600 sm:text-sm">Provision secure work inboxes for signup and verification workflows.</p>
               </div>
-              <Link href="/proceed" className="text-xs font-semibold text-[#0b5cab] hover:text-[#0f6bc7]">
+              <Link href="/proceed" className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">
                 Back
               </Link>
             </div>
@@ -417,13 +418,13 @@ export default function WorkEmailCreatorPage() {
                   value={secretCodeInput}
                   onChange={(e) => setSecretCodeInput(e.target.value)}
                   placeholder="Enter secret code"
-                  className="mt-3 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                  className="mt-3 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                 />
                 {unlockErr && <div className="mt-2 text-xs font-semibold text-rose-700">{unlockErr}</div>}
                 <button
                   onClick={() => void unlockAccess()}
                   disabled={unlocking}
-                  className="mt-3 w-full rounded-lg bg-[#0b5cab] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+                  className="mt-3 w-full rounded-lg bg-[#1f4f43] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
                 >
                   {unlocking ? "Unlocking..." : "Unlock access"}
                 </button>
@@ -431,28 +432,28 @@ export default function WorkEmailCreatorPage() {
             )}
 
             {secretCode && (
-              <div className="mt-5 space-y-4">
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                  Access unlocked.
-                </div>
-                <div className="grid gap-3">
-                  <div>
+                <div className="mt-5 space-y-4">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                    Access unlocked.
+                  </div>
+                  <div className="grid gap-3">
+                    <div>
                     <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Username (social handle)</label>
                     <input
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       placeholder="username"
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                     />
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Custom email name</label>
                       <input
                         value={localPart}
                         onChange={(e) => setLocalPart(e.target.value)}
                         placeholder="optional; defaults from username"
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                       />
                     </div>
                     <div>
@@ -462,7 +463,7 @@ export default function WorkEmailCreatorPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     <div>
                       <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Social password</label>
                       <input
@@ -470,7 +471,7 @@ export default function WorkEmailCreatorPage() {
                         onChange={(e) => setSocialPassword(e.target.value)}
                         placeholder="required before email creation"
                         type="password"
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                       />
                     </div>
                     <div>
@@ -479,7 +480,7 @@ export default function WorkEmailCreatorPage() {
                         value={platform}
                         onChange={(e) => setPlatform(e.target.value)}
                         placeholder="Instagram, X, YouTube..."
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                       />
                     </div>
                     <div>
@@ -488,19 +489,19 @@ export default function WorkEmailCreatorPage() {
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder="optional"
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab]"
+                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#1f4f43]"
                       />
                     </div>
                   </div>
                 </div>
 
                 {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{error}</div>}
-                {message && <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700">{message}</div>}
+                {message && <div className="rounded-lg border border-[#bcd6c9] bg-[#edf5ef] px-3 py-2 text-sm font-semibold text-[#2f6655]">{message}</div>}
 
                 <button
                   onClick={() => void createAccount()}
                   disabled={working}
-                  className="w-full rounded-lg bg-[#0b5cab] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60"
+                  className="w-full rounded-lg bg-[#1f4f43] px-4 py-2.5 text-sm font-bold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
                 >
                   {working ? "Working..." : "Create work email"}
                 </button>
@@ -509,12 +510,12 @@ export default function WorkEmailCreatorPage() {
           </section>
 
           <section className="space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-[#cfdbc8] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,251,246,0.9))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-5">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-bold text-slate-900">Created emails ({accounts.length})</p>
                 <button
                   onClick={() => void (secretCode ? loadAccounts(secretCode) : Promise.resolve())}
-                  className="text-xs font-semibold text-[#0b5cab]"
+                  className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]"
                 >
                   Refresh
                 </button>
@@ -523,7 +524,7 @@ export default function WorkEmailCreatorPage() {
                 {accounts.map((acc) => (
                   <div
                     key={acc.id}
-                    className={`rounded-xl border p-3 ${selectedAccountId === acc.id ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}
+                    className={`rounded-xl border p-3 ${selectedAccountId === acc.id ? "border-[#bcd6c9] bg-[#edf5ef]" : "border-slate-200 bg-white"}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <button className="min-w-0 text-left" onClick={() => setSelectedAccountId(acc.id)}>
@@ -545,18 +546,18 @@ export default function WorkEmailCreatorPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-2">
+            <div className="rounded-3xl border border-[#cfdbc8] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,251,246,0.9))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p className="text-sm font-bold text-slate-900">Inbox {activeAccount ? `for ${activeAccount.email}` : ""}</p>
                   <p className="mt-0.5 text-xs text-slate-500">
                     {unreadCount > 0 ? `${unreadCount} unread` : "All caught up"} {lastSyncAt ? `• Last sync ${lastSyncAt}` : ""}
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     onClick={() => void (secretCode && selectedAccountId ? loadInbox(secretCode, selectedAccountId) : Promise.resolve())}
-                    className="text-xs font-semibold text-[#0b5cab]"
+                    className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]"
                     disabled={refreshingInbox}
                   >
                     {refreshingInbox ? "Syncing..." : "Refresh"}
@@ -575,9 +576,9 @@ export default function WorkEmailCreatorPage() {
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
-                <div className="rounded-2xl border border-slate-200 bg-white/80 p-2 shadow-[0_10px_30px_-20px_rgba(15,23,42,0.6)]">
-                  <div className="max-h-[400px] overflow-auto">
+              <div className="mt-4 grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+                <div className="rounded-2xl border border-[#cfdbc8] bg-white/80 p-2 shadow-[0_10px_30px_-20px_rgba(56,94,79,0.35)]">
+                  <div className="max-h-[320px] overflow-auto sm:max-h-[400px]">
                     {inbox
                       .slice()
                       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -589,7 +590,7 @@ export default function WorkEmailCreatorPage() {
                             key={msg.id}
                             className={`mb-2 w-full rounded-xl border px-3 py-2 text-left text-xs transition ${
                               isActive
-                                ? "border-blue-200 bg-gradient-to-r from-blue-50 to-white text-blue-900"
+                                ? "border-[#bcd6c9] bg-gradient-to-r from-[#edf5ef] to-white text-[#244f42]"
                                 : "border-transparent bg-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
                             }`}
                             onClick={() => {
@@ -600,7 +601,7 @@ export default function WorkEmailCreatorPage() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className={`h-2 w-2 rounded-full ${isUnread ? "bg-blue-500" : isActive ? "bg-blue-300" : "bg-slate-200"}`} />
+                                <span className={`h-2 w-2 rounded-full ${isUnread ? "bg-[#2f6655]" : isActive ? "bg-[#9ec3b2]" : "bg-slate-200"}`} />
                                 <div className="truncate font-semibold">{msg.subject || "Verification"}</div>
                               </div>
                               <div className="text-[10px] text-slate-500">{new Date(msg.createdAt).toLocaleString()}</div>
@@ -621,7 +622,7 @@ export default function WorkEmailCreatorPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_20px_50px_-35px_rgba(15,23,42,0.6)]">
+                <div className="rounded-2xl border border-[#cfdbc8] bg-white p-3 shadow-[0_20px_50px_-35px_rgba(56,94,79,0.35)] sm:p-4">
                   {selectedMsg ? (
                     <>
                       <div className="flex items-start justify-between gap-4">
@@ -641,7 +642,7 @@ export default function WorkEmailCreatorPage() {
                         </button>
                       </div>
 
-                      <div className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700">
+                      <div className="mt-3 max-h-[280px] overflow-auto whitespace-pre-wrap rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm leading-relaxed text-slate-700 sm:max-h-[360px]">
                         {selectedMsg.body || "(No body)"}
                       </div>
 

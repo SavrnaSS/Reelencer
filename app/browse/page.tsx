@@ -192,6 +192,7 @@ export default function BrowsePage() {
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasApprovedKyc = role === "Worker" && (!!workerId || kycStatus === "approved");
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
+  const mobileDisplayName = displayName.trim().split(/\s+/)[0] || "User";
   const computeMenuAnchor = React.useCallback(() => {
     const el = menuButtonRef.current;
     if (!el) return;
@@ -591,6 +592,7 @@ export default function BrowsePage() {
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-xs font-bold text-[#10251b] sm:h-9 sm:w-9 sm:text-sm">
                   {displayName.slice(0, 1).toUpperCase()}
                 </span>
+                <span className="max-w-[5rem] truncate text-xs text-white/90 sm:hidden">{mobileDisplayName}</span>
                 <span className="hidden max-w-[12rem] truncate text-sm text-white/90 sm:block">{displayName}</span>
                 <span className="text-white/45">▾</span>
               </button>

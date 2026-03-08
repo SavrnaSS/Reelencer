@@ -89,20 +89,32 @@ export async function PATCH(req: Request) {
   const body = await req.json().catch(() => ({}));
   const id = String(body?.id ?? "");
   const action = String(body?.action ?? "").toLowerCase();
-  if (!id || !["block", "unblock", "renew"].includes(action)) {
-    return json(400, { ok: false, error: "id and action(block|unblock|renew) are required." });
+  if (!id || !["block", "unblock", "renew", "reissue"].includes(action)) {
+    return json(400, { ok: false, error: "id and action(block|unblock|renew|reissue) are required." });
   }
 
   const sb = supabaseAdmin();
   let update:
     | { status: "blocked"; blocked_at: string }
     | { status: "active"; blocked_at: null }
-    | { status: "active"; blocked_at: null; expires_at: string | null; use_count?: number; last_used_at?: null };
+    | { status: "active"; blocked_at: null; expires_at: string | null; use_count?: number; last_used_at?: null }
+    | { status: "active"; blocked_at: null; code_hash: string; code_hint: string; use_count: number; last_used_at: null };
+  let issuedCode: string | null = null;
 
   if (action === "block") {
     update = { status: "blocked", blocked_at: new Date().toISOString() };
   } else if (action === "unblock") {
     update = { status: "active", blocked_at: null };
+  } else if (action === "reissue") {
+    issuedCode = generateSecretCode();
+    update = {
+      status: "active",
+      blocked_at: null,
+      code_hash: hashSecretCode(issuedCode),
+      code_hint: codeHint(issuedCode),
+      use_count: 0,
+      last_used_at: null,
+    };
   } else {
     const rawExpiry = String(body?.expiresAt ?? "").trim();
     let expiresAt: string | null = null;
@@ -122,14 +134,22 @@ export async function PATCH(req: Request) {
     };
   }
 
-  const { error } = await sb.from("work_email_secret_codes").update(update).eq("id", id);
+  const { data, error } = await sb
+    .from("work_email_secret_codes")
+    .update(update)
+    .eq("id", id)
+    .select("id,code_hint")
+    .single();
   if (error) {
     if (tableMissing(error.message)) {
       return json(500, { ok: false, error: "Missing schema. Run scripts/work-email-creator-schema.sql first." });
     }
     return json(500, { ok: false, error: error.message });
   }
-  return json(200, { ok: true });
+  if (action === "reissue") {
+    return json(200, { ok: true, code: issuedCode, row: data ?? null });
+  }
+  return json(200, { ok: true, row: data ?? null });
 }
 
 export async function DELETE(req: Request) {

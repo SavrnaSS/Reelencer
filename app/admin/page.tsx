@@ -1263,6 +1263,7 @@ function AdminConsole() {
   const [newCodeExpiry, setNewCodeExpiry] = useState<string>("");
   const [newlyGeneratedCode, setNewlyGeneratedCode] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [copiedCodeRowId, setCopiedCodeRowId] = useState<string | null>(null);
   const [codeQuery, setCodeQuery] = useState("");
   const [codeFilter, setCodeFilter] = useState<"all" | "active" | "blocked" | "expired" | "exhausted">("all");
   const [codeSort, setCodeSort] = useState<"newest" | "oldest" | "usage-desc" | "expiry-soon">("newest");
@@ -1393,7 +1394,7 @@ function AdminConsole() {
       }
 
       const workersRes = await workersReq;
-      if (workersRes?.ok && workersRes.workers?.length) {
+      if (workersRes?.ok && Array.isArray(workersRes.workers)) {
         setWorkers(workersRes.workers);
         setSelectedWorkerId((prev) => prev ?? workersRes.workers[0]?.id ?? null);
         const upiRes = await upiReq;
@@ -1552,7 +1553,7 @@ function AdminConsole() {
   const updateWorkEmailCode = useCallback(
     async (
       id: string,
-      action: "block" | "unblock" | "renew",
+      action: "block" | "unblock" | "renew" | "reissue",
       opts?: { expiresAt?: string | null; resetUsage?: boolean }
     ): Promise<boolean> => {
       const res = await workEmailAdminRequest("PATCH", { id, action, ...(opts ?? {}) });
@@ -1561,11 +1562,50 @@ function AdminConsole() {
         return false;
       }
       setToast({
-        message: action === "block" ? "Code blocked." : action === "unblock" ? "Code activated." : "Code renewed.",
+        message:
+          action === "block"
+            ? "Code blocked."
+            : action === "unblock"
+            ? "Code activated."
+            : action === "reissue"
+            ? "Code reissued."
+            : "Code renewed.",
         tone: "success",
       });
       loadWorkEmailCodes();
       return true;
+    },
+    [loadWorkEmailCodes, workEmailAdminRequest]
+  );
+
+  const copyFullWorkEmailCode = useCallback(
+    async (row: WorkEmailSecretCode) => {
+      const res = await workEmailAdminRequest("PATCH", { id: row.id, action: "reissue" });
+      if (!res.ok) {
+        setToast({ message: res.error || "Unable to copy full code.", tone: "danger" });
+        return;
+      }
+      const fullCode = String((res.data as { code?: string })?.code || "");
+      if (!fullCode) {
+        setToast({ message: "Server did not return full code.", tone: "danger" });
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(fullCode);
+      } catch {
+        setToast({ message: "Unable to copy full code.", tone: "danger" });
+        return;
+      }
+      setCopiedCode(fullCode);
+      window.setTimeout(() => {
+        setCopiedCode((prev) => (prev === fullCode ? null : prev));
+      }, 1400);
+      setCopiedCodeRowId(row.id);
+      window.setTimeout(() => {
+        setCopiedCodeRowId((prev) => (prev === row.id ? null : prev));
+      }, 1400);
+      setToast({ message: "Full code copied. Existing code was reissued.", tone: "success" });
+      loadWorkEmailCodes();
     },
     [loadWorkEmailCodes, workEmailAdminRequest]
   );
@@ -3307,8 +3347,73 @@ function AdminConsole() {
                         Schema missing. Run <code>scripts/work-email-creator-schema.sql</code> in Supabase SQL Editor.
                       </div>
                     )}
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
-                      <table className="min-w-[1160px] w-full text-left text-sm">
+                    <div className="md:hidden space-y-3">
+                      {visibleWorkEmailCodes.map((row) => (
+                        <div key={row.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-extrabold text-slate-900">{row.code_hint}</div>
+                              <div className="mt-1 text-xs text-slate-600">{row.label || "—"}</div>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              className="!rounded-lg !px-2.5 !py-1 text-xs font-semibold"
+                              onClick={() => void copyFullWorkEmailCode(row)}
+                              title="Copy full code"
+                            >
+                              {copiedCodeRowId === row.id ? "Copied" : "Copy full"}
+                            </Button>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <Chip tone={row.status === "active" ? "success" : "danger"}>{row.status}</Chip>
+                            {row.isExpired && <Chip tone="warn">expired</Chip>}
+                            {row.isExhausted && <Chip tone="info">limit reached</Chip>}
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700">
+                              Usage: {row.use_count}
+                              {row.max_uses ? ` / ${row.max_uses}` : " / unlimited"}
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700">
+                              Expires: {row.expires_at ? row.expires_at.slice(0, 10) : "—"}
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700">
+                              Created: {row.created_at ? row.created_at.slice(0, 10) : "—"}
+                            </div>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-slate-700">
+                              Last used: {row.last_used_at ? row.last_used_at.slice(0, 10) : "—"}
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {(row.isExpired || row.isExhausted) && (
+                              <Button variant="secondary" onClick={() => renewWorkEmailCode(row)}>
+                                Renew
+                              </Button>
+                            )}
+                            {row.status === "active" ? (
+                              <Button variant="secondary" onClick={() => updateWorkEmailCode(row.id, "block")}>
+                                Block
+                              </Button>
+                            ) : (
+                              <Button variant="secondary" onClick={() => updateWorkEmailCode(row.id, "unblock")}>
+                                Activate
+                              </Button>
+                            )}
+                            <Button variant="ghost" onClick={() => deleteWorkEmailCode(row.id)}>
+                              Delete
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {visibleWorkEmailCodes.length === 0 && (
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-6 text-sm text-slate-600">
+                          No codes match this filter.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="hidden md:block overflow-x-auto rounded-lg border border-slate-200">
+                      <table className="min-w-[1020px] w-full text-left text-sm">
                         <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
                           <tr>
                             <th className="px-3 py-3">Code hint</th>
@@ -3324,7 +3429,19 @@ function AdminConsole() {
                         <tbody className="divide-y divide-slate-200">
                           {visibleWorkEmailCodes.map((row) => (
                             <tr key={row.id} className="bg-white">
-                              <td className="px-3 py-3 font-extrabold text-slate-900">{row.code_hint}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-extrabold text-slate-900">{row.code_hint}</div>
+                                  <Button
+                                    variant="ghost"
+                                    className="!rounded-lg !px-2.5 !py-1 text-xs font-semibold"
+                                    onClick={() => void copyFullWorkEmailCode(row)}
+                                    title="Copy full code"
+                                  >
+                                    {copiedCodeRowId === row.id ? "Copied" : "Copy full"}
+                                  </Button>
+                                </div>
+                              </td>
                               <td className="px-3 py-3 text-slate-700">{row.label || "—"}</td>
                               <td className="px-3 py-3">
                                 <div className="flex flex-wrap items-center gap-2">
@@ -3341,7 +3458,7 @@ function AdminConsole() {
                                   </div>
                                   {typeof row.usagePct === "number" && (
                                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-                                      <div className="h-full rounded-full bg-[#0b5cab]" style={{ width: `${row.usagePct}%` }} />
+                                      <div className="h-full rounded-full bg-[#1f4f43]" style={{ width: `${row.usagePct}%` }} />
                                     </div>
                                   )}
                                 </div>

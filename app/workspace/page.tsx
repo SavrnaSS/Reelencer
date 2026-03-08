@@ -1647,8 +1647,8 @@ export default function MarketplaceWorkerPage() {
 
   if (kycStatus !== "approved") {
     return (
-      <div className="min-h-screen bg-slate-50">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dbeafe,transparent_45%)]" />
+      <div className="min-h-screen bg-[#eef4ea]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_45%)]" />
         <div className="relative mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
           <div className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1660,7 +1660,7 @@ export default function MarketplaceWorkerPage() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
+                <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
                   Secure onboarding
                 </span>
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
@@ -1670,10 +1670,10 @@ export default function MarketplaceWorkerPage() {
             </div>
 
             {kycStatus === "pending" && (
-              <div className="mt-5 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-slate-50 p-4 sm:p-5">
+              <div className="mt-5 rounded-2xl border border-[#bcd6c9] bg-gradient-to-br from-[#edf5ef] to-[#f6faf4] p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-base font-semibold text-blue-700">KYC submitted. Pending admin review.</div>
-                  <span className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
+                  <div className="text-base font-semibold text-[#2f6655]">KYC submitted. Pending admin review.</div>
+                  <span className="rounded-full border border-[#bcd6c9] bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
                     In review
                   </span>
                 </div>
@@ -1688,7 +1688,7 @@ export default function MarketplaceWorkerPage() {
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
                     2. Documents uploaded
                   </div>
-                  <div className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700">
+                  <div className="rounded-xl border border-[#bcd6c9] bg-white px-3 py-2 text-xs font-semibold text-[#2f6655]">
                     3. Admin verification in progress
                   </div>
                 </div>
@@ -1867,7 +1867,7 @@ export default function MarketplaceWorkerPage() {
                               Stop camera
                             </button>
                           ) : (
-                            <button type="button" className="text-xs font-semibold text-[#0b5cab] hover:text-[#0f6bc7]" onClick={startCamera}>
+                            <button type="button" className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]" onClick={startCamera}>
                               Start camera
                             </button>
                           )}
@@ -1880,7 +1880,7 @@ export default function MarketplaceWorkerPage() {
                             selfieStep1Done
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : selfieActiveStep === 1
-                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                                 : "border-slate-200 bg-white text-slate-500"
                           }`}
                         >
@@ -1892,7 +1892,7 @@ export default function MarketplaceWorkerPage() {
                             selfieStep2Done
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : selfieActiveStep === 2
-                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                                 : "border-slate-200 bg-white text-slate-500"
                           }`}
                         >
@@ -1904,7 +1904,7 @@ export default function MarketplaceWorkerPage() {
                             selfieStep3Done
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : selfieActiveStep === 3
-                                ? "border-blue-200 bg-blue-50 text-blue-700"
+                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                                 : "border-slate-200 bg-white text-slate-500"
                           }`}
                         >
@@ -1949,7 +1949,7 @@ export default function MarketplaceWorkerPage() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-md bg-[#0b5cab] px-3 py-2 text-xs font-semibold text-white hover:bg-[#0f6bc7] disabled:opacity-60"
+                          className="rounded-md bg-[#1f4f43] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
                           onClick={captureSelfie}
                           disabled={!cameraOn}
                         >
@@ -1989,7 +1989,7 @@ export default function MarketplaceWorkerPage() {
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
                 <div className="text-xs text-slate-600">Review all details before submitting. Incorrect information may delay approval.</div>
                 <button
-                  className="rounded-full bg-[#0b5cab] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0f6bc7] disabled:opacity-60"
+                  className="rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
                   disabled={kycLoading}
                   onClick={async () => {
                     setKycLoading(true);

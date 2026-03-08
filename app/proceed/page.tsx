@@ -245,8 +245,8 @@ function ProceedPageInner() {
       : assignmentStatus === "Rejected"
       ? "border-rose-200 bg-rose-50 text-rose-700"
       : assignmentStatus === "Submitted"
-      ? "border-blue-200 bg-blue-50 text-blue-700"
-      : "border-slate-200 bg-slate-50 text-slate-600";
+      ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
+      : "border-[#d4dccf] bg-[#f4f8f1] text-[#5f746a]";
 
   const assignedList = useMemo(() => {
     const list = assignment?.assignedEmails?.length
@@ -391,8 +391,8 @@ function ProceedPageInner() {
 
   if (!session?.workerId) {
     return (
-      <div className="min-h-screen bg-slate-50 text-slate-900 flex items-center justify-center">
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm text-sm text-slate-600">
+      <div className="min-h-screen bg-[#eef4ea] text-slate-900 flex items-center justify-center">
+        <div className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] p-8 shadow-sm text-sm text-slate-600">
           Please sign in to proceed.
         </div>
       </div>
@@ -400,30 +400,28 @@ function ProceedPageInner() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+    <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
+      <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+        <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#0b5cab] text-white font-black">
-              R
-            </div>
             <div>
-              <div className="text-lg font-semibold tracking-wide">Gig Submission Workspace</div>
+              <div className="text-lg font-semibold tracking-wide">Submission</div>
               <div className="text-xs text-slate-500">Secure credential verification and handoff</div>
             </div>
           </div>
 
           <Link
-            className="rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:border-slate-400"
+            className="rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm text-[#284b3e] hover:border-[#a9bbb1]"
             href="/browse"
           >
-            Return to marketplace
+            Return
           </Link>
         </div>
       </div>
 
-      <main className="mx-auto w-full max-w-5xl px-5 py-8 space-y-6">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
+        <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <div className="text-xs text-slate-500">Gig</div>
@@ -436,18 +434,18 @@ function ProceedPageInner() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="text-sm font-semibold text-slate-900">Assigned dashboard emails (5)</div>
           <div className="mt-2 text-sm text-slate-600">
             Use these five emails to create the five Twitter accounts. Each email must be used once.
           </div>
           <div className="mt-2 text-xs">
-            <Link href="/work-email-creator" className="font-semibold text-[#0b5cab] hover:text-[#0f6bc7]">
+            <Link href="/work-email-creator" className="font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">
               Need custom emails? Open Work Email Creator (secret code required)
             </Link>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">
+          <div className="mt-4 rounded-2xl border border-[#bcd6c9] bg-[#edf5ef] px-4 py-3 text-sm font-semibold text-[#2f6655]">
             {assignment?.assignedEmails?.length ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {assignment.assignedEmails.map((email) => (
@@ -456,7 +454,7 @@ function ProceedPageInner() {
                     className={`inline-flex w-full items-center justify-center rounded-full border px-3 py-2 text-[11px] sm:text-xs ${
                       copiedEmail === email
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-blue-200 bg-white text-blue-800 hover:border-blue-300"
+                        : "border-[#bcd6c9] bg-white text-[#2f6655] hover:border-[#9ec3b2]"
                     }`}
                     onClick={async () => {
                       try {
@@ -479,14 +477,14 @@ function ProceedPageInner() {
             )}
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="mt-4 rounded-2xl border border-[#cfdbc8] bg-[#f4f8f1] p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Inbox</div>
                 <div className="mt-1 text-sm font-semibold text-slate-900">
                   {filteredInbox.length > 0 ? `${filteredInbox.length} messages` : "No messages yet"}
                   {unreadCount > 0 && (
-                    <span className="ml-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">
+                    <span className="ml-2 rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2 py-0.5 text-[11px] text-[#2f6655]">
                       {unreadCount} unread
                     </span>
                   )}
@@ -565,7 +563,7 @@ function ProceedPageInner() {
                           key={msg.id}
                           className={`mb-2 w-full rounded-xl border px-3 py-2 text-left text-xs transition ${
                             isActive
-                              ? "border-blue-200 bg-gradient-to-r from-blue-50 to-white text-blue-900"
+                              ? "border-[#bcd6c9] bg-gradient-to-r from-[#edf5ef] to-white text-[#244f42]"
                               : "border-transparent bg-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
                           }`}
                           onClick={() => {
@@ -578,7 +576,7 @@ function ProceedPageInner() {
                             <div className="flex items-center gap-2">
                               <span
                                 className={`h-2 w-2 rounded-full ${
-                                  isUnread ? "bg-blue-500" : isActive ? "bg-blue-300" : "bg-slate-200"
+                                  isUnread ? "bg-[#2f6655]" : isActive ? "bg-[#9ec3b2]" : "bg-slate-200"
                                 }`}
                               />
                               <div className="font-semibold">{subject}</div>
@@ -703,7 +701,7 @@ function ProceedPageInner() {
 
         
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-slate-900">Submit 5 account credentials</div>
@@ -768,7 +766,7 @@ function ProceedPageInner() {
           )}
 
           {assignmentStatus === "Submitted" && !success && (
-            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+            <div className="mt-4 rounded-xl border border-[#bcd6c9] bg-[#edf5ef] px-3 py-2 text-xs font-semibold text-[#2f6655]">
               In verification: Admin is reviewing your submitted credentials.
             </div>
           )}
@@ -776,7 +774,7 @@ function ProceedPageInner() {
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-500">All fields are encrypted in transit. Do not reuse credentials.</div>
             <button
-              className="rounded-full bg-[#0b5cab] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f6bc7] disabled:opacity-50"
+              className="rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50"
               onClick={submitCredentials}
               disabled={saving || invalidRows}
             >
@@ -791,7 +789,7 @@ function ProceedPageInner() {
 
 export default function ProceedPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+    <Suspense fallback={<div className="min-h-screen bg-[#eef4ea]" />}>
       <ProceedPageInner />
     </Suspense>
   );
