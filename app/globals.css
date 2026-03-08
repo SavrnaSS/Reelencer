@@ -68,3 +68,262 @@ body {
     transform: translateX(24px);
   }
 }
+
+@keyframes sectionSwipeSettle {
+  0% {
+    opacity: 0.68;
+    transform: translateY(18px) scale(0.988);
+    filter: blur(3.4px);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.004);
+    filter: blur(0.25px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.section-swipe-settle {
+  animation: sectionSwipeSettle 760ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity, filter;
+}
+
+@keyframes partnerRailFlow {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-33.333%, 0, 0);
+  }
+}
+
+.partner-rail-mask {
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+}
+
+.partner-rail-track {
+  animation: partnerRailFlow 18s linear infinite;
+  will-change: transform;
+}
+
+.partner-rail-mask:hover .partner-rail-track,
+.partner-rail-mask:focus-within .partner-rail-track {
+  animation-play-state: paused;
+}
+
+/* Workspace/Admin visual skin only (logic untouched) */
+.ops-dashboard-skin {
+  --ops-bg: #edf2ea;
+  --ops-surface: #f8faf7;
+  --ops-card: #f5f7f3;
+  --ops-line: #d8dfd4;
+  --ops-text: #203a32;
+  --ops-muted: #5f7269;
+  --ops-accent: #9adf6f;
+  --ops-accent-strong: #82d85a;
+  --ops-accent-deep: #1f4f43;
+  background: linear-gradient(180deg, #eef3eb 0%, #e7eee5 100%);
+  color: var(--ops-text);
+}
+
+.ops-dashboard-skin .bg-slate-50 {
+  background-color: transparent !important;
+}
+
+.ops-dashboard-skin .border-slate-200 {
+  border-color: var(--ops-line) !important;
+}
+
+.ops-dashboard-skin .text-slate-900 {
+  color: var(--ops-text) !important;
+}
+
+.ops-dashboard-skin .text-slate-700,
+.ops-dashboard-skin .text-slate-600,
+.ops-dashboard-skin .text-slate-500,
+.ops-dashboard-skin .text-slate-400 {
+  color: var(--ops-muted) !important;
+}
+
+.ops-dashboard-skin header.sticky {
+  background: rgba(248, 250, 247, 0.92) !important;
+  border-bottom-color: var(--ops-line) !important;
+  backdrop-filter: blur(10px);
+}
+
+.ops-dashboard-skin aside {
+  background: #e8efe4;
+}
+
+.ops-dashboard-skin .bg-white,
+.ops-dashboard-skin .bg-white\/90,
+.ops-dashboard-skin .bg-white\/95 {
+  background-color: var(--ops-surface) !important;
+}
+
+.ops-dashboard-skin .shadow-sm,
+.ops-dashboard-skin .shadow,
+.ops-dashboard-skin .shadow-xl,
+.ops-dashboard-skin .shadow-lg {
+  box-shadow: 0 10px 30px rgba(25, 57, 47, 0.08) !important;
+}
+
+.ops-dashboard-skin section.rounded-lg,
+.ops-dashboard-skin .rounded-lg.border,
+.ops-dashboard-skin .rounded-md.border,
+.ops-dashboard-skin .rounded-2xl.border {
+  border-radius: 16px !important;
+}
+
+.ops-dashboard-skin .bg-\[\#0078d4\] {
+  background-color: var(--ops-accent-deep) !important;
+}
+
+.ops-dashboard-skin .bg-\[\#e5f1fb\] {
+  background-color: rgba(154, 223, 111, 0.24) !important;
+}
+
+.ops-dashboard-skin .text-\[\#106ebe\] {
+  color: var(--ops-accent-deep) !important;
+}
+
+.ops-dashboard-skin .bg-white.hover\:bg-slate-50:hover,
+.ops-dashboard-skin .hover\:bg-slate-50:hover,
+.ops-dashboard-skin .hover\:bg-slate-100:hover {
+  background-color: #ecf2e8 !important;
+}
+
+.ops-dashboard-skin button[class*="bg-\\[\\#0078d4\\]"],
+.ops-dashboard-skin .bg-\[\#0078d4\].text-white {
+  background: linear-gradient(180deg, #245a4b 0%, #1f4f43 100%) !important;
+  border-color: #1b453a !important;
+}
+
+.ops-dashboard-skin .rounded-full.border {
+  border-color: #cfd8ca !important;
+}
+
+.ops-dashboard-skin .bg-blue-50,
+.ops-dashboard-skin .bg-emerald-50,
+.ops-dashboard-skin .bg-rose-50 {
+  background-color: #f1f6ee !important;
+}
+
+.ops-dashboard-skin .text-blue-700,
+.ops-dashboard-skin .text-emerald-700,
+.ops-dashboard-skin .text-rose-700 {
+  color: #2d5f50 !important;
+}
+
+.ops-dashboard-skin .inline-flex.rounded-md,
+.ops-dashboard-skin .rounded-md {
+  border-radius: 12px !important;
+}
+
+.ops-dashboard-skin .h-10.w-10,
+.ops-dashboard-skin .h-9.w-9 {
+  border-radius: 12px !important;
+}
+
+/* Second-pass polish for closer dashboard proportions */
+.ops-dashboard-skin .max-w-7xl {
+  max-width: 1480px !important;
+}
+
+.ops-dashboard-skin header .max-w-7xl {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+
+.ops-dashboard-skin .grid.grid-cols-12.gap-6 {
+  gap: 20px !important;
+}
+
+.ops-dashboard-skin aside.hidden.lg\:block {
+  border-radius: 20px;
+  border: 1px solid var(--ops-line);
+  box-shadow: 0 16px 36px rgba(22, 58, 46, 0.08);
+}
+
+.ops-dashboard-skin nav.space-y-1 > button,
+.ops-dashboard-skin nav.space-y-1 > a {
+  min-height: 44px;
+  border-radius: 12px !important;
+}
+
+.ops-dashboard-skin nav.space-y-1 > button[class*="bg-"],
+.ops-dashboard-skin nav.space-y-1 > a[class*="bg-"] {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 8px 16px rgba(80, 132, 50, 0.15);
+}
+
+.ops-dashboard-skin .mt-2.flex.flex-wrap.gap-2 {
+  gap: 10px !important;
+  margin-top: 12px !important;
+}
+
+.ops-dashboard-skin .rounded-full.border.px-2\.5.py-1 {
+  border-radius: 999px !important;
+  background: #f2f6ef !important;
+}
+
+.ops-dashboard-skin section.rounded-lg.border,
+.ops-dashboard-skin .overflow-hidden.rounded-lg.border,
+.ops-dashboard-skin .rounded-lg.border.border-slate-200.bg-white {
+  background: linear-gradient(180deg, #f9fbf8 0%, #f4f8f2 100%) !important;
+  border-color: #d2dccd !important;
+}
+
+.ops-dashboard-skin table thead {
+  background: #eef4ea !important;
+}
+
+.ops-dashboard-skin table tbody tr:hover {
+  background: #edf4e9 !important;
+}
+
+.ops-dashboard-skin input,
+.ops-dashboard-skin select,
+.ops-dashboard-skin textarea {
+  border-color: #cfd8ca !important;
+  background: #fbfdf9 !important;
+  color: var(--ops-text) !important;
+}
+
+.ops-dashboard-skin input::placeholder,
+.ops-dashboard-skin textarea::placeholder {
+  color: #7a8d84 !important;
+}
+
+.ops-dashboard-skin .rounded-md.border.border-slate-200.bg-white.px-3.py-2,
+.ops-dashboard-skin .rounded-md.border.border-slate-200.bg-white.px-3.py-3 {
+  background: #f6faf4 !important;
+}
+
+.ops-dashboard-skin .fixed.inset-0 .bg-white.shadow-xl {
+  background: #f5f9f3 !important;
+}
+
+.ops-dashboard-skin .space-y-6 > .space-y-6,
+.ops-dashboard-skin .space-y-6 > .grid {
+  gap: 20px !important;
+}
+
+@media (max-width: 1024px) {
+  .ops-dashboard-skin .max-w-7xl {
+    max-width: 100% !important;
+  }
+
+  .ops-dashboard-skin .grid.grid-cols-12.gap-6 {
+    gap: 14px !important;
+  }
+
+  .ops-dashboard-skin aside.hidden.lg\:block {
+    border-radius: 0;
+    box-shadow: none;
+  }
+}

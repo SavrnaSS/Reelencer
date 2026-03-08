@@ -554,15 +554,15 @@ function Button({
   type?: "button" | "submit";
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-extrabold transition focus:outline-none focus:ring-2 focus:ring-[#0078d4]/30 disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-extrabold transition focus:outline-none focus:ring-2 focus:ring-[#84d85e]/30 disabled:opacity-50 disabled:cursor-not-allowed";
   const styles =
     variant === "primary"
-      ? "bg-[#0078d4] text-white hover:bg-[#106ebe]"
+      ? "border border-[#8fd764] bg-[#9adf6f] text-[#123128] hover:bg-[#8ed65f]"
       : variant === "secondary"
-      ? "border border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+      ? "border border-[#cfd8ca] bg-[#f7faf5] text-[#23453a] hover:bg-[#eef4ea]"
       : variant === "danger"
       ? "bg-rose-600 text-white hover:bg-rose-700"
-      : "text-slate-700 hover:bg-slate-100";
+      : "text-[#476257] hover:bg-[#eaf1e6]";
   return (
     <button type={type} title={title} onClick={onClick} disabled={disabled} className={cx(base, styles, className)}>
       {children}
@@ -581,14 +581,14 @@ function Chip({
 }) {
   const cls =
     tone === "info"
-      ? "border-sky-200 bg-sky-50 text-sky-800"
+      ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
       : tone === "success"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      ? "border-[#b9df9c] bg-[#edf8e6] text-[#2f6655]"
       : tone === "warn"
-      ? "border-amber-200 bg-amber-50 text-amber-800"
+      ? "border-[#d7dfb2] bg-[#f4f7e8] text-[#5c6530]"
       : tone === "danger"
       ? "border-rose-200 bg-rose-50 text-rose-800"
-      : "border-slate-200 bg-slate-50 text-slate-700";
+      : "border-[#d3dbce] bg-[#f2f6ef] text-[#4f6359]";
   return <span className={cx("inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-extrabold", cls, className)}>{children}</span>;
 }
 
@@ -606,7 +606,7 @@ function Card({
   compact?: boolean;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <section className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] shadow-[0_10px_26px_rgba(25,57,47,0.08)]">
       {(title || right) && (
         <div className={cx("flex items-start justify-between gap-3 border-b border-slate-200", compact ? "px-4 py-2" : "px-4 py-3")}>
           <div className="min-w-0">
@@ -2024,7 +2024,7 @@ export default function MarketplaceWorkerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="ops-dashboard-skin min-h-screen bg-slate-50">
       {/* Mobile navigation */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
@@ -2055,14 +2055,14 @@ export default function MarketplaceWorkerPage() {
 
       <div className="flex min-h-screen">
         {/* Desktop sidebar */}
-        <aside className="hidden w-[292px] border-r border-slate-200 bg-white lg:block">
+        <aside className="hidden w-[292px] bg-[#e8efe4] lg:block lg:p-3">
           <SidebarWorker activeSection={activeSection} setActiveSection={setActiveSection} />
         </aside>
 
         {/* Main */}
         <div className="flex-1">
           {/* Header */}
-          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
+          <header className="sticky top-0 z-40 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
             <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
@@ -2750,23 +2750,23 @@ function SidebarWorker({
         onClose?.();
       }}
       className={cx(
-        "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-sm font-extrabold transition",
-        activeSection === id ? "bg-[#e5f1fb] text-[#106ebe]" : "text-slate-800 hover:bg-slate-100"
+        "flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 text-sm font-extrabold transition",
+        activeSection === id ? "bg-[#a7e678]/45 text-[#1f4f43]" : "text-[#3d5b4f] hover:bg-[#dfe9da]"
       )}
     >
       <span className="flex items-center gap-2">
-        <Icon name={icon} className={cx(activeSection === id ? "text-[#106ebe]" : "text-slate-600")} />
+        <Icon name={icon} className={cx(activeSection === id ? "text-[#1f4f43]" : "text-[#698276]")} />
         {label}
       </span>
-      <Icon name="chevRight" className="text-slate-400" />
+      <Icon name="chevRight" className="text-[#8aa094]" />
     </button>
   );
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-4">
+    <div className="flex h-full flex-col rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] shadow-[0_16px_36px_rgba(22,58,46,0.08)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[#d4dccf] px-4 py-4">
         <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-md bg-[#0078d4] text-white font-black">IG</div>
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1f4f43] text-white font-black">IG</div>
           <div className="leading-tight">
             <div className="text-sm font-extrabold text-slate-900">Worker Console</div>
             <div className="text-xs text-slate-600">Operations console</div>
@@ -2775,7 +2775,7 @@ function SidebarWorker({
 
         {onClose && (
           <button
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#d1dacb] bg-[#f8faf7] hover:bg-[#ecf3e8]"
             onClick={onClose}
             aria-label="Close"
           >
@@ -2793,7 +2793,7 @@ function SidebarWorker({
       </nav>
 
       <div className="mt-auto px-4 py-4">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+        <div className="rounded-xl border border-[#d3dbce] bg-[#edf4e8] p-3 text-sm text-[#4f6359]">
           <div className="text-xs font-extrabold text-slate-600">Worker rule</div>
           <div className="mt-1">Submit accurate proof. Admin decides approval/rejection.</div>
         </div>

@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { isAdminRole } from "@/lib/roles";
 import { supabase } from "@/lib/supabaseClient";
 import { usePathname, useRouter } from "next/navigation";
 
@@ -2144,7 +2145,7 @@ export default function AdminPage() {
       // 1) ✅ Demo/local admin session support (kept)
       // IMPORTANT: only trust LS if role is Admin (as before).
       const lsSession = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
-      if (lsSession?.role === "Admin") {
+      if (isAdminRole(lsSession?.role)) {
         if (!alive) return;
         setOk(true);
         return;
@@ -2162,7 +2163,7 @@ export default function AdminPage() {
 
       const { data: profile, error } = await supabase.from("profiles").select("role").eq("id", user.id).single();
 
-      if (error || profile?.role !== "Admin") {
+      if (error || !isAdminRole(profile?.role)) {
         if (!alive) return;
         router.replace("/workspace");
         return;

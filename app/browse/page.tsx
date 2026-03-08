@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import Image from "next/image";
+import Link from "next/link";
 import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -36,6 +36,12 @@ type GigApplication = {
   decidedAt?: string;
 };
 
+type GigAssignment = {
+  gigId?: string;
+  gig_id?: string;
+  status?: string;
+};
+
 function isFullTimeGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -54,101 +60,36 @@ const LS_KEYS = {
   GIG_APPS: "igops:gig-apps",
 } as const;
 
-const seedGigs: Gig[] = [
-  {
-    id: "GIG-1042",
-    title: "Reel Creator — Lifestyle Skincare",
-    company: "Lumina Labs",
-    verified: true,
-    platform: "Instagram",
-    location: "Remote",
-    workload: "12 reels / month",
-    payout: "₹65,000",
-    payoutType: "Monthly",
-    gigType: "Part-time",
-    requirements: ["10k+ followers", "Beauty niche experience", "3-day turnaround"],
-    status: "Open",
-    postedAt: "Posted 2 days ago",
-  },
-  {
-    id: "GIG-1051",
-    title: "Short-Form Editor — Fintech",
-    company: "AxisPay",
-    verified: true,
-    platform: "X",
-    location: "Remote",
-    workload: "18 posts / week",
-    payout: "₹1,200",
-    payoutType: "Per post",
-    gigType: "Part-time",
-    requirements: ["Thread + visuals", "Daily reporting", "Compliance ready"],
-    status: "Open",
-    postedAt: "Posted today",
-  },
-  {
-    id: "GIG-1017",
-    title: "Creator Ops — Fitness Studio",
-    company: "PulseCore",
-    verified: true,
-    platform: "TikTok",
-    location: "Hybrid • Mumbai",
-    workload: "20 clips / month",
-    payout: "₹2,500",
-    payoutType: "Per task",
-    gigType: "Part-time",
-    requirements: ["On-site shoots twice/month", "Editing in CapCut", "Brand-safe music"],
-    status: "Open",
-    postedAt: "Posted 4 days ago",
-  },
-  {
-    id: "GIG-1099",
-    title: "Brand Social Specialist — SaaS",
-    company: "NimbusHQ",
-    verified: true,
-    platform: "LinkedIn",
-    location: "Remote",
-    workload: "10 posts / month",
-    payout: "₹48,000",
-    payoutType: "Monthly",
-    gigType: "Part-time",
-    requirements: ["B2B tone", "Carousel design", "Analytics reporting"],
-    status: "Paused",
-    postedAt: "Posted 1 day ago",
-  },
-  {
-    id: "GIG-1104",
-    title: "Shorts Creator — Consumer Tech",
-    company: "Nova Devices",
-    verified: true,
-    platform: "YouTube",
-    location: "Remote",
-    workload: "8 shorts / week",
-    payout: "₹1,800",
-    payoutType: "Per post",
-    gigType: "Part-time",
-    requirements: ["Voice-over + captions", "UGC style", "48h turnaround"],
-    status: "Open",
-    postedAt: "Posted 3 hours ago",
-  },
-  {
-    id: "GIG-1112",
-    title: "Storyteller — Travel Brand",
-    company: "SkyMiles Co.",
-    verified: true,
-    platform: "Instagram",
-    location: "Remote",
-    workload: "6 reels / month",
-    payout: "₹28,000",
-    payoutType: "Monthly",
-    gigType: "Part-time",
-    requirements: ["Travel niche", "On-camera presence", "Content calendar discipline"],
-    status: "Closed",
-    postedAt: "Posted 1 week ago",
-  },
-];
-
 const STATUS_OPTIONS: GigStatus[] = ["Open", "Paused", "Closed"];
 const PLATFORM_OPTIONS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
+const DEMO_GIG_IDS = new Set(["GIG-1042", "GIG-1051", "GIG-1017", "GIG-1099", "GIG-1104", "GIG-1112"]);
+const DEV_ADMIN_HEADERS: Record<string, string> = process.env.NODE_ENV !== "production" ? { "x-dev-bypass": "1" } : {};
+
+function isSeedGig(gig: Gig) {
+  return DEMO_GIG_IDS.has(String(gig.id));
+}
+
+function normalizeGigList(value: unknown) {
+  return toArray<Gig>(value, []).filter((gig) => gig && typeof gig.id === "string" && !isSeedGig(gig));
+}
+
+function mergeGigLists(primary: Gig[], fallback: Gig[]) {
+  const map = new Map<string, Gig>();
+  for (const gig of fallback) {
+    map.set(gig.id, gig);
+  }
+  for (const gig of primary) {
+    map.set(gig.id, gig);
+  }
+  return Array.from(map.values());
+}
+
+function isGigActive(gig: Pick<Gig, "status">) {
+  const raw = String(gig.status ?? "")
+    .trim()
+    .toLowerCase();
+  return raw !== "closed" && raw !== "inactive" && raw !== "archived" && raw !== "deleted";
+}
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -171,14 +112,62 @@ function writeLS<T>(key: string, value: T) {
   }
 }
 
-function toArray<T>(value: any, fallback: T[]): T[] {
+function toArray<T>(value: unknown, fallback: T[]): T[] {
   return Array.isArray(value) ? (value as T[]) : fallback;
+}
+
+async function fetchJsonWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return response;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function getBrowseDisplayName(user: { email?: string | null; user_metadata?: { name?: string; full_name?: string } }) {
+  const explicitName = user.user_metadata?.name?.trim() || user.user_metadata?.full_name?.trim();
+  if (explicitName) return explicitName;
+
+  const email = user.email?.trim();
+  if (!email) return "User";
+
+  const local = email.split("@")[0]?.replace(/[._-]+/g, " ").trim();
+  if (!local) return "User";
+
+  return local.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function BrandMark({ compact = false, showTagline = true }: { compact?: boolean; showTagline?: boolean }) {
+  return (
+    <Link href="/" className="flex items-center gap-3 text-white">
+      <div className={`relative overflow-hidden ${compact ? "h-11 w-11" : "h-14 w-14"}`}>
+        <Image src="/logo-mark.svg" alt="Reelencer logo mark" fill sizes={compact ? "44px" : "56px"} className="object-contain" />
+      </div>
+      <div className="leading-none">
+        <div
+          className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-white ${
+            compact ? "text-[1.65rem]" : "text-[2.05rem] sm:text-[2.2rem]"
+          }`}
+        >
+          Reelencer
+        </div>
+        {showTagline && (
+          <div className={`${compact ? "mt-0.5 text-[0.72rem]" : "mt-1 text-[0.95rem]"} font-medium text-white/82`}>
+            Freelance Creator Platform
+          </div>
+        )}
+      </div>
+    </Link>
+  );
 }
 
 export default function BrowsePage() {
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [apps, setApps] = useState<GigApplication[]>([]);
-  const [assignments, setAssignments] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<GigAssignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedGig, setSelectedGig] = useState<Gig | null>(null);
   const [workerId, setWorkerId] = useState<string | null>(null);
@@ -188,7 +177,12 @@ export default function BrowsePage() {
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [displayName, setDisplayName] = useState<string>("User");
   const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">("none");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const isGuest = !role;
+  const dashboardHref = role === "Admin" ? "/admin" : "/workspace";
+  const loginHref = "/login?next=/browse";
+  const signupHref = "/signup?next=/browse";
+  const kycActionLabel = role === "Admin" ? "Open KYC Review" : "Complete mini KYC";
 
   const [keyword, setKeyword] = useState("");
   const [platforms, setPlatforms] = useState<Platform[]>([]);
@@ -196,7 +190,8 @@ export default function BrowsePage() {
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
   const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Part-time" | "Full-time">("All");
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
-
+  const hasApprovedKyc = role === "Worker" && (!!workerId || kycStatus === "approved");
+  const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
   const computeMenuAnchor = React.useCallback(() => {
     const el = menuButtonRef.current;
     if (!el) return;
@@ -206,6 +201,15 @@ export default function BrowsePage() {
     const left = Math.max(margin, Math.min(rect.right - popupWidth, window.innerWidth - popupWidth - margin));
     setMenuAnchor({ top: rect.bottom + 8, left });
   }, []);
+
+  const closeMenu = React.useCallback(() => {
+    if (!menuOpen) return;
+    setMenuClosing(true);
+    window.setTimeout(() => {
+      setMenuOpen(false);
+      setMenuClosing(false);
+    }, 160);
+  }, [menuOpen]);
 
   useEffect(() => {
     const session = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -222,37 +226,41 @@ export default function BrowsePage() {
     setWorkerId(null);
   }, []);
 
-  const refreshKyc = async () => {
+  const refreshKyc = React.useCallback(async () => {
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token;
       if (token) {
-        const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}`, ...DEV_ADMIN_HEADERS } });
         const payload = res.ok ? await res.json() : null;
         setKycStatus(payload?.status ?? "none");
+        if (payload?.status === "approved" && payload?.workerId && role === "Worker") {
+          setWorkerId(String(payload.workerId));
+        }
       }
     } catch {
       // ignore
     }
-  };
+  }, [role]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase.auth.getUser();
-      const name = data?.user?.user_metadata?.name ?? data?.user?.email ?? "User";
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+      const name = user ? getBrowseDisplayName(user) : "User";
       if (alive) setDisplayName(String(name));
-      await refreshKyc();
+      void refreshKyc();
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refreshKyc]);
 
   useEffect(() => {
     if (!menuOpen) return;
     refreshKyc();
-  }, [menuOpen]);
+  }, [menuOpen, refreshKyc]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -282,7 +290,7 @@ export default function BrowsePage() {
       if (timer) window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [workerId]);
+  }, [refreshKyc, workerId]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -301,7 +309,7 @@ export default function BrowsePage() {
       window.removeEventListener("click", onClick);
       window.removeEventListener("keydown", onKey);
     };
-  }, [menuOpen]);
+  }, [closeMenu, menuOpen]);
 
   const signOut = async () => {
     try {
@@ -312,73 +320,79 @@ export default function BrowsePage() {
     try {
       window.localStorage.removeItem(LS_KEYS.AUTH);
     } catch {}
-    window.location.replace("/login?next=/browse");
+    window.location.replace(loginHref);
   };
-
-  function closeMenu() {
-    if (!menuOpen) return;
-    setMenuClosing(true);
-    window.setTimeout(() => {
-      setMenuOpen(false);
-      setMenuClosing(false);
-    }, 160);
-  }
 
   useEffect(() => {
     let alive = true;
 
     (async () => {
       setLoading(true);
+      const cachedGigs = normalizeGigList(readLS(LS_KEYS.GIGS, []));
+      if (alive && cachedGigs.length > 0) {
+        setGigs(cachedGigs);
+        setLoading(false);
+      }
+
+      let gigsLoaded = false;
       try {
-        const res = await fetch("/api/gigs", { method: "GET" });
-        if (res.ok) {
-          const data = await res.json();
-          if (!alive) return;
-          const safe = toArray<Gig>(data, seedGigs);
-          setGigs(safe);
-          writeLS(LS_KEYS.GIGS, safe);
-        } else {
-          throw new Error("Failed to load gigs");
+        const res = await fetchJsonWithTimeout("/api/gigs", { method: "GET" }, 3500);
+        if (!res.ok) throw new Error("Failed to load gigs");
+        const data = await res.json();
+        if (!alive) return;
+        const liveGigs = normalizeGigList(data);
+        const mergedGigs = mergeGigLists(liveGigs, cachedGigs);
+        setGigs(mergedGigs);
+        gigsLoaded = mergedGigs.length > 0;
+        setLoading(false);
+        if (mergedGigs.length > 0) {
+          writeLS(LS_KEYS.GIGS, mergedGigs);
         }
       } catch {
-        const cached = toArray<Gig>(readLS(LS_KEYS.GIGS, seedGigs), seedGigs);
-        setGigs(cached);
+        if (alive) setLoading(false);
+      }
+
+      if (!gigsLoaded && alive) {
+        setGigs(cachedGigs);
+        setLoading(false);
       }
 
       if (workerId) {
-        try {
-          const query = `?workerId=${encodeURIComponent(workerId)}`;
-          const res = await fetch(`/api/gig-applications${query}`, { method: "GET" });
-          if (res.ok) {
+        const cachedApps = toArray<GigApplication>(readLS(LS_KEYS.GIG_APPS, []), []);
+        if (alive) setApps(cachedApps.filter((app) => app.workerId === workerId));
+
+        void (async () => {
+          try {
+            const query = `?workerId=${encodeURIComponent(workerId)}`;
+            const res = await fetch(`/api/gig-applications${query}`, { method: "GET" });
+            if (!res.ok) throw new Error("Failed to load apps");
             const data = await res.json();
             if (!alive) return;
             const safe = toArray<GigApplication>(data, []);
             setApps(safe);
             writeLS(LS_KEYS.GIG_APPS, safe);
-          } else {
-            throw new Error("Failed to load apps");
+          } catch {
+            if (!alive) return;
+            setApps(cachedApps.filter((app) => app.workerId === workerId));
           }
-        } catch {
-          const cached = toArray<GigApplication>(readLS(LS_KEYS.GIG_APPS, []), []);
-          setApps(cached.filter((app) => app.workerId === workerId));
-        }
+        })();
 
-        try {
-          const res = await fetch(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`, { method: "GET" });
-          if (res.ok) {
+        void (async () => {
+          try {
+            const res = await fetch(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`, { method: "GET" });
+            if (!res.ok) throw new Error("Failed to load assignments");
             const data = await res.json();
             if (!alive) return;
             setAssignments(Array.isArray(data) ? data : []);
+          } catch {
+            if (!alive) return;
+            setAssignments([]);
           }
-        } catch {
-          setAssignments([]);
-        }
+        })();
       } else if (alive) {
         setApps([]);
         setAssignments([]);
       }
-
-      if (alive) setLoading(false);
     })();
 
     return () => {
@@ -409,7 +423,7 @@ export default function BrowsePage() {
   }, [apps]);
 
   const assignmentByGig = useMemo(() => {
-    const map = new Map<string, any>();
+    const map = new Map<string, GigAssignment>();
     assignments.forEach((a) => map.set(String(a.gigId ?? a.gig_id), a));
     return map;
   }, [assignments]);
@@ -418,7 +432,7 @@ export default function BrowsePage() {
 
   const applyForGig = async (gig: Gig) => {
     if (!workerId) {
-      window.location.href = "/login?next=/browse";
+      window.location.href = loginHref;
       return;
     }
     if (gig.status !== "Open") return;
@@ -469,10 +483,10 @@ export default function BrowsePage() {
 
   const renderProfileMenu = (desktop = false) => (
     <>
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Navigation</div>
+      <div className="flex items-center justify-between border-b border-white/8 px-4 py-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[#95ea63]">Command Center</div>
         <button
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-xs font-semibold text-slate-600 shadow-sm hover:border-slate-300 cursor-pointer"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/12 bg-white/6 text-xs font-semibold text-white/80 shadow-sm transition hover:bg-white/10 cursor-pointer"
           onClick={closeMenu}
           aria-label="Close menu"
         >
@@ -480,105 +494,114 @@ export default function BrowsePage() {
         </button>
       </div>
       <div className={desktop ? "px-4 pb-4 pt-4" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
-        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white px-4 py-4 shadow-sm">
+        <div className="rounded-[1.8rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0b5cab] text-lg font-bold text-white">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-lg font-bold text-[#10251b]">
               {displayName.slice(0, 1).toUpperCase()}
             </div>
             <div>
-              <div className="text-base font-semibold text-slate-900">{displayName}</div>
-              <div className="text-xs text-slate-500">{role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}</div>
+              <div className="text-base font-semibold text-white">{displayName}</div>
+              <div className="text-xs text-white/50">{role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}</div>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {isGuest ? (
               <>
-                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">Sign in required</span>
-                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-blue-700">Guest access</span>
+                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/58">Sign in required</span>
+                <span className="inline-flex items-center rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-[#a6f56f]">Guest access</span>
               </>
             ) : (
               <>
-                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">KYC: {kycStatus}</span>
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-700">Trusted</span>
+                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/58">KYC: {kycBadgeStatus}</span>
+                <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${hasApprovedKyc ? "border border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#a6f56f]" : "border border-white/10 bg-white/6 text-white/58"}`}>
+                  {hasApprovedKyc ? "Trusted" : "Verification required"}
+                </span>
               </>
             )}
           </div>
         </div>
 
         {isGuest ? (
-          <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-4">
-            <div className="text-sm font-semibold text-slate-900">Sign in to unlock the workspace</div>
-            <p className="mt-1 text-xs text-slate-600">Access assignments, payouts, and verified gigs once you’re signed in.</p>
+          <div className="mt-4 rounded-[1.6rem] border border-white/10 bg-black/10 px-4 py-4">
+            <div className="text-sm font-semibold text-white">Sign in to unlock the workspace</div>
+            <p className="mt-1 text-xs leading-5 text-white/62">Access assignments, payouts, and verified gigs once you’re signed in.</p>
             <div className="mt-3 grid gap-2">
-              <Link className="rounded-xl bg-[#0b5cab] px-3 py-3 text-center text-xs font-semibold text-white hover:bg-[#0f6bc7] cursor-pointer" href="/login" onClick={closeMenu}>Sign in</Link>
-              <Link className="rounded-xl border border-blue-200 bg-white px-3 py-3 text-center text-xs font-semibold text-blue-700 shadow-sm hover:border-blue-300 cursor-pointer" href="/signup" onClick={closeMenu}>Create account</Link>
-              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+              <Link className="rounded-xl bg-[#8fe05f] px-3 py-3 text-center text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d] cursor-pointer" href={loginHref} onClick={closeMenu}>Sign in</Link>
+              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-center text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href={signupHref} onClick={closeMenu}>Create account</Link>
+              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-center text-xs font-semibold text-white/82 shadow-sm transition hover:bg-white/10 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
             </div>
           </div>
         ) : (
           <>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/workspace" onClick={closeMenu}>Workspace</Link>
-              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Admin" : "Workspace"}</Link>
+              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
             </div>
-            <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Quick links</div>
+            <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">Quick links</div>
             <div className="mt-2 space-y-1">
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-slate-400">›</span></Link>
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/workspace" onClick={closeMenu}>Go to workspace<span className="text-slate-400">›</span></Link>
-              {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-slate-400">›</span></Link>}
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer" href="/workspace" onClick={closeMenu}>My assignments<span className="text-slate-400">›</span></Link>
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-white/35">›</span></Link>
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Go to admin" : "Go to workspace"}<span className="text-white/35">›</span></Link>
+              {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-white/35">›</span></Link>}
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href={role === "Admin" ? dashboardHref : "/my-assignments"} onClick={closeMenu}>{role === "Admin" ? "Approval queue" : "My assignments"}<span className="text-white/35">›</span></Link>
             </div>
-            <div className="mt-4 rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2">
-              <button className="w-full text-left text-sm font-semibold text-rose-600 cursor-pointer" onClick={signOut}>Sign out</button>
+            <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 px-3 py-2">
+              <button className="w-full text-left text-sm font-semibold text-[#ff9f9f] cursor-pointer" onClick={signOut}>Sign out</button>
             </div>
           </>
         )}
+        <Link
+          href="mailto:support@reelencer.com"
+          className="group mt-4 flex items-center gap-3 rounded-2xl border border-white/14 bg-[linear-gradient(135deg,#1f2228,#171a1f)] px-3 py-3 text-left shadow-[0_14px_28px_rgba(0,0,0,0.28)] transition hover:border-white/22 hover:bg-[linear-gradient(135deg,#22262d,#1a1d23)]"
+          onClick={closeMenu}
+        >
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[1.25rem]">✉️</span>
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.13em] text-white/62">Send us mail for any query</span>
+            <span className="block truncate text-[1.03rem] font-bold text-white">support@reelencer.com</span>
+          </span>
+          <span className="text-xl text-white/62 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
+        </Link>
       </div>
     </>
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-[#f5faff] to-slate-50 text-slate-900">
-      <div className="relative z-0 border-b border-slate-200 bg-white">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-5 sm:py-5">
+    <div className="min-h-screen bg-[#041f1a] text-white">
+      <div className="relative isolate min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(45,130,105,0.22),transparent_34%),radial-gradient(circle_at_top_right,rgba(18,64,53,0.36),transparent_26%),linear-gradient(135deg,#0d4b3d_0%,#08342b_58%,#051916_100%)]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/45 to-transparent" />
+        <header className="relative z-30">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 pb-4 pt-4 sm:px-6 sm:pt-5 lg:px-8">
           <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
-            <Link href="/" className="shrink-0" aria-label="Go to home">
-              <Image
-                src="/reelencer-logo-transparent-v1.png"
-                alt="Reelencer"
-                width={1160}
-                height={508}
-                className="h-auto w-[125px] sm:w-[160px]"
-                priority
-              />
-            </Link>
-            <div className="hidden sm:block">
-              <div className="inline-flex items-center rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-                Browse gigs
-              </div>
-              <div className="mt-1 text-sm text-slate-500">Verified gig marketplace</div>
+            <div className="hidden lg:block">
+              <BrandMark showTagline={false} />
             </div>
+            <div className="lg:hidden">
+              <BrandMark compact showTagline={false} />
+            </div>
+            
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="relative" data-profile-menu>
               <button
                 ref={menuButtonRef}
-                className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 cursor-pointer"
+                className="flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-xs font-semibold text-white shadow-sm backdrop-blur-md transition hover:bg-white/10 cursor-pointer"
                 onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0b5cab] text-sm font-bold text-white sm:h-9 sm:w-9">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-sm font-bold text-[#10251b] sm:h-9 sm:w-9">
                   {displayName.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="text-slate-400">▾</span>
+                <span className="hidden max-w-[12rem] truncate text-sm text-white/90 sm:block">{displayName}</span>
+                <span className="text-white/45">▾</span>
               </button>
               {menuOpen &&
                 typeof document !== "undefined" &&
                 createPortal(
                   <>
-                    <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/45 md:hidden">
+                    <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-black/45 md:hidden">
                       <div
                         data-profile-menu-panel
-                        className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-slate-200 bg-white shadow-2xl transition-all duration-200 ease-out ${
+                        className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-white/10 bg-[#103e34]/98 text-white shadow-2xl transition-all duration-200 ease-out ${
                           menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
                         }`}
                       >
@@ -587,7 +610,7 @@ export default function BrowsePage() {
                     </div>
                     <div
                       data-profile-menu-panel
-                      className={`fixed z-[9991] hidden w-80 rounded-2xl border border-slate-200 bg-white shadow-2xl md:block ${
+                      className={`fixed z-[9991] hidden w-80 rounded-[1.6rem] border border-white/10 bg-[#103e34]/98 text-white shadow-2xl backdrop-blur-xl md:block ${
                         menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
                       }`}
                       style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left } : { top: 80, right: 24 }}
@@ -599,74 +622,72 @@ export default function BrowsePage() {
                 )}
             </div>
           </div>
-        </div>
-      </div>
+          </div>
+        </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-5 sm:py-8">
-        <section className="relative grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
-          <div className="pointer-events-none absolute -left-10 -top-10 hidden h-32 w-32 rounded-full bg-blue-100/70 blur-3xl lg:block" />
-          <div className="pointer-events-none absolute -bottom-10 right-10 hidden h-32 w-32 rounded-full bg-emerald-100/50 blur-3xl lg:block" />
+        <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-2 sm:px-6 sm:pb-14 lg:px-8">
+        <section className="relative grid gap-6 lg:grid-cols-[1.12fr_0.88fr] lg:items-center">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-700">
-              Corporate marketplace
-            </div>
-            <h1 className="mt-4 text-balance text-3xl font-semibold leading-tight text-slate-900 sm:text-4xl">
-              Browse verified gigs from admins and trusted businesses.
+            <h1 className="mt-6 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[3.2rem] leading-[0.92] font-bold tracking-[-0.05em] text-white sm:text-[4.2rem]">
+              Browse Verified
+              <br />
+              Gigs, Clear
+              <br />
+              Payouts, Faster.
             </h1>
-            <p className="text-pretty mt-3 text-sm leading-relaxed text-slate-600 sm:text-base">
-              Explore structured opportunities with clear requirements, workload expectations, and transparent payout
-              structures. Apply directly to roles that match your platform expertise and earning goals.
+            <p className="mt-6 max-w-3xl text-[1.04rem] font-medium leading-[1.58] tracking-[-0.02em] text-white/80 sm:text-[1.18rem]">
+              Explore Reelencer opportunities with structured briefs, visible workload expectations, and transparent payout logic. The browse flow now carries the same premium operating-system feel as the homepage.
             </p>
             {!workerId && (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
-                Sign in to apply for gigs. Browsing is public, applications require an authenticated workspace session.
+              <div className="mt-5 inline-flex rounded-full border border-[#8fe05f]/25 bg-[#8fe05f]/8 px-4 py-2 text-sm font-medium text-[#b7f18e]">
+                Sign in to apply. Browsing stays public, applications require an authenticated workspace session.
               </div>
             )}
           </div>
-          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <div className="text-xs font-semibold text-slate-500">Marketplace summary</div>
-            <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-slate-600 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4">
-                <div className="text-xs text-slate-500">Active gigs</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-900">{gigs.filter((g) => g.status === "Open").length}</div>
+          <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(22,72,60,0.88),rgba(10,38,31,0.92))] p-4 shadow-[0_25px_60px_rgba(0,0,0,0.18)] backdrop-blur-md sm:p-6">
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#95ea63]">Marketplace summary</div>
+            <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-white/70 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
+              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
+                <div className="text-xs text-white/45">Active gigs</div>
+                <div className="mt-2 text-2xl font-semibold text-white">{gigs.filter(isGigActive).length}</div>
               </div>
-              <div className="rounded-2xl border border-blue-200 bg-blue-50/45 p-4">
-                <div className="text-xs text-slate-500">Verified employers</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-900">18</div>
+              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
+                <div className="text-xs text-white/45">Verified employers</div>
+                <div className="mt-2 text-2xl font-semibold text-white">18</div>
               </div>
-              <div className="rounded-2xl border border-violet-200 bg-violet-50/45 p-4">
-                <div className="text-xs text-slate-500">Median payout</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-900">₹52k</div>
+              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
+                <div className="text-xs text-white/45">Median payout</div>
+                <div className="mt-2 text-2xl font-semibold text-white">₹52k</div>
               </div>
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/55 p-4">
-                <div className="text-xs text-slate-500">Avg. response</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-900">36h</div>
+              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
+                <div className="text-xs text-white/45">Avg. response</div>
+                <div className="mt-2 text-2xl font-semibold text-white">36h</div>
               </div>
             </div>
           </div>
         </section>
 
         <section className="mt-7 grid gap-6 lg:mt-10 lg:grid-cols-[320px_1fr]">
-          <aside className="sticky top-20 hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:block">
-            <div className="text-sm font-semibold text-slate-900">Filters</div>
-            <div className="mt-4 space-y-4 text-sm text-slate-600">
+          <aside className="sticky top-20 hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(7,31,26,0.92))] p-6 shadow-[0_24px_55px_rgba(0,0,0,0.16)] backdrop-blur-md lg:block">
+            <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[#95ea63]">Filters</div>
+            <div className="mt-4 space-y-4 text-sm text-white/72">
               <div>
-                <div className="text-xs font-semibold text-slate-500">Keyword</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Keyword</div>
                 <input
-                  className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[#0b5cab] focus:ring-2 focus:ring-[#0b5cab]/15"
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#8fe05f]/45 focus:ring-2 focus:ring-[#8fe05f]/10"
                   placeholder="Search title, brand, platform"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                 />
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-500">Platform</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Platform</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-white/78">
                   {PLATFORM_OPTIONS.map((p) => (
-                    <label key={p} className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-2">
+                    <label key={p} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/6 px-3 py-2.5">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 accent-[#0b5cab]"
+                        className="h-4 w-4 accent-[#8fe05f]"
                         checked={platforms.includes(p)}
                         onChange={(e) => {
                           setPlatforms((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)));
@@ -678,14 +699,14 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-500">Payout model</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Payout model</div>
                 <div className="mt-2 space-y-2">
                   {(["All", "Per task", "Per post", "Monthly"] as const).map((p) => (
                     <label key={p} className="flex items-center gap-2 text-sm">
                       <input
                         type="radio"
                         name="payout"
-                        className="h-4 w-4 accent-[#0b5cab]"
+                        className="h-4 w-4 accent-[#8fe05f]"
                         checked={payoutType === p}
                         onChange={() => setPayoutType(p)}
                       />
@@ -695,13 +716,13 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-500">Status</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Status</div>
                 <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
                   {["All", ...STATUS_OPTIONS].map((s) => (
                     <button
                       key={s}
                       className={`rounded-full border px-3 py-1 text-xs ${
-                        statusFilter === s ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-600"
+                        statusFilter === s ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
                       }`}
                       onClick={() => setStatusFilter(s as GigStatus | "All")}
                     >
@@ -711,13 +732,13 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold text-slate-500">Gig type</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Gig type</div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                   {(["All", "Part-time", "Full-time"] as const).map((t) => (
                     <button
                       key={t}
                       className={`rounded-full border px-3 py-1 text-xs ${
-                        gigTypeFilter === t ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 bg-slate-50 text-slate-600"
+                        gigTypeFilter === t ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
                       }`}
                       onClick={() => setGigTypeFilter(t)}
                     >
@@ -727,7 +748,7 @@ export default function BrowsePage() {
                 </div>
               </div>
               <button
-                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
                 onClick={resetFilters}
               >
                 Reset filters
@@ -736,18 +757,36 @@ export default function BrowsePage() {
           </aside>
 
           <section className="space-y-4">
+            <div className="lg:hidden">
+              <div className="flex items-center gap-3 rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-3 backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={() => setMobileFiltersOpen(true)}
+                  className="inline-flex min-h-12 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-5 text-sm font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
+                >
+                  Open filters
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-white/42">Marketplace view</div>
+                  <div className="truncate text-sm text-white/78">
+                    {visibleGigs.length} gigs matching your current filters
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {loading && (
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
+              <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-4 py-6 text-sm text-white/60 backdrop-blur-sm">
                 Loading marketplace...
               </div>
             )}
 
             {!loading && visibleGigs.length === 0 && (
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">
-                <div className="text-base font-semibold text-slate-900">No gigs match your filters</div>
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-sm text-white/62 shadow-sm backdrop-blur-sm">
+                <div className="text-base font-semibold text-white">No gigs match your filters</div>
                 <p className="mt-1">Try clearing filters or broadening your search terms.</p>
                 <button
-                  className="mt-3 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                  className="mt-3 rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
                   onClick={resetFilters}
                 >
                   Reset all filters
@@ -755,75 +794,87 @@ export default function BrowsePage() {
               </div>
             )}
 
-            <div className="grid gap-3 sm:gap-4">
-              {visibleGigs.map((gig) => {
+            <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
+              {visibleGigs.map((gig, index) => {
                 const app = appByGig.get(gig.id);
                 const assignment = assignmentByGig.get(gig.id);
                 const isFullTime = isFullTimeGig(gig);
-                const partTimeLocked = gig.gigType === "Part-time" && !!workerId && kycStatus !== "approved";
+                const isFeaturedCard = index === 0 || (index === 1 && visibleGigs[0]?.status !== "Open" && gig.status === "Open");
+                const kycLocked = isFullTime && role === "Worker" && !hasApprovedKyc;
+                const guestLocked = isGuest;
+                const accessLocked = kycLocked || guestLocked;
+                const kycActionHref =
+                  role === "Admin"
+                    ? "/addgigs#kyc-review"
+                    : role === "Worker"
+                      ? `/proceed?gigId=${encodeURIComponent(gig.id)}&kyc=1`
+                      : loginHref;
                 const derivedStatus = app?.status ?? assignment?.status ?? undefined;
-                const canApply = gig.status === "Open" && !!workerId && !partTimeLocked;
+                const canApply = gig.status === "Open" && !!workerId && !kycLocked;
                 const needsSignIn = !workerId;
                 const canProceed =
                   !!workerId &&
-                  !partTimeLocked &&
+                  !kycLocked &&
                   (app?.status === "Applied" || app?.status === "Accepted" || assignment?.status === "Submitted" || assignment?.status === "Assigned");
                 const statusTone =
                   derivedStatus === "Accepted"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
                   : derivedStatus === "Rejected"
-                    ? "border-rose-200 bg-rose-50 text-rose-700"
-                    : derivedStatus === "Applied" || derivedStatus === "Assigned"
-                    ? "border-blue-200 bg-blue-50 text-blue-700"
-                    : "border-slate-200 bg-slate-50 text-slate-600";
+                    ? "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
+                  : derivedStatus === "Applied" || derivedStatus === "Assigned"
+                    ? "border-white/12 bg-white/8 text-white/82"
+                    : "border-white/10 bg-white/6 text-white/58";
                 const gigStatusTone =
                   gig.status === "Open"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
                     : gig.status === "Paused"
-                      ? "border-amber-200 bg-amber-50 text-amber-700"
-                      : "border-slate-200 bg-slate-100 text-slate-600";
+                      ? "border-white/12 bg-white/8 text-white/72"
+                      : "border-white/10 bg-white/6 text-white/50";
                 const applyLabel = needsSignIn ? "Sign in to apply" : assignment ? "Assigned" : app ? "Applied" : "Apply now";
-                const applyBtnClass = !canApply || !!app || !!assignment ? "bg-slate-300 text-white" : "bg-[#0b5cab] text-white shadow-sm hover:bg-[#0f6bc7]";
-                if (partTimeLocked) {
+                const applyBtnClass =
+                  !canApply || !!app || !!assignment
+                    ? "bg-white/14 text-white/55"
+                    : "bg-[#8fe05f] text-[#10251b] shadow-sm transition hover:bg-[#9aed6d]";
+                if (accessLocked) {
                   return (
                     <div
                       key={gig.id}
-                      className="relative overflow-hidden rounded-3xl border border-blue-200 bg-gradient-to-br from-blue-50 via-slate-50 to-sky-50 p-4 shadow-sm sm:p-6"
+                      className={`relative overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(17,61,51,0.96),rgba(8,33,28,0.96))] p-4 shadow-[0_22px_45px_rgba(0,0,0,0.16)] sm:p-6 ${isFeaturedCard ? "xl:col-span-2" : ""}`}
                     >
-                      <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-blue-200/40 blur-2xl" />
-                      <div className="pointer-events-none absolute -bottom-10 -left-8 h-28 w-28 rounded-full bg-slate-200/70 blur-2xl" />
+                      <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#5a45e3]/15 blur-2xl" />
+                      <div className="pointer-events-none absolute -bottom-10 -left-8 h-28 w-28 rounded-full bg-[#8fe05f]/10 blur-2xl" />
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-700">
-                          Restricted Workstream
+                        <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/72">
+                          Protected Listing
                         </span>
-                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
-                          Mini KYC Pending
+                        <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b7f18e]">
+                          {guestLocked ? "Sign in required" : "Mini KYC Pending"}
                         </span>
                       </div>
 
-                      <div className="mt-4 rounded-2xl border border-blue-200/70 bg-white/80 p-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Hidden gig preview</div>
+                      <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/[0.05] p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Hidden gig preview</div>
                         <div className="mt-3 space-y-2">
-                          <div className="h-4 w-[72%] rounded-full bg-slate-200" />
-                          <div className="h-3 w-[52%] rounded-full bg-slate-200/90" />
-                          <div className="h-3 w-[86%] rounded-full bg-slate-200/80" />
+                          <div className="h-4 w-[72%] rounded-full bg-white/14" />
+                          <div className="h-3 w-[52%] rounded-full bg-white/12" />
+                          <div className="h-3 w-[86%] rounded-full bg-white/10" />
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
                             Role hidden
                           </span>
-                          <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
                             Payout hidden
                           </span>
-                          <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
                             Requirements hidden
                           </span>
                         </div>
                       </div>
 
                       <div className="mt-4 flex items-start gap-3">
-                        <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-blue-200 bg-white">
-                          <svg className="h-5 w-5 text-blue-700" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
+                          <svg className="h-5 w-5 text-[#95ea63]" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path
                               fillRule="evenodd"
                               d="M10 2a4 4 0 0 0-4 4v2H5a2 2 0 0 0-2 2v5a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-5a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4Zm2 6V6a2 2 0 1 0-4 0v2h4Z"
@@ -832,22 +883,29 @@ export default function BrowsePage() {
                           </svg>
                         </div>
                         <div>
-                          <div className="text-xl font-semibold leading-tight text-slate-900">Complete mini KYC to reveal this gig</div>
-                          <div className="mt-1 text-sm text-slate-600">
-                            This listing is policy-protected. After KYC approval, full role details and actions unlock automatically.
+                          <div className="text-xl font-semibold leading-tight text-white">
+                            {guestLocked
+                              ? "Sign in to reveal this gig"
+                              : "Complete mini KYC to reveal this gig"}
+                          </div>
+                          <div className="mt-1 text-sm text-white/62">
+                            {guestLocked
+                              ? "This listing is protected. Sign in to view full role details, payout terms, and application actions."
+                              : "This listing is policy-protected. After KYC approval, full role details and actions unlock automatically."}
                           </div>
                         </div>
                       </div>
 
                       <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <Link
-                          href="/workspace"
-                          className="inline-flex rounded-full bg-[#0b5cab] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0f6bc7]"
+                        <button
+                          type="button"
+                          onClick={() => window.location.assign(kycActionHref)}
+                          className="inline-flex rounded-full bg-[#8fe05f] px-4 py-2 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
                         >
-                          Complete mini KYC
-                        </Link>
-                        <span className="rounded-full border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
-                          Estimated review: 5-15 mins
+                          {guestLocked ? "Sign in to continue" : kycActionLabel}
+                        </button>
+                        <span className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[11px] text-white/58">
+                          {guestLocked ? "Takes less than a minute" : "Estimated review: 5-15 mins"}
                         </span>
                       </div>
                     </div>
@@ -856,42 +914,44 @@ export default function BrowsePage() {
                 return (
                   <div
                     key={gig.id}
-                    className="relative overflow-hidden rounded-[1.35rem] border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50/60 p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md animate-[slideDown_220ms_ease-out] sm:rounded-[1.5rem] sm:p-4 lg:p-5"
+                    className={`relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(8,33,28,0.94))] p-3 shadow-[0_20px_45px_rgba(0,0,0,0.16)] transition hover:-translate-y-0.5 hover:border-white/16 hover:bg-[linear-gradient(180deg,rgba(22,76,62,0.96),rgba(8,33,28,0.96))] animate-[slideDown_220ms_ease-out] sm:rounded-[1.75rem] sm:p-4 lg:p-5 ${isFeaturedCard ? "xl:col-span-2 xl:grid xl:grid-cols-[1.25fr_0.75fr] xl:gap-6" : ""}`}
+                    style={{ animationDelay: `${Math.min(index, 8) * 55}ms`, animationFillMode: "both" }}
                   >
-                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-blue-100/45 blur-2xl" />
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#5a45e3]/14 blur-2xl" />
                     <div>
                     <div className="flex flex-col gap-2.5 sm:gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 sm:text-sm">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-white/42 sm:text-sm">
                           <span>{gig.postedAt}</span>
-                          <span className="h-1 w-1 rounded-full bg-slate-300" />
+                          <span className="h-1 w-1 rounded-full bg-white/25" />
                           <span>{gig.id}</span>
-                          {gig.status === "Open" && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700">Hiring now</span>}
+                          {gig.status === "Open" && <span className="rounded-full bg-[#8fe05f]/10 px-3 py-1 text-[11px] font-semibold text-[#b7f18e]">Hiring now</span>}
+                          {isFeaturedCard && <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] font-semibold text-white/80">Featured match</span>}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold md:hidden ${statusTone}`}>
                             {derivedStatus ? derivedStatus : "Not applied"}
                           </span>
                         </div>
-                        <div className="mt-1.5 text-balance text-[1.15rem] font-semibold leading-tight text-slate-900 sm:text-[1.35rem] lg:text-[1.55rem]">{gig.title}</div>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:mt-2.5 sm:gap-2">
-                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
+                        <div className={`mt-1.5 text-balance font-semibold leading-tight text-white ${isFeaturedCard ? "text-[1.35rem] sm:text-[1.7rem] lg:text-[2rem]" : "text-[1.15rem] sm:text-[1.35rem] lg:text-[1.55rem]"}`}>{gig.title}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-white/62 sm:mt-2.5 sm:gap-2">
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-semibold text-white sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
                           {gig.verified && (
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
                               Verified
                             </span>
                           )}
-                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
                           {gig.gigType && (
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
                               {gig.gigType}
                             </span>
                           )}
-                          {partTimeLocked && (
-                            <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 sm:px-3 sm:text-sm">
+                          {kycLocked && (
+                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
                               Mini KYC required
                             </span>
                           )}
                           {gig.gigType === "Full-time" && (
-                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
                               Workspace ready
                             </span>
                           )}
@@ -904,7 +964,7 @@ export default function BrowsePage() {
                         </span>
                         <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 md:grid-cols-1">
                           <button
-                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-400 sm:px-4 sm:py-2"
+                            className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10 sm:px-4 sm:py-2"
                             onClick={() => setSelectedGig(gig)}
                           >
                             View details
@@ -918,7 +978,7 @@ export default function BrowsePage() {
                           </button>
                           {canProceed && (
                             <Link
-                              className="col-span-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-center text-xs font-semibold text-emerald-700 sm:px-4 sm:py-2 md:col-span-1"
+                              className="col-span-2 rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-3 py-1.5 text-center text-xs font-semibold text-[#b7f18e] sm:px-4 sm:py-2 md:col-span-1"
                               href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               {isFullTime ? "Go to workspace" : "Proceed"}
@@ -929,40 +989,58 @@ export default function BrowsePage() {
                     </div>
 
                     {assignment?.status === "Submitted" && (
-                      <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-700">
+                      <div className="mt-4 rounded-2xl border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-4 py-3 text-xs font-semibold text-[#b7f18e]">
                         In verification: Admin is reviewing your submitted credentials.
                       </div>
                     )}
 
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-2.5 md:grid-cols-3">
-                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
-                        <div className="text-xs text-slate-500 sm:text-sm">Workload</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.workload}</div>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-white/42 sm:text-sm">Workload</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.workload}</div>
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
-                        <div className="text-xs text-slate-500 sm:text-sm">Payout</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.payout}</div>
-                        <div className="text-xs text-slate-500 sm:text-sm">{gig.payoutType}</div>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-white/42 sm:text-sm">Payout</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.payout}</div>
+                        <div className="text-xs text-white/42 sm:text-sm">{gig.payoutType}</div>
                       </div>
-                      <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5 md:col-span-1">
-                        <div className="text-xs text-slate-500 sm:text-sm">Application status</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
-                        <div className="text-xs text-slate-500 sm:text-sm">Updated hourly</div>
+                      <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5 md:col-span-1">
+                        <div className="text-xs text-white/42 sm:text-sm">Application status</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
+                        <div className="text-xs text-white/42 sm:text-sm">Updated hourly</div>
                       </div>
                     </div>
 
                     <div className="mt-3 sm:mt-4">
-                      <div className="text-xs font-semibold text-slate-500 sm:text-sm">Key requirements</div>
+                      <div className="text-xs font-semibold text-white/42 sm:text-sm">Key requirements</div>
                       <div className="mt-2 flex flex-wrap gap-1.5 sm:gap-2">
                         {gig.requirements.map((req) => (
-                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 sm:px-3 sm:py-1.5 sm:text-sm">
-                            <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 sm:px-3 sm:py-1.5 sm:text-sm">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#8fe05f]" />
                             <span>{req}</span>
                           </span>
                         ))}
                       </div>
                     </div>
                     </div>
+                    {isFeaturedCard && (
+                      <div className="mt-4 grid gap-3 xl:mt-0 xl:content-start">
+                        <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-4">
+                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[#95ea63]">Why this gig</div>
+                          <div className="mt-3 text-sm leading-6 text-white/72">
+                            Clear scope, visible payout model, and Reelencer workflow protections make this a stronger-fit opportunity for fast-moving freelance creators.
+                          </div>
+                        </div>
+                        <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-4">
+                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-white/42">Match signals</div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-3 py-1 text-xs font-semibold text-[#b7f18e]">Transparent payout</span>
+                            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white/72">Verified client</span>
+                            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white/72">Structured brief</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -971,42 +1049,142 @@ export default function BrowsePage() {
         </section>
       </main>
 
+      {mobileFiltersOpen && (
+        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] lg:hidden">
+          <div className="absolute inset-0" onClick={() => setMobileFiltersOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 rounded-t-[2rem] border-t border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.98),rgba(8,33,28,0.98))] p-5 shadow-[0_-20px_50px_rgba(0,0,0,0.25)] animate-[revealRise_260ms_ease-out]">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[#95ea63]">Filters</div>
+                <div className="mt-1 text-lg font-semibold text-white">Refine gigs faster</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileFiltersOpen(false)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-5 space-y-4 text-sm text-white/72">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Keyword</div>
+                <input
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35"
+                  placeholder="Search title, brand, platform"
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                />
+              </div>
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Platform</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-white/78">
+                  {PLATFORM_OPTIONS.map((p) => (
+                    <label key={p} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/6 px-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#8fe05f]"
+                        checked={platforms.includes(p)}
+                        onChange={(e) => {
+                          setPlatforms((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)));
+                        }}
+                      />
+                      {p}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Status</div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    {["All", ...STATUS_OPTIONS].map((s) => (
+                      <button
+                        key={s}
+                        className={`rounded-full border px-3 py-1.5 ${
+                          statusFilter === s ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                        }`}
+                        onClick={() => setStatusFilter(s as GigStatus | "All")}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Gig type</div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    {(["All", "Part-time", "Full-time"] as const).map((t) => (
+                      <button
+                        key={t}
+                        className={`rounded-full border px-3 py-1.5 ${
+                          gigTypeFilter === t ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                        }`}
+                        onClick={() => setGigTypeFilter(t)}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold text-white"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileFiltersOpen(false)}
+                  className="rounded-2xl bg-[#8fe05f] px-4 py-3 text-sm font-semibold text-[#10251b]"
+                >
+                  Apply filters
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedGig && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/30 md:items-center" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 backdrop-blur-[2px] md:items-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0" onClick={() => setSelectedGig(null)} />
-          <div className="relative z-10 w-full max-w-2xl rounded-t-3xl border border-slate-200 bg-white p-5 shadow-xl md:rounded-3xl md:p-6">
+          <div className="relative z-10 w-full max-w-2xl rounded-t-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.98),rgba(8,33,28,0.98))] p-5 text-white shadow-xl md:rounded-[2rem] md:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-xs text-slate-500">{selectedGig.id}</div>
-                <div className="mt-1 text-xl font-semibold text-slate-900">{selectedGig.title}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.company}</span>
-                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.platform}</span>
+                <div className="text-xs text-white/45">{selectedGig.id}</div>
+                <div className="mt-1 text-xl font-semibold text-white">{selectedGig.title}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/62">
+                  <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5">{selectedGig.company}</span>
+                  <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5">{selectedGig.platform}</span>
                 </div>
               </div>
               <button
-                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700"
+                className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Workload</div>
-                <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.workload}</div>
+            <div className="mt-4 grid gap-3 text-sm text-white/62 md:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+                <div className="text-xs text-white/42">Workload</div>
+                <div className="mt-1 text-base font-semibold text-white">{selectedGig.workload}</div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">Payout</div>
-                <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.payout}</div>
-                <div className="text-xs text-slate-500">{selectedGig.payoutType}</div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+                <div className="text-xs text-white/42">Payout</div>
+                <div className="mt-1 text-base font-semibold text-white">{selectedGig.payout}</div>
+                <div className="text-xs text-white/42">{selectedGig.payoutType}</div>
               </div>
             </div>
             <div className="mt-4">
-              <div className="text-xs font-semibold text-slate-500">Requirements</div>
+              <div className="text-xs font-semibold text-white/42">Requirements</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {selectedGig.requirements.map((req) => (
-                  <span key={req} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+                  <span key={req} className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs text-white/70">
                     {req}
                   </span>
                 ))}
@@ -1014,13 +1192,13 @@ export default function BrowsePage() {
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button
-                className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700"
+                className="rounded-full border border-white/10 bg-white/6 px-4 py-2 text-xs font-semibold text-white"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
               <button
-                className="rounded-full bg-[#0b5cab] px-4 py-2 text-xs font-semibold text-white hover:bg-[#0f6bc7]"
+                className="rounded-full bg-[#8fe05f] px-4 py-2 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
                 onClick={() => {
                   applyForGig(selectedGig);
                   setSelectedGig(null);
@@ -1032,6 +1210,7 @@ export default function BrowsePage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

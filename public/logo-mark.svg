@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Reelencer logo mark">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0E6A5A" />
+      <stop offset="100%" stop-color="#0D4E44" />
+    </linearGradient>
+    <radialGradient id="halo" cx="50%" cy="42%" r="62%">
+      <stop offset="0%" stop-color="#D4FFE6" stop-opacity="0.22" />
+      <stop offset="100%" stop-color="#D4FFE6" stop-opacity="0.06" />
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="96" fill="url(#bg)" />
+
+  <g opacity="0.13" fill="#9EE5B4">
+    <circle cx="52" cy="52" r="5" />
+    <circle cx="132" cy="52" r="5" />
+    <circle cx="212" cy="52" r="5" />
+    <circle cx="292" cy="52" r="5" />
+    <circle cx="372" cy="52" r="5" />
+    <circle cx="452" cy="52" r="5" />
+    <circle cx="52" cy="132" r="5" />
+    <circle cx="132" cy="132" r="5" />
+    <circle cx="212" cy="132" r="5" />
+    <circle cx="292" cy="132" r="5" />
+    <circle cx="372" cy="132" r="5" />
+    <circle cx="452" cy="132" r="5" />
+    <circle cx="52" cy="212" r="5" />
+    <circle cx="132" cy="212" r="5" />
+    <circle cx="212" cy="212" r="5" />
+    <circle cx="292" cy="212" r="5" />
+    <circle cx="372" cy="212" r="5" />
+    <circle cx="452" cy="212" r="5" />
+    <circle cx="52" cy="292" r="5" />
+    <circle cx="132" cy="292" r="5" />
+    <circle cx="212" cy="292" r="5" />
+    <circle cx="292" cy="292" r="5" />
+    <circle cx="372" cy="292" r="5" />
+    <circle cx="452" cy="292" r="5" />
+    <circle cx="52" cy="372" r="5" />
+    <circle cx="132" cy="372" r="5" />
+    <circle cx="212" cy="372" r="5" />
+    <circle cx="292" cy="372" r="5" />
+    <circle cx="372" cy="372" r="5" />
+    <circle cx="452" cy="372" r="5" />
+    <circle cx="52" cy="452" r="5" />
+    <circle cx="132" cy="452" r="5" />
+    <circle cx="212" cy="452" r="5" />
+    <circle cx="292" cy="452" r="5" />
+    <circle cx="372" cy="452" r="5" />
+    <circle cx="452" cy="452" r="5" />
+  </g>
+
+  <circle cx="256" cy="256" r="170" fill="url(#halo)" />
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#B6F8D0" stroke-opacity="0.23" stroke-width="3" />
+
+  <g stroke="#D6EAF2" stroke-linecap="round">
+    <line x1="256" y1="184" x2="256" y2="246" stroke-opacity="0.82" stroke-width="10" />
+    <line x1="180" y1="250" x2="332" y2="250" stroke-opacity="0.76" stroke-width="10" />
+    <line x1="192" y1="288" x2="256" y2="250" stroke-opacity="0.72" stroke-width="10" />
+    <line x1="320" y1="288" x2="256" y2="250" stroke-opacity="0.72" stroke-width="10" />
+  </g>
+
+  <circle cx="256" cy="170" r="30" fill="#9BFF6A" />
+  <circle cx="256" cy="170" r="30" fill="none" stroke="#C8FFB0" stroke-opacity="0.55" stroke-width="6" />
+  <circle cx="184" cy="288" r="30" fill="#79D8FF" />
+  <circle cx="328" cy="288" r="30" fill="#958CFF" />
+</svg>

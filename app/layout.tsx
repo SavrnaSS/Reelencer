@@ -45,9 +45,9 @@ export const metadata: Metadata = {
   },
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [{ url: "/icon.png", sizes: "512x512", type: "image/png" }],
-    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
-    shortcut: ["/icon.png"],
+    icon: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
+    shortcut: ["/logo-mark.svg"],
   },
   openGraph: {
     type: "website",
@@ -101,7 +101,7 @@ export default function RootLayout({
         "@type": "Organization",
         name: "Reelencer",
         url: siteUrl,
-        logo: `${siteUrl}/icon.png`,
+        logo: `${siteUrl}/logo-mark.svg`,
       },
       {
         "@type": "WebSite",

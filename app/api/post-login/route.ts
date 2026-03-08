@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isAdminRole } from "@/lib/roles";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: Request) {
@@ -50,14 +51,15 @@ export async function POST(req: Request) {
 
     if (profErr) return NextResponse.json({ error: profErr.message }, { status: 500 });
 
-    const redirectTo = prof.role === "Admin" ? "/admin" : "/";
+    const redirectTo = isAdminRole(prof.role) ? "/admin" : "/";
 
     return NextResponse.json({
       ok: true,
       role: prof.role,
       redirectTo,
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

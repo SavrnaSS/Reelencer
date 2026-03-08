@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { normalizeRole } from "@/lib/roles";
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
+  const isLocalDev =
+    process.env.NODE_ENV !== "production" &&
+    (req.nextUrl.hostname === "localhost" || req.nextUrl.hostname === "127.0.0.1");
 
   // Public assets
   const path = req.nextUrl.pathname;
@@ -23,10 +27,10 @@ export async function middleware(req: NextRequest) {
     }
   );
 
-  let user: any = null;
+  let userId: string | null = null;
   try {
     const { data } = await supabase.auth.getUser();
-    user = data.user;
+    userId = data.user?.id ?? null;
   } catch {
     return res;
   }
@@ -41,7 +45,10 @@ export async function middleware(req: NextRequest) {
   if (isLogout) return res;
 
   // Not logged in → block private areas
-  if (!user && (isAdmin || isWorker)) {
+  if (!userId && (isAdmin || isWorker)) {
+    // Local dev can have a valid browser session before the server can read Supabase auth cookies.
+    // Let the client-side page guards decide instead of redirect-looping through /login.
+    if (isLocalDev) return res;
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", path);
@@ -49,25 +56,25 @@ export async function middleware(req: NextRequest) {
   }
 
   // Logged in → role-gate routes
-  if (user && (isAdmin || isWorker || isLogin)) {
-    let role: "Admin" | "Worker" = "Worker";
+  if (userId && (isAdmin || isWorker || isLogin)) {
+    let role: ReturnType<typeof normalizeRole> = "worker";
     try {
-      const prof = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
-      role = (prof.data?.role ?? "Worker") as "Admin" | "Worker";
+      const prof = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+      role = normalizeRole(prof.data?.role) ?? "worker";
     } catch {
       if (isPublic) return res;
       return res;
     }
 
     // Admin visiting /workspace → force /admin
-    if (role === "Admin" && isWorker) {
+    if (role === "admin" && isWorker) {
       const url = req.nextUrl.clone();
       url.pathname = "/admin";
       return NextResponse.redirect(url);
     }
 
     // Worker visiting /admin → force /workspace
-    if (role !== "Admin" && isAdmin) {
+    if (role !== "admin" && isAdmin) {
       const url = req.nextUrl.clone();
       url.pathname = "/workspace";
       return NextResponse.redirect(url);
@@ -76,7 +83,7 @@ export async function middleware(req: NextRequest) {
     // Logged in user visiting /login → bounce to correct dashboard
     if (isLogin) {
       const url = req.nextUrl.clone();
-      url.pathname = role === "Admin" ? "/admin" : "/workspace";
+      url.pathname = role === "admin" ? "/admin" : "/workspace";
       return NextResponse.redirect(url);
     }
   }
