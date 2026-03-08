@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
 type PayoutType = "Per task" | "Per post" | "Monthly";
 type GigStatus = "Open" | "Paused" | "Closed";
-type GigType = "Part-time" | "Full-time";
+type GigType = string;
 type ApplicationStatus = "Applied" | "Accepted" | "Rejected" | "Withdrawn";
 
 type Gig = {
@@ -31,6 +31,14 @@ type GigApplication = {
   gigId: string;
   workerId: string;
   workerName?: string;
+  proposal?: {
+    pitch?: string;
+    approach?: string;
+    timeline?: string;
+    budget?: string;
+    portfolio?: string;
+    submittedAt?: string;
+  };
   status: ApplicationStatus;
   appliedAt: string;
   decidedAt?: string;
@@ -93,7 +101,58 @@ const LS_KEYS = {
 const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
 const PAYOUTS: PayoutType[] = ["Per task", "Per post", "Monthly"];
 const STATUSES: GigStatus[] = ["Open", "Paused", "Closed"];
-const GIG_TYPES: GigType[] = ["Part-time", "Full-time"];
+const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Custom"];
+
+function normalizeGigType(raw?: string) {
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (!value) return "Email Creator";
+  if (value === "part-time" || value === "part time") return "Email Creator";
+  if (value === "full-time" || value === "full time" || value === "workspace") return "Workspace";
+  return raw ?? "Email Creator";
+}
+
+function parseCustomRequirementsText(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function buildRequirementsPayload(input: {
+  gigType: string;
+  requirements: string;
+  customBrief: string;
+  customRequirements: string;
+  customMedia: string;
+}) {
+  if (input.gigType === "Custom") {
+    const out: string[] = [];
+    if (input.customBrief.trim()) out.push(`Brief::${input.customBrief.trim()}`);
+    parseCustomRequirementsText(input.customMedia).forEach((line) => out.push(`Media::${line}`));
+    out.push(...parseCustomRequirementsText(input.customRequirements));
+    return out;
+  }
+  return input.requirements
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function readCustomFieldsFromRequirements(requirements: string[]) {
+  const briefLine = requirements.find((item) => item.toLowerCase().startsWith("brief::"));
+  const customBrief = briefLine ? briefLine.replace(/^brief::/i, "").trim() : "";
+  const customMedia = requirements
+    .filter((item) => item.toLowerCase().startsWith("media::"))
+    .map((item) => item.replace(/^media::/i, "").trim())
+    .filter(Boolean)
+    .join("\n");
+  const customRequirements = requirements
+    .filter((item) => !item.toLowerCase().startsWith("brief::") && !item.toLowerCase().startsWith("media::"))
+    .join("\n");
+  return { customBrief, customRequirements, customMedia };
+}
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -161,6 +220,8 @@ export default function GigAdminConsole({
   const [selectedGigId, setSelectedGigId] = useState<string | "All">("All");
   const [editingGig, setEditingGig] = useState<Gig | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [mediaUploading, setMediaUploading] = useState(false);
+  const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     title: "",
@@ -170,7 +231,11 @@ export default function GigAdminConsole({
     workload: "",
     payout: "",
     payoutType: "Per post" as PayoutType,
-    gigType: "Part-time" as GigType,
+    gigType: "Email Creator" as GigType,
+    customGigType: "",
+    customBrief: "",
+    customRequirements: "",
+    customMedia: "",
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -337,22 +402,88 @@ export default function GigAdminConsole({
     if (selectedGigId === "All") return apps;
     return apps.filter((app) => app.gigId === selectedGigId);
   }, [apps, selectedGigId]);
+  const proposalApps = useMemo(
+    () =>
+      apps.filter(
+        (app) =>
+          !!app.proposal &&
+          !!(
+            app.proposal.pitch ||
+            app.proposal.approach ||
+            app.proposal.timeline ||
+            app.proposal.budget ||
+            app.proposal.portfolio
+          )
+      ),
+    [apps]
+  );
 
   const validateForm = () => {
     if (!form.title.trim()) return "Title is required.";
     if (!form.company.trim()) return "Company is required.";
     if (!form.workload.trim()) return "Workload is required.";
     if (!form.payout.trim()) return "Payout is required.";
+    if (form.gigType === "Custom" && !form.customGigType.trim()) return "Custom gig type label is required.";
+    if (form.gigType === "Custom" && !form.customBrief.trim()) return "Custom brief is required for custom gigs.";
     return null;
   };
 
+  const uploadCustomMediaFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setMediaUploadError(null);
+      setMediaUploading(true);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) throw new Error("Admin session missing. Please login again.");
+
+        const nextUrls: string[] = [];
+        for (const file of Array.from(files)) {
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch("/api/admin/gig-brief-media/upload", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(payload?.error || `Upload failed for ${file.name}`);
+          const url = String(payload?.url ?? "").trim();
+          if (url) nextUrls.push(url);
+        }
+
+        if (nextUrls.length > 0) {
+          setForm((prev) => {
+            const existing = parseCustomRequirementsText(prev.customMedia);
+            return { ...prev, customMedia: [...existing, ...nextUrls].join("\n") };
+          });
+        }
+      } catch (error: unknown) {
+        setMediaUploadError(error instanceof Error ? error.message : "Media upload failed.");
+      } finally {
+        setMediaUploading(false);
+      }
+    },
+    []
+  );
+
   const createGig = async () => {
+    if (mediaUploading) {
+      setFormError("Please wait for media upload to finish before publishing.");
+      return;
+    }
     const err = validateForm();
     if (err) {
       setFormError(err);
       return;
     }
     setFormError(null);
+    const resolvedGigType =
+      form.gigType === "Custom"
+        ? `Custom: ${form.customGigType.trim() || "Freelance"}`
+        : normalizeGigType(form.gigType);
+
     const payload: Gig = {
       id: makeId(),
       title: form.title,
@@ -363,8 +494,8 @@ export default function GigAdminConsole({
       workload: form.workload,
       payout: form.payout,
       payoutType: form.payoutType,
-      gigType: form.gigType,
-      requirements: form.requirements.split(",").map((s) => s.trim()).filter(Boolean),
+      gigType: resolvedGigType,
+      requirements: buildRequirementsPayload(form),
       status: form.status,
       postedAt: nowLabel(),
     };
@@ -401,7 +532,11 @@ export default function GigAdminConsole({
       workload: "",
       payout: "",
       payoutType: "Per post",
-      gigType: "Part-time",
+      gigType: "Email Creator",
+      customGigType: "",
+      customBrief: "",
+      customRequirements: "",
+      customMedia: "",
       requirements: "",
       status: "Open",
     });
@@ -409,6 +544,10 @@ export default function GigAdminConsole({
 
   const startEdit = (gig: Gig) => {
     setEditingGig(gig);
+    const normalizedType = normalizeGigType(gig.gigType);
+    const isCustom = normalizedType.toLowerCase().startsWith("custom:");
+    const customLabel = isCustom ? normalizedType.replace(/^custom:\s*/i, "").trim() : "";
+    const customFields = readCustomFieldsFromRequirements(gig.requirements);
     setForm({
       title: gig.title,
       company: gig.company,
@@ -417,7 +556,11 @@ export default function GigAdminConsole({
       workload: gig.workload,
       payout: gig.payout,
       payoutType: gig.payoutType,
-      gigType: gig.gigType ?? "Part-time",
+      gigType: isCustom ? "Custom" : normalizedType,
+      customGigType: customLabel,
+      customBrief: customFields.customBrief,
+      customRequirements: customFields.customRequirements,
+      customMedia: customFields.customMedia,
       requirements: gig.requirements.join(", "),
       status: gig.status,
     });
@@ -427,12 +570,21 @@ export default function GigAdminConsole({
 
   const updateGig = async () => {
     if (!editingGig) return;
+    if (mediaUploading) {
+      setFormError("Please wait for media upload to finish before updating.");
+      return;
+    }
     const err = validateForm();
     if (err) {
       setFormError(err);
       return;
     }
     setFormError(null);
+    const resolvedGigType =
+      form.gigType === "Custom"
+        ? `Custom: ${form.customGigType.trim() || "Freelance"}`
+        : normalizeGigType(form.gigType);
+
     const updates: Partial<Gig> = {
       title: form.title,
       company: form.company,
@@ -441,8 +593,8 @@ export default function GigAdminConsole({
       workload: form.workload,
       payout: form.payout,
       payoutType: form.payoutType,
-      gigType: form.gigType,
-      requirements: form.requirements.split(",").map((s) => s.trim()).filter(Boolean),
+      gigType: resolvedGigType,
+      requirements: buildRequirementsPayload(form),
       status: form.status,
     };
 
@@ -471,7 +623,11 @@ export default function GigAdminConsole({
       workload: "",
       payout: "",
       payoutType: "Per post",
-      gigType: "Part-time",
+      gigType: "Email Creator",
+      customGigType: "",
+      customBrief: "",
+      customRequirements: "",
+      customMedia: "",
       requirements: "",
       status: "Open",
     });
@@ -517,8 +673,13 @@ export default function GigAdminConsole({
   };
 
   const updateGigType = async (gigId: string, gigType: GigType) => {
+    const normalized = normalizeGigType(gigType);
+    const resolved =
+      normalized === "Custom"
+        ? `Custom: ${window.prompt("Enter custom gig type label", "Freelance")?.trim() || "Freelance"}`
+        : normalized;
     setGigs((prev) => {
-      const next = prev.map((gig) => (gig.id === gigId ? { ...gig, gigType } : gig));
+      const next = prev.map((gig) => (gig.id === gigId ? { ...gig, gigType: resolved } : gig));
       writeLS(LS_KEYS.GIGS, next);
       return next;
     });
@@ -527,7 +688,7 @@ export default function GigAdminConsole({
       await fetch("/api/gigs", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: gigId, updates: { gigType } }),
+        body: JSON.stringify({ id: gigId, updates: { gigType: resolved } }),
       });
     } catch {
       // ignore
@@ -823,6 +984,94 @@ export default function GigAdminConsole({
                   ))}
                 </select>
               </label>
+              {form.gigType === "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Custom gig type label
+                  <input
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.customGigType}
+                    onChange={(e) => setForm((prev) => ({ ...prev, customGigType: e.target.value }))}
+                    placeholder="e.g., Freelance Marketplace"
+                  />
+                </label>
+              )}
+              {form.gigType === "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Custom brief (shown in proposal desk)
+                  <textarea
+                    className="mt-2 h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.customBrief}
+                    onChange={(e) => setForm((prev) => ({ ...prev, customBrief: e.target.value }))}
+                    placeholder="Describe the custom project scope, expectations, and decision criteria."
+                  />
+                </label>
+              )}
+              {form.gigType === "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Detailed requirements (one per line)
+                  <textarea
+                    className="mt-2 h-28 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.customRequirements}
+                    onChange={(e) => setForm((prev) => ({ ...prev, customRequirements: e.target.value }))}
+                    placeholder={"Deliver 3 concepts in week 1\nDaily progress updates\nPortfolio examples required"}
+                  />
+                </label>
+              )}
+              {form.gigType === "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Brief media upload (images/videos)
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    multiple
+                    className="mt-2 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 file:mr-3 file:rounded-md file:border-0 file:bg-[#edf5ef] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#2f6655]"
+                    onChange={async (e) => {
+                      const input = e.currentTarget;
+                      const files = input.files;
+                      await uploadCustomMediaFiles(files);
+                      input.value = "";
+                    }}
+                    disabled={mediaUploading}
+                  />
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    Uploaded media will appear in worker proposal UI automatically.
+                  </div>
+                  {mediaUploadError && (
+                    <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                      {mediaUploadError}
+                    </div>
+                  )}
+                  <div className="mt-3 space-y-2">
+                    {parseCustomRequirementsText(form.customMedia).length === 0 && (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        No media uploaded yet.
+                      </div>
+                    )}
+                    {parseCustomRequirementsText(form.customMedia).map((item, index) => (
+                      <div key={`${item}-${index}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        <a href={item} target="_blank" rel="noreferrer" className="truncate font-semibold text-[#2f6655] hover:underline">
+                          Asset {index + 1}
+                        </a>
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                          onClick={() =>
+                            setForm((prev) => ({
+                              ...prev,
+                              customMedia: parseCustomRequirementsText(prev.customMedia)
+                                .filter((_, i) => i !== index)
+                                .join("\n"),
+                            }))
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {mediaUploading && <div className="mt-2 text-xs font-semibold text-[#2f6655]">Uploading media...</div>}
+                </label>
+              )}
               <label className="text-xs font-semibold text-slate-600">
                 Status
                 <select
@@ -837,15 +1086,17 @@ export default function GigAdminConsole({
               </label>
             </div>
 
-            <label className="mt-4 block text-xs font-semibold text-slate-600">
-              Requirements (comma separated)
-              <input
-                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                value={form.requirements}
-                onChange={(e) => setForm((prev) => ({ ...prev, requirements: e.target.value }))}
-                placeholder="e.g., 10k+ followers, 72h turnaround"
-              />
-            </label>
+            {form.gigType !== "Custom" && (
+              <label className="mt-4 block text-xs font-semibold text-slate-600">
+                Requirements (comma separated)
+                <input
+                  className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                  value={form.requirements}
+                  onChange={(e) => setForm((prev) => ({ ...prev, requirements: e.target.value }))}
+                  placeholder="e.g., 10k+ followers, 72h turnaround"
+                />
+              </label>
+            )}
 
             {formError && (
               <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
@@ -869,7 +1120,11 @@ export default function GigAdminConsole({
                         workload: "",
                         payout: "",
                         payoutType: "Per post",
-                        gigType: "Part-time",
+                        gigType: "Email Creator",
+                        customGigType: "",
+                        customBrief: "",
+                        customRequirements: "",
+                        customMedia: "",
                         requirements: "",
                         status: "Open",
                       });
@@ -882,8 +1137,9 @@ export default function GigAdminConsole({
                 <button
                   className="rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#245a4b]"
                   onClick={editingGig ? updateGig : createGig}
+                  disabled={mediaUploading}
                 >
-                  {editingGig ? "Update gig" : "Publish gig"}
+                  {mediaUploading ? "Uploading media..." : editingGig ? "Update gig" : "Publish gig"}
                 </button>
               </div>
             </div>
@@ -944,10 +1200,10 @@ export default function GigAdminConsole({
                       </button>
                       <select
                         className="w-full min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 sm:w-auto"
-                        value={gig.gigType ?? "Part-time"}
+                        value={normalizeGigType(gig.gigType)}
                         onChange={(e) => updateGigType(gig.id, e.target.value as GigType)}
                       >
-                        {GIG_TYPES.map((t) => (
+                        {[...new Set([...GIG_TYPES, normalizeGigType(gig.gigType)])].map((t) => (
                           <option key={t}>{t}</option>
                         ))}
                       </select>
@@ -994,6 +1250,32 @@ export default function GigAdminConsole({
             </div>
 
             <div className="mt-4 space-y-3">
+              <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-3 sm:p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposals</div>
+                  <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2 py-0.5 text-[11px] font-semibold text-[#2f6655]">
+                    {proposalApps.length}
+                  </span>
+                </div>
+                {proposalApps.length === 0 ? (
+                  <div className="mt-2 text-xs text-[#6f877d]">
+                    No proposal received yet.
+                  </div>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {proposalApps.map((app) => (
+                      <div key={`proposal-${app.id}`} className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-xs font-semibold text-slate-800">{app.workerName ?? app.workerId}</div>
+                          <div className="text-[11px] text-slate-500">Gig: {app.gigId}</div>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">{app.proposal?.pitch || app.proposal?.approach || "Proposal submitted"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {filteredApps.length === 0 && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-xs text-slate-500">
                   No applications yet.
@@ -1014,6 +1296,43 @@ export default function GigAdminConsole({
                     <span>Applied {new Date(app.appliedAt).toLocaleDateString()}</span>
                     {app.decidedAt && <span>• Reviewed {new Date(app.decidedAt).toLocaleDateString()}</span>}
                   </div>
+                  {app.proposal && (
+                    <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-white p-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposal</div>
+                      {app.proposal.pitch && (
+                        <div className="mt-2 text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">Pitch:</span> {app.proposal.pitch}
+                        </div>
+                      )}
+                      {app.proposal.approach && (
+                        <div className="mt-2 text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">Approach:</span> {app.proposal.approach}
+                        </div>
+                      )}
+                      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                        {app.proposal.timeline && (
+                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
+                            Timeline: {app.proposal.timeline}
+                          </span>
+                        )}
+                        {app.proposal.budget && (
+                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
+                            Budget note: {app.proposal.budget}
+                          </span>
+                        )}
+                        {app.proposal.submittedAt && (
+                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
+                            Submitted: {new Date(app.proposal.submittedAt).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      {app.proposal.portfolio && (
+                        <div className="mt-2 text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">Portfolio:</span> {app.proposal.portfolio}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
@@ -1042,7 +1361,7 @@ export default function GigAdminConsole({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-slate-900">KYC Review</div>
-                <div className="text-xs text-slate-500">Approve or reject full-time access requests.</div>
+                <div className="text-xs text-slate-500">Approve or reject workspace access requests.</div>
               </div>
               <button
                 className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-400"

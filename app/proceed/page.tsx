@@ -16,7 +16,8 @@ type Gig = {
   workload: string;
   payout: string;
   payoutType: string;
-  gigType?: "Part-time" | "Full-time";
+  gigType?: string;
+  requirements?: string[];
   status: string;
   postedAt: string;
 };
@@ -40,13 +41,50 @@ type CredentialRow = {
   phone: string;
 };
 
-function isFullTimeGig(gig: Pick<Gig, "gigType" | "title">) {
+function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
     .toLowerCase()
     .replace(/[_\s]+/g, "-");
-  if (raw === "full-time" || raw === "fulltime") return true;
-  return /\bfull[\s-]?time\b/i.test(gig.title || "");
+  if (raw === "workspace" || raw === "full-time" || raw === "fulltime") return true;
+  return /\b(workspace|full[\s-]?time)\b/i.test(gig.title || "");
+}
+
+function isCustomGigType(gig: Pick<Gig, "gigType" | "title">) {
+  const raw = String(gig.gigType ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  if (raw === "email creator" || raw === "part-time" || raw === "part time") return false;
+  if (raw === "workspace" || raw === "full-time" || raw === "full time" || raw === "fulltime") return false;
+  return true;
+}
+
+function customTypeLabel(raw?: string) {
+  const value = String(raw ?? "").trim();
+  if (!value) return "Independent Project";
+  const cleaned = value.replace(/^custom:\s*/i, "").trim();
+  return cleaned || "Independent Project";
+}
+
+function isImageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    if (/\.(png|jpe?g|gif|webp|avif|svg)$/i.test(decodedPath)) return true;
+  } catch {
+    // ignore and fallback to raw string
+  }
+  return /\.(png|jpe?g|gif|webp|avif|svg)(\?.*)?$/i.test(url);
+}
+
+function isVideoUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const decodedPath = decodeURIComponent(parsed.pathname);
+    if (/\.(mp4|webm|ogg|mov|m4v)$/i.test(decodedPath)) return true;
+  } catch {
+    // ignore and fallback to raw string
+  }
+  return /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(url);
 }
 
 function cleanInboxBody(body: string) {
@@ -102,6 +140,7 @@ function ProceedPageInner() {
   const gigId = searchParams.get("gigId");
 
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const [gig, setGig] = useState<Gig | null>(null);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
 
@@ -119,6 +158,12 @@ function ProceedPageInner() {
   const [selectedMsg, setSelectedMsg] = useState<any | null>(null);
   const [emailFilter, setEmailFilter] = useState<string>("all");
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
+  const [proposalPitch, setProposalPitch] = useState("");
+  const [proposalApproach, setProposalApproach] = useState("");
+  const [proposalTimeline, setProposalTimeline] = useState("");
+  const [proposalBudget, setProposalBudget] = useState("");
+  const [proposalPortfolio, setProposalPortfolio] = useState("");
+  const [proposalSaving, setProposalSaving] = useState(false);
 
   const pollingRef = React.useRef(false);
 
@@ -126,14 +171,17 @@ function ProceedPageInner() {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
     if (s?.workerId) {
       setSession(s);
+      setSessionReady(true);
       return;
     }
     if (s?.role === "Admin") {
       // Temporary testing path to allow admin to proceed.
       setSession({ ...s, workerId: "ADMIN-TEST" });
+      setSessionReady(true);
       return;
     }
     setSession(s);
+    setSessionReady(true);
   }, []);
 
   useEffect(() => {
@@ -159,8 +207,17 @@ function ProceedPageInner() {
           : null;
         if (!alive) return;
         setGig(match ?? null);
-        if (match && isFullTimeGig(match)) {
+        if (!match) {
+          setError("This project is no longer available.");
+          setLoading(false);
+          return;
+        }
+        if (match && isWorkspaceGig(match)) {
           window.location.replace("/workspace");
+          return;
+        }
+        if (match && isCustomGigType(match)) {
+          setLoading(false);
           return;
         }
       } catch {
@@ -196,7 +253,7 @@ function ProceedPageInner() {
           if (alive) setInbox(Array.isArray(inboxData) ? inboxData : []);
         }
       } catch (err: any) {
-        if (alive) setError(err?.message || "Unable to assign email. Please try again.");
+        if (alive) setError("Unable to open this project workspace right now. Please retry in a moment.");
       }
 
       setLoading(false);
@@ -206,6 +263,37 @@ function ProceedPageInner() {
       alive = false;
     };
   }, [gigId, session?.workerId]);
+
+  const isCustomFlow = useMemo(() => (gig ? isCustomGigType(gig) : false), [gig]);
+  const customType = useMemo(() => customTypeLabel(gig?.gigType), [gig?.gigType]);
+  const customBrief = useMemo(() => {
+    const list = gig?.requirements ?? [];
+    const line = list.find((item) => String(item).toLowerCase().startsWith("brief::"));
+    return line ? String(line).replace(/^brief::/i, "").trim() : "";
+  }, [gig?.requirements]);
+  const customMediaItems = useMemo(
+    () => {
+      const list = gig?.requirements ?? [];
+      const fromPrefix = list
+        .filter((item) => String(item).toLowerCase().startsWith("media::"))
+        .map((item) => String(item).replace(/^media::/i, "").trim())
+        .filter(Boolean);
+      const legacyDirect = list
+        .map((item) => String(item).trim())
+        .filter((item) => /^https?:\/\//i.test(item))
+        .filter((item) => isImageUrl(item) || isVideoUrl(item));
+      return [...new Set([...fromPrefix, ...legacyDirect])];
+    },
+    [gig?.requirements]
+  );
+  const customRequirementItems = useMemo(
+    () =>
+      (gig?.requirements ?? []).filter((item) => {
+        const lower = String(item).toLowerCase();
+        return !lower.startsWith("brief::") && !lower.startsWith("media::");
+      }),
+    [gig?.requirements]
+  );
 
   // Auto-sync poller
   useEffect(() => {
@@ -389,11 +477,99 @@ function ProceedPageInner() {
     }
   };
 
+  const submitCustomProposal = async () => {
+    if (!gigId || !session?.workerId) return;
+    if (!proposalPitch.trim() || !proposalApproach.trim() || !proposalTimeline.trim()) {
+      setError("Please complete pitch, approach, and timeline before submission.");
+      return;
+    }
+    setProposalSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/gig-applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gigId,
+          workerId: session.workerId,
+          workerName: session.workerId,
+          status: "Applied",
+          proposal: {
+            pitch: proposalPitch.trim(),
+            approach: proposalApproach.trim(),
+            timeline: proposalTimeline.trim(),
+            budget: proposalBudget.trim(),
+            portfolio: proposalPortfolio.trim(),
+            submittedAt: new Date().toISOString(),
+          },
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.error || "Proposal could not be saved.");
+      }
+      setSuccess("Proposal received. Our operations team will review and share the next step shortly.");
+    } catch (e: any) {
+      setError(e?.message || "Unable to submit proposal right now.");
+    } finally {
+      setProposalSaving(false);
+    }
+  };
+
+  if (!sessionReady || loading) {
+    return (
+      <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
+        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+          <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+            <div>
+              <div className="text-lg font-semibold tracking-wide">Submission</div>
+              <div className="text-xs text-slate-500">Preparing your project workspace...</div>
+            </div>
+          </div>
+        </div>
+        <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
+          <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+            <div className="h-4 w-24 rounded bg-[#e7efe8]" />
+            <div className="mt-4 h-8 w-2/3 rounded bg-[#e7efe8]" />
+            <div className="mt-3 h-4 w-1/2 rounded bg-[#e7efe8]" />
+          </div>
+          <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+            <div className="h-5 w-48 rounded bg-[#e7efe8]" />
+            <div className="mt-4 h-32 rounded-2xl bg-[#eef4ef]" />
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   if (!session?.workerId) {
     return (
       <div className="min-h-screen bg-[#eef4ea] text-slate-900 flex items-center justify-center">
         <div className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] p-8 shadow-sm text-sm text-slate-600">
           Please sign in to proceed.
+        </div>
+      </div>
+    );
+  }
+
+  if (!gig) {
+    return (
+      <div className="min-h-screen bg-[#eef4ea] text-slate-900 flex items-center justify-center px-5">
+        <div className="w-full max-w-lg rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] p-6 shadow-sm">
+          <div className="text-base font-semibold text-slate-900">Project unavailable</div>
+          <div className="mt-2 text-sm text-slate-600">
+            This project is currently unavailable. It may have been closed, removed, or updated by the admin.
+          </div>
+          <div className="mt-3 text-xs text-slate-500">Refresh Browse to pick an active project and continue.</div>
+          {error && <div className="mt-3 text-xs font-semibold text-rose-700">{error}</div>}
+          <Link
+            className="mt-4 inline-flex rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm text-[#284b3e] hover:border-[#a9bbb1]"
+            href="/browse"
+          >
+            Back to browse
+          </Link>
         </div>
       </div>
     );
@@ -434,6 +610,144 @@ function ProceedPageInner() {
           </div>
         </div>
 
+        {isCustomFlow && (
+          <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Project delivery workspace</div>
+                <div className="mt-1 text-base font-semibold text-[#1c3e33] sm:text-lg">Submit your execution plan for this project</div>
+              </div>
+              <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
+                Project type: {customType}
+              </span>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Project brief</div>
+                <div className="mt-2 text-sm text-[#4d665c]">
+                  {customBrief || "Review this project brief and submit a clear execution plan with milestones, communication cadence, and quality controls."}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Platform: {gig?.platform}</span>
+                  <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Location: {gig?.location}</span>
+                  <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Workload: {gig?.workload}</span>
+                  <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Budget: {gig?.payout}</span>
+                </div>
+                <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Scope and requirements</div>
+                <div className="mt-2 space-y-2">
+                  {customRequirementItems.length === 0 && (
+                    <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-xs text-[#6f877d]">
+                      No additional requirements were provided by admin.
+                    </div>
+                  )}
+                  {customRequirementItems.map((req, idx) => (
+                    <div key={`${req}-${idx}`} className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-xs text-[#4d665c]">
+                      {idx + 1}. {req}
+                    </div>
+                  ))}
+                </div>
+                {customMediaItems.length > 0 && (
+                  <>
+                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Reference media</div>
+                    <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                      {customMediaItems.map((url, idx) => (
+                        <div key={`${url}-${idx}`} className="overflow-hidden rounded-xl border border-[#d4dfd7] bg-white">
+                          {isImageUrl(url) ? (
+                            <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
+                              <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                            </div>
+                          ) : isVideoUrl(url) ? (
+                            <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
+                              <video src={url} controls className="h-full w-full bg-slate-100 object-cover" preload="metadata" />
+                            </div>
+                          ) : (
+                            <div className="p-3 text-xs text-[#4d665c]">
+                              <a href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#1f4f43] underline-offset-2 hover:underline">
+                                Open reference asset {idx + 1}
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-[#d4dfd7] bg-white p-4">
+                <label className="block text-xs font-semibold text-[#4d665c]">
+                  Plan summary
+                  <textarea
+                    className="mt-2 h-20 w-full rounded-xl border border-[#d4dfd7] bg-[#f9fcf7] px-3 py-2 text-sm text-slate-900"
+                    placeholder="Summarize your approach, expected outcome, and why your plan is reliable."
+                    value={proposalPitch}
+                    onChange={(e) => setProposalPitch(e.target.value)}
+                  />
+                </label>
+                <label className="mt-3 block text-xs font-semibold text-[#4d665c]">
+                  Delivery approach
+                  <textarea
+                    className="mt-2 h-24 w-full rounded-xl border border-[#d4dfd7] bg-[#f9fcf7] px-3 py-2 text-sm text-slate-900"
+                    placeholder="Outline milestones, deliverables, quality checkpoints, and reporting cadence."
+                    value={proposalApproach}
+                    onChange={(e) => setProposalApproach(e.target.value)}
+                  />
+                </label>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-[#4d665c]">
+                    Delivery timeline
+                    <input
+                      className="mt-2 w-full rounded-xl border border-[#d4dfd7] bg-[#f9fcf7] px-3 py-2 text-sm text-slate-900"
+                      placeholder="e.g., 10 days with milestone updates every 48 hours"
+                      value={proposalTimeline}
+                      onChange={(e) => setProposalTimeline(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-semibold text-[#4d665c]">
+                    Budget note (optional)
+                    <input
+                      className="mt-2 w-full rounded-xl border border-[#d4dfd7] bg-[#f9fcf7] px-3 py-2 text-sm text-slate-900"
+                      placeholder="Milestone split, dependencies, or payout assumptions"
+                      value={proposalBudget}
+                      onChange={(e) => setProposalBudget(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <label className="mt-3 block text-xs font-semibold text-[#4d665c]">
+                  Relevant work links (optional)
+                  <input
+                    className="mt-2 w-full rounded-xl border border-[#d4dfd7] bg-[#f9fcf7] px-3 py-2 text-sm text-slate-900"
+                    placeholder="Drive, Notion, case studies, sample dashboards, or social profiles"
+                    value={proposalPortfolio}
+                    onChange={(e) => setProposalPortfolio(e.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+            )}
+            {success && (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
+            )}
+
+            <div className="mt-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+              <div className="text-xs text-[#6f877d]">Your project plan is sent for admin review along with your application.</div>
+              <button
+                className="w-full rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50 sm:w-auto"
+                onClick={submitCustomProposal}
+                disabled={proposalSaving}
+              >
+                {proposalSaving ? "Submitting plan..." : "Submit project plan"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isCustomFlow && (
+        <>
         <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="text-sm font-semibold text-slate-900">Assigned dashboard emails (5)</div>
           <div className="mt-2 text-sm text-slate-600">
@@ -782,6 +1096,8 @@ function ProceedPageInner() {
             </button>
           </div>
         </div>
+        </>
+        )}
       </main>
     </div>
   );

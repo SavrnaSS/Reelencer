@@ -1656,7 +1656,7 @@ export default function MarketplaceWorkerPage() {
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Identity verification</div>
                 <div className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">Complete KYC to access Workspace</div>
                 <div className="mt-2 text-sm text-slate-600">
-                  Full-time gigs require identity verification before access is granted.
+                  Workspace gigs require identity verification before access is granted.
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
