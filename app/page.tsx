@@ -240,6 +240,7 @@ export default function HomePage() {
   const loginHref = trimmedEmail ? `/login?next=/&email=${encodeURIComponent(trimmedEmail)}` : "/login?next=/";
   const accountLabel = authResolved ? (role ? displayName : "Login") : "";
   const navAccountLabel = accountLabel || "Login";
+  const navAccountFirstWord = navAccountLabel.trim().split(/\s+/)[0] || "Login";
   const accountInitial = accountLabel.trim().charAt(0).toUpperCase() || "L";
 
   async function handleSignOut() {
@@ -462,6 +463,7 @@ export default function HomePage() {
                 href={accountHref}
                 className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[1rem] font-semibold text-white transition hover:bg-white/8 sm:gap-1.5 sm:px-2 sm:text-[1.15rem]"
               >
+                <span className="max-w-[4.5rem] truncate sm:hidden">{navAccountFirstWord}</span>
                 <span className="hidden max-w-[5rem] truncate sm:inline sm:max-w-[7rem]">{navAccountLabel}</span>
                 <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 sm:h-6 sm:w-6" fill="none" stroke="currentColor" strokeWidth="2.2">
                   <circle cx="12" cy="8" r="4" />
@@ -874,7 +876,7 @@ export default function HomePage() {
                       <div className="text-sm font-bold uppercase tracking-[0.24em] text-[#95ea63]">Workflow signal</div>
                       <div className="mt-2 text-2xl font-bold tracking-[-0.04em] text-white">Every task stays visible from brief to payout.</div>
                     </div>
-                    <div className="h-14 w-14 rounded-2xl bg-[#8fe05f] text-[#0b1914] flex items-center justify-center text-2xl font-black">R</div>
+                    <div className="hidden h-14 w-14 items-center justify-center rounded-2xl bg-[#8fe05f] text-2xl font-black text-[#0b1914] sm:flex">R</div>
                   </div>
                   <div className="mt-5 grid gap-3 sm:grid-cols-3">
                     {[
@@ -943,7 +945,7 @@ export default function HomePage() {
                       <div className="text-sm font-bold uppercase tracking-[0.22em] text-[#95ea63]">Admin pulse</div>
                       <div className="mt-2 text-xl font-bold tracking-[-0.04em] text-white">Approval and payout command panel</div>
                     </div>
-                    <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#8fe05f] text-lg font-black text-[#0b1914]">A</div>
+                    <div className="hidden h-12 w-12 place-items-center rounded-2xl bg-[#8fe05f] text-lg font-black text-[#0b1914] sm:grid">A</div>
                   </div>
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
                     {[
