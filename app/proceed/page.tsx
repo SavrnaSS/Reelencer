@@ -408,8 +408,8 @@ function ProceedPageInner() {
               R
             </div>
             <div>
-              <div className="text-lg font-semibold tracking-wide">Proceed with gig</div>
-              <div className="text-xs text-slate-500">Secure credential submission</div>
+              <div className="text-lg font-semibold tracking-wide">Gig Submission Workspace</div>
+              <div className="text-xs text-slate-500">Secure credential verification and handoff</div>
             </div>
           </div>
 
@@ -417,7 +417,7 @@ function ProceedPageInner() {
             className="rounded-full border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:border-slate-400"
             href="/browse"
           >
-            Back to browse
+            Return to marketplace
           </Link>
         </div>
       </div>
