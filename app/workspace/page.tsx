@@ -2024,7 +2024,7 @@ export default function MarketplaceWorkerPage() {
   }
 
   return (
-    <div className="ops-dashboard-skin min-h-screen bg-slate-50">
+    <div className="ops-dashboard-skin min-h-screen overflow-x-hidden bg-slate-50">
       {/* Mobile navigation */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
@@ -2053,18 +2053,18 @@ export default function MarketplaceWorkerPage() {
         </div>
       )}
 
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen w-full overflow-x-hidden">
         {/* Desktop sidebar */}
         <aside className="hidden w-[292px] bg-[#e8efe4] lg:block lg:p-3">
           <SidebarWorker activeSection={activeSection} setActiveSection={setActiveSection} />
         </aside>
 
         {/* Main */}
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           {/* Header */}
           <header className="sticky top-0 z-40 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
-            <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
-              <div className="flex items-center justify-between gap-3">
+            <div className="mx-auto max-w-7xl px-3 py-2 sm:px-6">
+              <div className="flex min-w-0 items-center justify-between gap-2 sm:gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   <button
                     className="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50"
@@ -2092,7 +2092,7 @@ export default function MarketplaceWorkerPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <div className="hidden md:flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
                     <Icon name="search" />
                     <input
@@ -2114,17 +2114,17 @@ export default function MarketplaceWorkerPage() {
                     />
                   </div>
 
-                  <Button variant="secondary" onClick={loadFromApi} title="Reload from API">
+                  <Button variant="secondary" onClick={loadFromApi} title="Reload from API" className="px-2.5 py-2 sm:px-4 sm:py-2.5">
                     <Icon name="refresh" />
                     <span className="hidden sm:inline">{loading ? "Loading…" : "Sync"}</span>
                   </Button>
 
-                  <Button variant="ghost" className="border border-slate-200 bg-white" title="Alerts">
+                  <Button variant="ghost" className="border border-slate-200 bg-white px-2.5 py-2 sm:px-4 sm:py-2.5" title="Alerts">
                     <Icon name="bell" />
                     <span className="hidden sm:inline">Alerts</span>
                   </Button>
 
-                  <Button variant="secondary" onClick={logout} title="Logout">
+                  <Button variant="secondary" onClick={logout} title="Logout" className="px-2.5 py-2 sm:px-4 sm:py-2.5">
                     <Icon name="lock" />
                     <span className="hidden sm:inline">Logout</span>
                   </Button>
@@ -2208,7 +2208,7 @@ export default function MarketplaceWorkerPage() {
           </header>
 
           {/* Body */}
-          <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+          <main className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-6">
             {/* OPERATIONS */}
             {activeSection === "Operations" && (
               <>

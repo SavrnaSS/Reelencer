@@ -791,7 +791,7 @@ export default function HomePage() {
               </div>
 
               <div className="relative mt-8">
-                <h1 className="max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-white sm:text-[3.35rem]">
+                <h1 className="max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.62rem] leading-[0.94] font-bold tracking-[-0.045em] text-white sm:text-[3.35rem]">
                   Freelance Work,
                   <br />
                   One Workflow
