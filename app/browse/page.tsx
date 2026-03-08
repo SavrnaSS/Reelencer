@@ -149,7 +149,7 @@ function BrandMark({ compact = false, showTagline = true }: { compact?: boolean;
       <div className="leading-none">
         <div
           className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-white ${
-            compact ? "text-[1.65rem]" : "text-[2.05rem] sm:text-[2.2rem]"
+            compact ? "text-[1.2rem] sm:text-[1.55rem]" : "text-[2.05rem] sm:text-[2.2rem]"
           }`}
         >
           Reelencer
@@ -571,7 +571,7 @@ export default function BrowsePage() {
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/45 to-transparent" />
         <header className="relative z-30">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 pb-4 pt-4 sm:px-6 sm:pt-5 lg:px-8">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-3 pb-3 pt-3 sm:px-6 sm:pb-4 sm:pt-5 lg:px-8">
           <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
             <div className="hidden lg:block">
               <BrandMark showTagline={false} />
@@ -585,10 +585,10 @@ export default function BrowsePage() {
             <div className="relative" data-profile-menu>
               <button
                 ref={menuButtonRef}
-                className="flex items-center gap-2 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-xs font-semibold text-white shadow-sm backdrop-blur-md transition hover:bg-white/10 cursor-pointer"
+                className="flex items-center gap-1.5 rounded-full border border-white/12 bg-white/6 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm backdrop-blur-md transition hover:bg-white/10 cursor-pointer sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
                 onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-sm font-bold text-[#10251b] sm:h-9 sm:w-9">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-xs font-bold text-[#10251b] sm:h-9 sm:w-9 sm:text-sm">
                   {displayName.slice(0, 1).toUpperCase()}
                 </span>
                 <span className="hidden max-w-[12rem] truncate text-sm text-white/90 sm:block">{displayName}</span>
@@ -628,18 +628,18 @@ export default function BrowsePage() {
         <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-2 sm:px-6 sm:pb-14 lg:px-8">
         <section className="relative grid gap-6 lg:grid-cols-[1.12fr_0.88fr] lg:items-center">
           <div>
-            <h1 className="mt-6 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[3.2rem] leading-[0.92] font-bold tracking-[-0.05em] text-white sm:text-[4.2rem]">
+            <h1 className="mt-5 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-white sm:mt-6 sm:text-[3.35rem] lg:text-[4.2rem]">
               Browse Verified
               <br />
               Gigs, Clear
               <br />
               Payouts, Faster.
             </h1>
-            <p className="mt-6 max-w-3xl text-[1.04rem] font-medium leading-[1.58] tracking-[-0.02em] text-white/80 sm:text-[1.18rem]">
+            <p className="mt-5 max-w-3xl text-[0.95rem] font-medium leading-[1.54] tracking-[-0.015em] text-white/80 sm:mt-6 sm:text-[1.08rem] lg:text-[1.18rem]">
               Explore Reelencer opportunities with structured briefs, visible workload expectations, and transparent payout logic. The browse flow now carries the same premium operating-system feel as the homepage.
             </p>
             {!workerId && (
-              <div className="mt-5 inline-flex rounded-full border border-[#8fe05f]/25 bg-[#8fe05f]/8 px-4 py-2 text-sm font-medium text-[#b7f18e]">
+              <div className="mt-4 inline-flex rounded-full border border-[#8fe05f]/25 bg-[#8fe05f]/8 px-3 py-1.5 text-xs font-medium text-[#b7f18e] sm:mt-5 sm:px-4 sm:py-2 sm:text-sm">
                 Sign in to apply. Browsing stays public, applications require an authenticated workspace session.
               </div>
             )}
@@ -649,19 +649,19 @@ export default function BrowsePage() {
             <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-white/70 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
               <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
                 <div className="text-xs text-white/45">Active gigs</div>
-                <div className="mt-2 text-2xl font-semibold text-white">{gigs.filter(isGigActive).length}</div>
+                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">{gigs.filter(isGigActive).length}</div>
               </div>
               <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
                 <div className="text-xs text-white/45">Verified employers</div>
-                <div className="mt-2 text-2xl font-semibold text-white">18</div>
+                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">18</div>
               </div>
               <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
                 <div className="text-xs text-white/45">Median payout</div>
-                <div className="mt-2 text-2xl font-semibold text-white">₹52k</div>
+                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">₹52k</div>
               </div>
               <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
                 <div className="text-xs text-white/45">Avg. response</div>
-                <div className="mt-2 text-2xl font-semibold text-white">36h</div>
+                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">36h</div>
               </div>
             </div>
           </div>
@@ -762,7 +762,7 @@ export default function BrowsePage() {
                 <button
                   type="button"
                   onClick={() => setMobileFiltersOpen(true)}
-                  className="inline-flex min-h-12 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-5 text-sm font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
+                  className="inline-flex min-h-11 items-center justify-center rounded-[1rem] bg-[#8fe05f] px-4 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d] sm:min-h-12 sm:rounded-[1.2rem] sm:px-5 sm:text-sm"
                 >
                   Open filters
                 </button>

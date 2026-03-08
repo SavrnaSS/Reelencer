@@ -332,7 +332,7 @@ function LoginPageInner() {
           aria-label="Dismiss navigation overlay"
         />
 
-        <div className="relative mx-auto w-full max-w-7xl px-4 pb-6 pt-4 sm:px-6 sm:pt-5 lg:px-8">
+        <div className="relative mx-auto w-full max-w-7xl px-3 pb-5 pt-3 sm:px-6 sm:pb-6 sm:pt-5 lg:px-8">
           <div className="relative hidden items-center justify-between lg:flex">
             <BrandMark showTagline />
             <nav className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10 bg-white/[0.04] px-1.5 py-1.5 backdrop-blur-md xl:flex">
@@ -378,9 +378,9 @@ function LoginPageInner() {
           <div className="flex items-center justify-between lg:hidden">
             <BrandMark compact showTagline={false} />
             <div className="flex items-center gap-3">
-              <Link href="/login" className="inline-flex items-center gap-1.5 text-[1.05rem] font-semibold text-white/95 transition hover:text-white">
-                <span>Login</span>
-                <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <Link href="/login" className="inline-flex items-center gap-1 text-[1rem] font-semibold text-white/95 transition hover:text-white">
+                <span className="hidden sm:inline">Login</span>
+                <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 sm:h-5 sm:w-5" fill="none" stroke="currentColor" strokeWidth="2.2">
                   <circle cx="12" cy="8" r="4" />
                   <path strokeLinecap="round" d="M4 20c2-4 5.2-6 8-6s6 2 8 6" />
                 </svg>
@@ -391,10 +391,10 @@ function LoginPageInner() {
                   setExpandedMenu("Login");
                   setmenuOpen(true);
                 }}
-                className="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/70 bg-white/4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-md transition hover:bg-white/10"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-white/70 bg-white/4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-md transition hover:bg-white/10 sm:h-14 sm:w-14 sm:rounded-2xl"
                 aria-label="Open navigation"
               >
-                <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2.4">
+                <svg viewBox="0 0 24 24" className="h-6 w-6 sm:h-7 sm:w-7" fill="none" stroke="currentColor" strokeWidth="2.4">
                   <path strokeLinecap="round" d="M6 7h12M10 12h8M6 17h12" />
                 </svg>
               </button>
@@ -402,9 +402,9 @@ function LoginPageInner() {
           </div>
 
           <div className="mx-auto mt-12 w-full max-w-[680px] sm:mt-14 lg:mt-20">
-            <h1 className="text-[2.8rem] font-black tracking-[-0.035em] text-white sm:text-[3.1rem] lg:text-[3.35rem]">Login</h1>
+            <h1 className="text-[2.25rem] font-black tracking-[-0.03em] text-white sm:text-[2.8rem] lg:text-[3.35rem]">Login</h1>
 
-            <div className="mt-6 rounded-[1.65rem] border border-white/10 bg-[#113d33]/72 p-5 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.07)] backdrop-blur-sm sm:p-7 lg:p-8">
+            <div className="mt-5 rounded-[1.45rem] border border-white/10 bg-[#113d33]/72 p-4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.07)] backdrop-blur-sm sm:mt-6 sm:rounded-[1.65rem] sm:p-7 lg:p-8">
               <div className="space-y-5">
                 <div>
                   <label className="text-sm font-medium text-white/84" htmlFor="login-email">
@@ -415,7 +415,7 @@ function LoginPageInner() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@company.com"
-                    className="mt-2 h-14 w-full rounded-[1.1rem] border border-black/8 bg-white px-5 text-[1.02rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500"
+                    className="mt-2 h-13 w-full rounded-[1rem] border border-black/8 bg-white px-4 text-[0.95rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500 sm:h-14 sm:rounded-[1.1rem] sm:px-5 sm:text-[1.02rem]"
                     autoComplete="email"
                   />
                 </div>
@@ -431,7 +431,7 @@ function LoginPageInner() {
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       type={showPassword ? "text" : "password"}
-                      className="h-14 w-full rounded-[1.1rem] border border-black/8 bg-white px-5 pr-12 text-[1.02rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500"
+                    className="h-13 w-full rounded-[1rem] border border-black/8 bg-white px-4 pr-11 text-[0.95rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500 sm:h-14 sm:rounded-[1.1rem] sm:px-5 sm:pr-12 sm:text-[1.02rem]"
                       autoComplete="current-password"
                       onKeyDown={(e) => {
                         if (e.key === "Enter") void signIn();
@@ -481,7 +481,7 @@ function LoginPageInner() {
                 <button
                   onClick={() => void signIn()}
                   disabled={loading}
-                  className="inline-flex h-14 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-8 text-lg font-extrabold tracking-[-0.02em] text-[#0b1914] transition hover:bg-[#9ae86a] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex h-12 items-center justify-center rounded-[1rem] bg-[#8fe05f] px-6 text-base font-extrabold tracking-[-0.02em] text-[#0b1914] transition hover:bg-[#9ae86a] disabled:cursor-not-allowed disabled:opacity-60 sm:h-14 sm:rounded-[1.2rem] sm:px-8 sm:text-lg"
                 >
                   {loading ? "Logging in..." : "Log in"}
                 </button>
@@ -511,7 +511,7 @@ function BrandMark({ compact = false, showTagline = true }: { compact?: boolean;
       <div className="leading-none">
         <div
           className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-white ${
-            compact ? "text-[1.65rem]" : "text-[2.05rem] sm:text-[2.2rem]"
+            compact ? "text-[1.2rem] sm:text-[1.55rem]" : "text-[2.05rem] sm:text-[2.2rem]"
           }`}
         >
           Reelencer

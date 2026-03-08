@@ -435,7 +435,7 @@ export default function HomePage() {
         />
 
         <header className="relative z-30 lg:z-50">
-          <div className="relative mx-auto flex w-full max-w-7xl items-center justify-between px-4 pb-4 pt-4 sm:px-6 sm:pt-5 lg:px-8">
+          <div className="relative mx-auto flex w-full max-w-7xl items-center justify-between px-3 pb-3 pt-3 sm:px-6 sm:pb-4 sm:pt-5 lg:px-8">
             <div>
               <BrandMark showTagline={false} />
             </div>
@@ -460,10 +460,10 @@ export default function HomePage() {
             <div className="flex items-center gap-3">
               <Link
                 href={accountHref}
-                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[1.15rem] font-semibold text-white transition hover:bg-white/8 sm:text-[1.25rem]"
+                className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[1rem] font-semibold text-white transition hover:bg-white/8 sm:gap-1.5 sm:px-2 sm:text-[1.15rem]"
               >
-                <span className="max-w-[5.5rem] truncate sm:max-w-[8rem]">{navAccountLabel}</span>
-                <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <span className="hidden max-w-[5rem] truncate sm:inline sm:max-w-[7rem]">{navAccountLabel}</span>
+                <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 sm:h-6 sm:w-6" fill="none" stroke="currentColor" strokeWidth="2.2">
                   <circle cx="12" cy="8" r="4" />
                   <path strokeLinecap="round" d="M4 20c2-4 5.2-6 8-6s6 2 8 6" />
                 </svg>
@@ -605,10 +605,10 @@ export default function HomePage() {
                   setAccountPanelOpen(false);
                   setmenuOpen(true);
                 }}
-                className="inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/70 bg-white/4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-md transition hover:bg-white/10"
+                className="inline-flex h-12 w-12 items-center justify-center rounded-xl border border-white/70 bg-white/4 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] backdrop-blur-md transition hover:bg-white/10 sm:h-14 sm:w-14 sm:rounded-2xl"
                 aria-label="Open navigation"
               >
-                <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="2.4">
+                <svg viewBox="0 0 24 24" className="h-6 w-6 sm:h-7 sm:w-7" fill="none" stroke="currentColor" strokeWidth="2.4">
                   <path strokeLinecap="round" d="M6 7h12M10 12h8M6 17h12" />
                 </svg>
               </button>
@@ -783,13 +783,13 @@ export default function HomePage() {
 
           <section className="mx-auto w-full max-w-7xl px-4 pb-12 pt-2 sm:px-6 sm:pb-16 lg:hidden">
             <div className="animate-[revealRise_700ms_ease-out]">
-              <div className="inline-flex items-center rounded-full border border-[#79a96c]/30 bg-[#2f624e]/55 px-4 py-2 text-[0.98rem] font-semibold tracking-[-0.02em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              <div className="inline-flex items-center rounded-full border border-[#79a96c]/30 bg-[#2f624e]/55 px-3 py-1.5 text-[0.82rem] font-semibold tracking-[-0.01em] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] sm:px-4 sm:py-2 sm:text-[0.95rem]">
                 <span className="mr-2 text-[#95ea63]">⚡</span>
                 #1 Creator Operations, Simplified
               </div>
 
               <div className="relative mt-8">
-                <h1 className="max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[3.25rem] leading-[0.92] font-bold tracking-[-0.05em] text-white sm:text-[4.2rem]">
+                <h1 className="max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-white sm:text-[3.35rem]">
                   Freelance Work,
                   <br />
                   One Workflow
@@ -798,7 +798,7 @@ export default function HomePage() {
                 </h1>
               </div>
 
-              <p className="mt-6 max-w-3xl text-[1.04rem] font-medium leading-[1.58] tracking-[-0.02em] text-white/86 sm:text-[1.2rem]">
+              <p className="mt-5 max-w-3xl text-[0.95rem] font-medium leading-[1.54] tracking-[-0.015em] text-white/86 sm:mt-6 sm:text-[1.08rem]">
                 Reelencer helps independent creators and fast-moving teams manage gigs, approvals, and payouts in one clear workflow.
               </p>
 
@@ -817,11 +817,11 @@ export default function HomePage() {
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         required
-                        className="h-16 rounded-[1.2rem] border border-black/8 bg-white px-6 text-lg font-semibold text-slate-800 outline-none placeholder:text-slate-500"
+                        className="h-14 rounded-[1.1rem] border border-black/8 bg-white px-5 text-base font-semibold text-slate-800 outline-none placeholder:text-slate-500 sm:h-16 sm:rounded-[1.2rem] sm:px-6 sm:text-lg"
                       />
                       <button
                         type="submit"
-                        className="flex h-16 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-6 text-[1.42rem] font-extrabold tracking-[-0.03em] text-[#0b1914] transition hover:bg-[#9ae86a]"
+                        className="flex h-14 items-center justify-center rounded-[1.1rem] bg-[#8fe05f] px-5 text-[1.18rem] font-extrabold tracking-[-0.03em] text-[#0b1914] transition hover:bg-[#9ae86a] sm:h-16 sm:rounded-[1.2rem] sm:px-6 sm:text-[1.35rem]"
                       >
                         {primaryLabel}
                         <span className="ml-2">↗</span>
@@ -836,12 +836,12 @@ export default function HomePage() {
                     >
                       <span className="absolute inset-y-0 left-0 w-1 bg-[#8fe05f]" />
                       <span className="block text-[0.72rem] font-bold uppercase tracking-[0.22em] text-slate-400">Recommended</span>
-                      <span className="mt-1 block text-[1.35rem] font-black tracking-[-0.05em]">Browse Gigs</span>
+                      <span className="mt-1 block text-[1.15rem] font-black tracking-[-0.04em] sm:text-[1.3rem]">Browse Gigs</span>
                       <span className="mt-1 block text-sm font-medium text-slate-500">Find new work and apply in minutes.</span>
                     </Link>
                     <Link
                       href={primaryHref}
-                      className="flex h-16 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-6 text-[1.12rem] font-extrabold tracking-[-0.03em] text-[#0b1914] transition hover:bg-[#9ae86a]"
+                      className="flex h-14 items-center justify-center rounded-[1.1rem] bg-[#8fe05f] px-5 text-[1rem] font-extrabold tracking-[-0.03em] text-[#0b1914] transition hover:bg-[#9ae86a] sm:h-16 sm:rounded-[1.2rem] sm:px-6 sm:text-[1.08rem]"
                     >
                       Open Dashboard
                       <span className="ml-2">↗</span>
@@ -861,7 +861,7 @@ export default function HomePage() {
               <div className="mt-8 grid gap-4 border-t border-white/10 pt-6 sm:grid-cols-3">
                 {trustStats.map((stat) => (
                   <div key={stat.label} className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] px-4 py-4">
-                    <div className="text-[1.55rem] font-extrabold tracking-[-0.04em] text-white">{stat.value}</div>
+                    <div className="text-[1.28rem] font-extrabold tracking-[-0.035em] text-white sm:text-[1.5rem]">{stat.value}</div>
                     <div className="mt-1 text-sm leading-6 text-white/68">{stat.label}</div>
                   </div>
                 ))}
@@ -1149,7 +1149,7 @@ function BrandMark({ compact = false, showTagline = true }: { compact?: boolean;
       <div className="leading-none">
         <div
           className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-white ${
-            compact ? "text-[1.65rem]" : "text-[2.05rem] sm:text-[2.2rem]"
+            compact ? "text-[1.2rem] sm:text-[1.55rem]" : "text-[2.05rem] sm:text-[2.2rem]"
           }`}
         >
           Reelencer
