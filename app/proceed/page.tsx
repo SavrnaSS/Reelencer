@@ -45,6 +45,9 @@ type ProposalPayload = {
   adminNote?: string;
   adminExplanation?: string;
   whatsappLink?: string;
+  onboardingSteps?: string;
+  groupJoinedConfirmed?: boolean;
+  groupJoinedConfirmedAt?: string;
   reviewedAt?: string;
 };
 
@@ -197,6 +200,7 @@ function ProceedPageInner() {
   const [proposalBudget, setProposalBudget] = useState("");
   const [proposalPortfolio, setProposalPortfolio] = useState("");
   const [proposalSaving, setProposalSaving] = useState(false);
+  const [groupJoinConfirming, setGroupJoinConfirming] = useState(false);
 
   const pollingRef = React.useRef(false);
 
@@ -350,8 +354,13 @@ function ProceedPageInner() {
   const adminWhatsappLink = useMemo(() => {
     const raw = application?.proposal?.whatsappLink?.trim() ?? "";
     if (!raw) return null;
-    return /^https?:\/\//i.test(raw) ? raw : null;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (/^(chat\.whatsapp\.com|wa\.me|api\.whatsapp\.com)\//i.test(raw)) return `https://${raw}`;
+    const inviteMatch = raw.match(/(https?:\/\/)?(chat\.whatsapp\.com\/[^\s]+)/i);
+    if (inviteMatch?.[2]) return `https://${inviteMatch[2]}`;
+    return null;
   }, [application?.proposal?.whatsappLink]);
+  const groupJoinConfirmed = !!application?.proposal?.groupJoinedConfirmed;
   const customType = useMemo(() => customTypeLabel(gig?.gigType), [gig?.gigType]);
   const customBrief = useMemo(() => {
     const list = gig?.requirements ?? [];
@@ -665,6 +674,47 @@ function ProceedPageInner() {
       setError(e?.message || "Unable to submit proposal right now.");
     } finally {
       setProposalSaving(false);
+    }
+  };
+
+  const confirmGroupJoined = async () => {
+    if (!application?.id || !session?.workerId || groupJoinConfirming || groupJoinConfirmed) return;
+    const confirmedAt = new Date().toISOString();
+    setGroupJoinConfirming(true);
+    try {
+      const nextProposal: ProposalPayload = {
+        ...(application.proposal ?? {}),
+        submittedAt: application.proposal?.submittedAt ?? application.appliedAt,
+        reviewStatus: application.proposal?.reviewStatus ?? "Pending",
+        groupJoinedConfirmed: true,
+        groupJoinedConfirmedAt: confirmedAt,
+      };
+      const res = await fetch("/api/gig-applications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: application.id,
+          updates: {
+            status: application.status === "Accepted" || application.status === "Rejected" ? application.status : "Pending",
+            decidedAt: application.decidedAt ?? confirmedAt,
+            workerName: session.workerId,
+            proposal: nextProposal,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.error || "Unable to confirm group join right now.");
+      }
+      const payload = await res.json().catch(() => null);
+      const updated = payload ?? { ...application, proposal: nextProposal, status: "Pending" };
+      setApplication(updated);
+      setApplicationStatus(String(updated?.status ?? "Pending"));
+      setSuccess("Group join confirmed. Admin has been notified for final review.");
+    } catch (e: any) {
+      setError(e?.message || "Unable to confirm group join right now.");
+    } finally {
+      setGroupJoinConfirming(false);
     }
   };
 
@@ -1017,31 +1067,58 @@ function ProceedPageInner() {
 
             <div className="mt-4 grid gap-3">
               <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold text-[#294b40]">Admin note:</span>{" "}
+                <span className="font-semibold text-[#294b40]">Note:</span>{" "}
                 {application?.proposal?.adminNote?.trim() || "No admin note published yet."}
               </div>
               <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
                 <span className="font-semibold text-[#294b40]">Guidance:</span>{" "}
                 {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after initial review."}
               </div>
-              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold text-[#294b40]">WhatsApp onboarding:</span>{" "}
-                {application?.proposal?.whatsappLink ? (
-                  adminWhatsappLink ? (
+              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 text-sm text-[#355d50]">
+                <div className="font-semibold text-[#294b40]">WhatsApp onboarding</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {adminWhatsappLink ? (
                     <a
                       href={adminWhatsappLink}
                       target="_blank"
                       rel="noreferrer"
-                      className="font-semibold text-[#1f4f43] underline underline-offset-2 break-all"
+                      className="inline-flex items-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-1.5 text-xs font-semibold text-[#1f4f43] hover:bg-[#e2f0e7]"
                     >
-                      Open group link
+                      Open onboarding group
                     </a>
                   ) : (
-                    <span className="break-all">{application.proposal.whatsappLink}</span>
-                  )
-                ) : (
-                  "Group link will be shared after review."
+                    <span className="text-xs text-[#6f877d]">
+                      {application?.proposal?.whatsappLink
+                        ? "Admin shared an invalid link format. Please request a valid WhatsApp invite URL."
+                        : "Group link will be shared after review."}
+                    </span>
+                  )}
+                </div>
+                {adminWhatsappLink && proposalReviewStatus !== "Rejected" && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={confirmGroupJoined}
+                      disabled={groupJoinConfirming || groupJoinConfirmed}
+                      className={`inline-flex items-center rounded-full px-4 py-1.5 text-xs font-semibold ${
+                        groupJoinConfirmed
+                          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border border-[#bcd6c9] bg-[#1f4f43] text-white hover:bg-[#2d6b5a] disabled:opacity-60"
+                      }`}
+                    >
+                      {groupJoinConfirmed ? "Group join confirmed" : groupJoinConfirming ? "Confirming..." : "Confirm group joined"}
+                    </button>
+                    {application?.proposal?.groupJoinedConfirmedAt && (
+                      <span className="text-[11px] text-[#6f877d]">
+                        Confirmed {new Date(application.proposal.groupJoinedConfirmedAt).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
                 )}
+              </div>
+              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold text-[#294b40]">Next steps:</span>{" "}
+                {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group joined, then wait for admin approval or revision feedback."}
               </div>
             </div>
 

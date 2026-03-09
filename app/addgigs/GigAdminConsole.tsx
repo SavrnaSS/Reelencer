@@ -42,6 +42,9 @@ type GigApplication = {
     adminNote?: string;
     adminExplanation?: string;
     whatsappLink?: string;
+    onboardingSteps?: string;
+    groupJoinedConfirmed?: boolean;
+    groupJoinedConfirmedAt?: string;
     reviewedAt?: string;
   };
   status: ApplicationStatus;
@@ -273,7 +276,7 @@ export default function GigAdminConsole({
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const [proposalReviewDraft, setProposalReviewDraft] = useState<
-    Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string }>
+    Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
   >({});
 
   const [form, setForm] = useState({
@@ -309,7 +312,9 @@ export default function GigAdminConsole({
     const cachedAssignments = toArray<Assignment>(readLS(LS_KEYS.GIG_ASSIGNMENTS, []), []);
     const cachedKyc = toArray<KycRow>(readLS<KycRow[]>(LS_KEYS.GIG_KYC_ROWS, []), []);
     const cachedKycSync = readLS<string | null>(LS_KEYS.GIG_KYC_SYNC_AT, null);
-    const cachedProposalDraft = readLS<Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string }>>(
+    const cachedProposalDraft = readLS<
+      Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
+    >(
       LS_KEYS.PROPOSAL_REVIEW_DRAFT,
       {}
     );
@@ -776,7 +781,7 @@ export default function GigAdminConsole({
 
   const persistApplicationReview = async (
     app: GigApplication,
-    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string },
+    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string; onboardingSteps?: string },
     statusOverride?: ApplicationStatus
   ) => {
     const status = statusOverride ?? app.status;
@@ -790,6 +795,7 @@ export default function GigAdminConsole({
       adminNote: review?.adminNote ?? app.proposal?.adminNote ?? "",
       adminExplanation: review?.adminExplanation ?? app.proposal?.adminExplanation ?? "",
       whatsappLink: review?.whatsappLink ?? app.proposal?.whatsappLink ?? "",
+      onboardingSteps: review?.onboardingSteps ?? app.proposal?.onboardingSteps ?? "",
       reviewedAt: decidedAt,
     };
     setApps((prev) => {
@@ -820,7 +826,7 @@ export default function GigAdminConsole({
   const updateApplication = async (
     app: GigApplication,
     status: ApplicationStatus,
-    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string }
+    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string; onboardingSteps?: string }
   ) => {
     await persistApplicationReview(app, review, status);
   };
@@ -1449,6 +1455,7 @@ export default function GigAdminConsole({
                       adminNote: app.proposal?.adminNote ?? "",
                       adminExplanation: app.proposal?.adminExplanation ?? "",
                       whatsappLink: app.proposal?.whatsappLink ?? "",
+                      onboardingSteps: app.proposal?.onboardingSteps ?? "",
                     };
                     return (
                       <>
@@ -1500,8 +1507,19 @@ export default function GigAdminConsole({
                           <span className="font-semibold text-slate-700">Portfolio:</span> {app.proposal.portfolio}
                         </div>
                       )}
+                      {app.proposal.onboardingSteps && (
+                        <div className="mt-2 text-xs text-slate-600">
+                          <span className="font-semibold text-slate-700">Post-onboarding steps:</span> {app.proposal.onboardingSteps}
+                        </div>
+                      )}
                       {app.proposal.reviewedAt && (
                         <div className="mt-2 text-[11px] text-slate-500">Reviewed: {new Date(app.proposal.reviewedAt).toLocaleString()}</div>
+                      )}
+                      {app.proposal.groupJoinedConfirmed && (
+                        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+                          Worker confirmed WhatsApp group joined
+                          {app.proposal.groupJoinedConfirmedAt ? ` (${new Date(app.proposal.groupJoinedConfirmedAt).toLocaleString()})` : ""}
+                        </div>
                       )}
                     </div>
                   )}
@@ -1550,6 +1568,27 @@ export default function GigAdminConsole({
                     </label>
                   </div>
                   <label className="mt-2 block text-[11px] font-semibold text-slate-600">
+                    Post-onboarding steps
+                    <textarea
+                      className="mt-1 h-16 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                      value={draft.onboardingSteps}
+                      onChange={(e) =>
+                        setProposalReviewDraft((prev) => ({
+                          ...prev,
+                          [app.id]: { ...draft, onboardingSteps: e.target.value },
+                        }))
+                      }
+                      onBlur={() =>
+                        persistApplicationReview(
+                          app,
+                          proposalReviewDraft[app.id] ?? draft,
+                          app.status
+                        )
+                      }
+                      placeholder="After joining group: submit intro message, share worker ID, confirm timezone, and wait for admin checklist."
+                    />
+                  </label>
+                  <label className="mt-2 block text-[11px] font-semibold text-slate-600">
                     Admin explanation
                     <textarea
                       className="mt-1 h-16 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
@@ -1578,6 +1617,7 @@ export default function GigAdminConsole({
                           adminNote: draft.adminNote,
                           adminExplanation: draft.adminExplanation,
                           whatsappLink: draft.whatsappLink,
+                          onboardingSteps: draft.onboardingSteps,
                         })
                       }
                     >
@@ -1590,6 +1630,7 @@ export default function GigAdminConsole({
                           adminNote: draft.adminNote,
                           adminExplanation: draft.adminExplanation,
                           whatsappLink: draft.whatsappLink,
+                          onboardingSteps: draft.onboardingSteps,
                         })
                       }
                     >
@@ -1602,6 +1643,7 @@ export default function GigAdminConsole({
                           adminNote: draft.adminNote,
                           adminExplanation: draft.adminExplanation,
                           whatsappLink: draft.whatsappLink,
+                          onboardingSteps: draft.onboardingSteps,
                         })
                       }
                     >

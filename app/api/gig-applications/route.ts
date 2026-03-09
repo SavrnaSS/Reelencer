@@ -21,6 +21,9 @@ type ProposalPayload = {
   adminNote?: string;
   adminExplanation?: string;
   whatsappLink?: string;
+  onboardingSteps?: string;
+  groupJoinedConfirmed?: boolean;
+  groupJoinedConfirmedAt?: string;
   reviewedAt?: string;
 };
 
