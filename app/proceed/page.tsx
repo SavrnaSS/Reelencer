@@ -335,6 +335,20 @@ function ProceedPageInner() {
     [applicationStatus]
   );
   const canAccessOperations = isProposalApproved || !!assignment;
+  const hasAdminUpdate = useMemo(
+    () =>
+      !!(
+        application?.proposal?.adminNote?.trim() ||
+        application?.proposal?.adminExplanation?.trim() ||
+        application?.proposal?.whatsappLink?.trim()
+      ),
+    [application?.proposal?.adminExplanation, application?.proposal?.adminNote, application?.proposal?.whatsappLink]
+  );
+  const adminWhatsappLink = useMemo(() => {
+    const raw = application?.proposal?.whatsappLink?.trim() ?? "";
+    if (!raw) return null;
+    return /^https?:\/\//i.test(raw) ? raw : null;
+  }, [application?.proposal?.whatsappLink]);
   const customType = useMemo(() => customTypeLabel(gig?.gigType), [gig?.gigType]);
   const customBrief = useMemo(() => {
     const list = gig?.requirements ?? [];
@@ -760,6 +774,46 @@ function ProceedPageInner() {
           </div>
         </div>
 
+        {hasApplication && hasAdminUpdate && (
+          <div className="rounded-3xl border border-[#c9d8cf] bg-white/90 p-5 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-[#1c3e33]">Operations update</div>
+              <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-1 text-[11px] font-semibold text-[#4d665c]">
+                {proposalReviewStatus === "Rejected"
+                  ? "Revision requested"
+                  : proposalReviewStatus === "Accepted"
+                    ? "Approved"
+                    : "Under review"}
+              </span>
+            </div>
+            {application?.proposal?.adminNote && (
+              <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold">Admin note:</span> {application.proposal.adminNote}
+              </div>
+            )}
+            {application?.proposal?.adminExplanation && (
+              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold">Guidance:</span> {application.proposal.adminExplanation}
+              </div>
+            )}
+            {application?.proposal?.whatsappLink && (
+              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold">WhatsApp group:</span>{" "}
+                {adminWhatsappLink ? (
+                  <a href={adminWhatsappLink} target="_blank" rel="noreferrer" className="font-semibold text-[#1f4f43] underline underline-offset-2">
+                    Open group link
+                  </a>
+                ) : (
+                  application.proposal.whatsappLink
+                )}
+              </div>
+            )}
+            {application?.proposal?.reviewedAt && (
+              <div className="mt-2 text-[11px] text-[#6f877d]">Updated: {new Date(application.proposal.reviewedAt).toLocaleString()}</div>
+            )}
+          </div>
+        )}
+
         {isCustomFlow && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -875,34 +929,6 @@ function ProceedPageInner() {
                 </label>
               </div>
             </div>
-            {hasApplication && (
-              <div className="mt-4 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
-                <span className="font-semibold">
-                  {proposalReviewStatus === "Rejected"
-                    ? "Proposal revision requested:"
-                    : proposalReviewStatus === "Accepted"
-                      ? "Proposal approved:"
-                      : "Proposal in review:"}
-                </span>{" "}
-                {application?.proposal?.adminNote || "Admin is reviewing your submission and will share detailed guidance here."}
-              </div>
-            )}
-            {application?.proposal?.adminExplanation && (
-              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
-                <span className="font-semibold">Explanation:</span> {application.proposal.adminExplanation}
-              </div>
-            )}
-            {application?.proposal?.whatsappLink && (
-              <a
-                href={application.proposal.whatsappLink}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-xs font-semibold text-[#2f6655] hover:bg-[#e2f0e7]"
-              >
-                Open WhatsApp onboarding group
-              </a>
-            )}
-
             {error && (
               <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
             )}
