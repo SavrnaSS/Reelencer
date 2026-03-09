@@ -777,46 +777,6 @@ function ProceedPageInner() {
           </div>
         </div>
 
-        {hasApplication && hasAdminUpdate && (
-          <div className="rounded-3xl border border-[#c9d8cf] bg-white/90 p-5 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-sm font-semibold text-[#1c3e33]">Operations update</div>
-              <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-1 text-[11px] font-semibold text-[#4d665c]">
-                {proposalReviewStatus === "Rejected"
-                  ? "Revision requested"
-                  : proposalReviewStatus === "Accepted"
-                    ? "Approved"
-                    : "Under review"}
-              </span>
-            </div>
-            {application?.proposal?.adminNote && (
-              <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold">Admin note:</span> {application.proposal.adminNote}
-              </div>
-            )}
-            {application?.proposal?.adminExplanation && (
-              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold">Guidance:</span> {application.proposal.adminExplanation}
-              </div>
-            )}
-            {application?.proposal?.whatsappLink && (
-              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold">WhatsApp group:</span>{" "}
-                {adminWhatsappLink ? (
-                  <a href={adminWhatsappLink} target="_blank" rel="noreferrer" className="font-semibold text-[#1f4f43] underline underline-offset-2">
-                    Open group link
-                  </a>
-                ) : (
-                  application.proposal.whatsappLink
-                )}
-              </div>
-            )}
-            {application?.proposal?.reviewedAt && (
-              <div className="mt-2 text-[11px] text-[#6f877d]">Updated: {new Date(application.proposal.reviewedAt).toLocaleString()}</div>
-            )}
-          </div>
-        )}
-
         {isCustomFlow && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1037,38 +997,59 @@ function ProceedPageInner() {
         )}
 
         {!isCustomFlow && hasApplication && !canAccessOperations && (
-          <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
-            <div className="text-sm font-semibold text-[#1c3e33]">
-              {proposalReviewStatus === "Rejected" ? "Proposal revision requested" : "Proposal in review"}
-            </div>
-            <div className="mt-2 text-sm text-[#4d665c]">
-              {proposalReviewStatus === "Rejected"
-                ? "Your proposal needs updates. Review admin feedback, revise your plan, and submit again from Browse."
-                : "Admin review is in progress. You will receive the final decision and onboarding details here."}
-            </div>
-            {application?.proposal?.adminNote && (
-              <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
-                <span className="font-semibold">Admin note:</span> {application.proposal.adminNote}
+          <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Proposal desk</div>
+                <div className="mt-1 text-xl font-semibold tracking-tight text-[#1c3e33]">
+                  {proposalReviewStatus === "Rejected" ? "Revision requested" : "Proposal under review"}
+                </div>
+                <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#4d665c]">
+                  {proposalReviewStatus === "Rejected"
+                    ? "Operations has requested changes. Review the notes below, update your proposal, and submit again from Browse."
+                    : "Your proposal has been received and routed to operations. You will see approval, rejection, or onboarding next steps here."}
+                </div>
               </div>
-            )}
-            {application?.proposal?.adminExplanation && (
-              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
-                <span className="font-semibold">Explanation:</span> {application.proposal.adminExplanation}
+              <span className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
+                {proposalReviewStatus === "Rejected" ? "Needs revision" : "In queue"}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold text-[#294b40]">Admin note:</span>{" "}
+                {application?.proposal?.adminNote?.trim() || "No admin note published yet."}
               </div>
-            )}
-            {application?.proposal?.whatsappLink && (
-              <a
-                href={application.proposal.whatsappLink}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-xs font-semibold text-[#2f6655] hover:bg-[#e2f0e7]"
-              >
-                Open WhatsApp onboarding group
-              </a>
-            )}
-            {application?.proposal?.reviewedAt && (
-              <div className="mt-2 text-[11px] text-[#6f877d]">Last review update: {new Date(application.proposal.reviewedAt).toLocaleString()}</div>
-            )}
+              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold text-[#294b40]">Guidance:</span>{" "}
+                {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after initial review."}
+              </div>
+              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                <span className="font-semibold text-[#294b40]">WhatsApp onboarding:</span>{" "}
+                {application?.proposal?.whatsappLink ? (
+                  adminWhatsappLink ? (
+                    <a
+                      href={adminWhatsappLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-semibold text-[#1f4f43] underline underline-offset-2 break-all"
+                    >
+                      Open group link
+                    </a>
+                  ) : (
+                    <span className="break-all">{application.proposal.whatsappLink}</span>
+                  )
+                ) : (
+                  "Group link will be shared after review."
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3 text-[11px] text-[#6f877d]">
+              {application?.proposal?.reviewedAt
+                ? `Updated: ${new Date(application.proposal.reviewedAt).toLocaleString()}`
+                : `Submitted: ${new Date(application?.appliedAt ?? Date.now()).toLocaleString()}`}
+            </div>
           </div>
         )}
 
