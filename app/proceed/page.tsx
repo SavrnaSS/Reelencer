@@ -635,7 +635,7 @@ function ProceedPageInner() {
       const payload = await res.json();
       setApplication(payload ?? null);
       setApplicationStatus(String(payload?.status ?? "Pending"));
-      setSuccess("Proposal submitted successfully. Your project application is now in review.");
+      setSuccess("Proposal submitted successfully. Your application is now under review.");
     } catch (e: any) {
       setError(e?.message || "Unable to submit proposal right now.");
     } finally {
@@ -670,7 +670,7 @@ function ProceedPageInner() {
       const payload = await res.json();
       setApplication(payload ?? null);
       setApplicationStatus(String(payload?.status ?? "Pending"));
-      setSuccess("Proposal submitted successfully. You can track review updates in this project feed.");
+      setSuccess("Proposal submitted successfully. Track status updates from this project panel.");
     } catch (e: any) {
       setError(e?.message || "Unable to submit proposal right now.");
     } finally {
@@ -711,7 +711,7 @@ function ProceedPageInner() {
       const updated = payload ?? { ...application, proposal: nextProposal, status: "Pending" };
       setApplication(updated);
       setApplicationStatus(String(updated?.status ?? "Pending"));
-      setSuccess("Group join confirmed. Admin has been notified for final review.");
+      setSuccess("Group participation confirmed. Operations has been notified for final review.");
     } catch (e: any) {
       setError(e?.message || "Unable to confirm group join right now.");
     } finally {
@@ -1051,18 +1051,18 @@ function ProceedPageInner() {
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Proposal desk</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Proposal Desk</div>
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">
-                  {proposalReviewStatus === "Rejected" ? "Revision requested" : "Proposal under review"}
+                  {proposalReviewStatus === "Rejected" ? "Revision Requested" : "Proposal Under Review"}
                 </div>
                 <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#4d665c]">
                   {proposalReviewStatus === "Rejected"
-                    ? "Your proposal did not clear the pre-screen round. Review the notes below and prepare a stronger revision."
-                    : "Your proposal is in pre-screen. Operations will publish a short decision for the next onboarding round."}
+                    ? "Your proposal did not clear pre-screening. Review the notes below and submit a stronger revision."
+                    : "Your proposal is currently in pre-screening. Operations will publish a decision for the next onboarding stage."}
                 </div>
               </div>
               <span className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
-                {proposalReviewStatus === "Rejected" ? "Needs revision" : "In queue"}
+                {proposalReviewStatus === "Rejected" ? "Revision Required" : "In Queue"}
               </span>
             </div>
 
@@ -1070,14 +1070,14 @@ function ProceedPageInner() {
               <div className="space-y-3">
                 <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
                   <span className="font-semibold text-[#294b40]">Note:</span>{" "}
-                  {application?.proposal?.adminNote?.trim() || "No note published yet."}
+                  {application?.proposal?.adminNote?.trim() || "No note has been published yet."}
                 </div>
                 <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
                   <span className="font-semibold text-[#294b40]">Guidance:</span>{" "}
-                  {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after initial review."}
+                  {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after the initial review."}
                 </div>
                 <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 text-sm text-[#355d50]">
-                  <div className="font-semibold text-[#294b40]">WhatsApp onboarding</div>
+                  <div className="font-semibold text-[#294b40]">WhatsApp Onboarding</div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     {adminWhatsappLink ? (
                       <a
@@ -1086,18 +1086,18 @@ function ProceedPageInner() {
                         rel="noreferrer"
                         className="inline-flex items-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-1.5 text-xs font-semibold text-[#1f4f43] hover:bg-[#e2f0e7]"
                       >
-                        Open onboarding group
+                        Open Onboarding Group
                       </a>
                     ) : (
                       <span className="text-xs text-[#6f877d]">
                         {application?.proposal?.whatsappLink
-                          ? "Admin shared an invalid link format. Please request a valid WhatsApp invite URL."
-                          : "Group link will be shared after review."}
-                      </span>
-                    )}
-                  </div>
-                  {adminWhatsappLink && proposalReviewStatus !== "Rejected" && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        ? "The link format is invalid. Please request a valid WhatsApp invite URL."
+                        : "The group link will be shared after review."}
+                    </span>
+                  )}
+                </div>
+                {adminWhatsappLink && proposalReviewStatus !== "Rejected" && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={confirmGroupJoined}
@@ -1108,7 +1108,7 @@ function ProceedPageInner() {
                             : "border border-[#bcd6c9] bg-[#1f4f43] text-white hover:bg-[#2d6b5a] disabled:opacity-60"
                         }`}
                       >
-                        {groupJoinConfirmed ? "Group join confirmed" : groupJoinConfirming ? "Confirming..." : "Confirm group joined"}
+                        {groupJoinConfirmed ? "Group Joined" : groupJoinConfirming ? "Confirming..." : "Confirm Group Joined"}
                       </button>
                       {application?.proposal?.groupJoinedConfirmedAt && (
                         <span className="text-[11px] text-[#6f877d]">
@@ -1119,8 +1119,8 @@ function ProceedPageInner() {
                   )}
                 </div>
                 <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                  <span className="font-semibold text-[#294b40]">Next steps:</span>{" "}
-                  {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group joined, then wait for admin approval or revision feedback."}
+                  <span className="font-semibold text-[#294b40]">Next Steps:</span>{" "}
+                  {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group participation, then wait for the final admin decision."}
                 </div>
               </div>
 
@@ -1171,18 +1171,18 @@ function ProceedPageInner() {
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b725f]">Offer letter</div>
-                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#173e31]">Congratulations, you are pre-approved.</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b725f]">Offer Update</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#173e31]">Congratulations, your proposal is approved.</div>
                 <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#355d50]">
-                  Your proposal has cleared the review round. Welcome to the next stage of Reelencer operations.
+                  Your proposal has cleared final review. Welcome to the next stage of Reelencer operations.
                 </div>
               </div>
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                Offer issued
+                Offer Issued
               </span>
             </div>
             <div className="mt-4 rounded-2xl border border-[#cfe3d7] bg-white px-4 py-3 text-sm text-[#355d50]">
-              <span className="font-semibold text-[#284b40]">Next action:</span> Complete onboarding handoff and start execution from your assigned workflow panel.
+              <span className="font-semibold text-[#284b40]">Next Action:</span> Complete onboarding handoff, then begin execution from your assigned workflow panel.
             </div>
           </div>
         )}

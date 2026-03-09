@@ -209,18 +209,18 @@ export async function PATCH(req: Request) {
           const company = String(gig?.company ?? "Reelencer");
           const subject =
             nextStatus === "Accepted"
-              ? `Offer update: ${gigTitle} is approved`
-              : `Update on your proposal for ${gigTitle}`;
+              ? `Offer Update: ${gigTitle} Approved`
+              : `Proposal Update: ${gigTitle}`;
           const html =
             nextStatus === "Accepted"
               ? `<p>Hi ${recipient},</p>
-                 <p>Congratulations. Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been pre-approved for the next onboarding round.</p>
-                 <p>You can now continue in your workspace/proceed panel to complete handoff and start execution.</p>
-                 <p>Regards,<br/>Reelencer Operations</p>`
+                 <p>Congratulations. Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been approved.</p>
+                 <p>Your offer is now active. Continue in your workspace/proceed panel to complete onboarding handoff and begin execution.</p>
+                 <p>Regards,<br/>Reelencer Operations Team</p>`
               : `<p>Hi ${recipient},</p>
-                 <p>Your proposal for <b>${gigTitle}</b> at <b>${company}</b> was reviewed and needs revision before the next round.</p>
-                 <p>Please review admin notes in your proceed panel and submit an improved update.</p>
-                 <p>Regards,<br/>Reelencer Operations</p>`;
+                 <p>Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been reviewed and requires revision before the next round.</p>
+                 <p>Please review the latest notes in your proceed panel and submit an improved update.</p>
+                 <p>Regards,<br/>Reelencer Operations Team</p>`;
           await sendDecisionEmail(to, subject, html);
         }
       } catch {
