@@ -347,9 +347,10 @@ function ProceedPageInner() {
       !!(
         application?.proposal?.adminNote?.trim() ||
         application?.proposal?.adminExplanation?.trim() ||
-        application?.proposal?.whatsappLink?.trim()
+        application?.proposal?.whatsappLink?.trim() ||
+        application?.proposal?.onboardingSteps?.trim()
       ),
-    [application?.proposal?.adminExplanation, application?.proposal?.adminNote, application?.proposal?.whatsappLink]
+    [application?.proposal?.adminExplanation, application?.proposal?.adminNote, application?.proposal?.onboardingSteps, application?.proposal?.whatsappLink]
   );
   const adminWhatsappLink = useMemo(() => {
     const raw = application?.proposal?.whatsappLink?.trim() ?? "";
@@ -1051,13 +1052,13 @@ function ProceedPageInner() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Proposal desk</div>
-                <div className="mt-1 text-xl font-semibold tracking-tight text-[#1c3e33]">
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">
                   {proposalReviewStatus === "Rejected" ? "Revision requested" : "Proposal under review"}
                 </div>
                 <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#4d665c]">
                   {proposalReviewStatus === "Rejected"
-                    ? "Operations has requested changes. Review the notes below, update your proposal, and submit again from Browse."
-                    : "Your proposal has been received and routed to operations. You will see approval, rejection, or onboarding next steps here."}
+                    ? "Your proposal did not clear the pre-screen round. Review the notes below and prepare a stronger revision."
+                    : "Your proposal is in pre-screen. Operations will publish a short decision for the next onboarding round."}
                 </div>
               </div>
               <span className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
@@ -1065,61 +1066,97 @@ function ProceedPageInner() {
               </span>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold text-[#294b40]">Note:</span>{" "}
-                {application?.proposal?.adminNote?.trim() || "No admin note published yet."}
-              </div>
-              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold text-[#294b40]">Guidance:</span>{" "}
-                {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after initial review."}
-              </div>
-              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 text-sm text-[#355d50]">
-                <div className="font-semibold text-[#294b40]">WhatsApp onboarding</div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {adminWhatsappLink ? (
-                    <a
-                      href={adminWhatsappLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-1.5 text-xs font-semibold text-[#1f4f43] hover:bg-[#e2f0e7]"
-                    >
-                      Open onboarding group
-                    </a>
-                  ) : (
-                    <span className="text-xs text-[#6f877d]">
-                      {application?.proposal?.whatsappLink
-                        ? "Admin shared an invalid link format. Please request a valid WhatsApp invite URL."
-                        : "Group link will be shared after review."}
-                    </span>
-                  )}
+            <div className="mt-5 grid gap-4 xl:grid-cols-[1.45fr_0.95fr]">
+              <div className="space-y-3">
+                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                  <span className="font-semibold text-[#294b40]">Note:</span>{" "}
+                  {application?.proposal?.adminNote?.trim() || "No note published yet."}
                 </div>
-                {adminWhatsappLink && proposalReviewStatus !== "Rejected" && (
+                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                  <span className="font-semibold text-[#294b40]">Guidance:</span>{" "}
+                  {application?.proposal?.adminExplanation?.trim() || "Detailed guidance will be shared after initial review."}
+                </div>
+                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 text-sm text-[#355d50]">
+                  <div className="font-semibold text-[#294b40]">WhatsApp onboarding</div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={confirmGroupJoined}
-                      disabled={groupJoinConfirming || groupJoinConfirmed}
-                      className={`inline-flex items-center rounded-full px-4 py-1.5 text-xs font-semibold ${
-                        groupJoinConfirmed
-                          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border border-[#bcd6c9] bg-[#1f4f43] text-white hover:bg-[#2d6b5a] disabled:opacity-60"
-                      }`}
-                    >
-                      {groupJoinConfirmed ? "Group join confirmed" : groupJoinConfirming ? "Confirming..." : "Confirm group joined"}
-                    </button>
-                    {application?.proposal?.groupJoinedConfirmedAt && (
-                      <span className="text-[11px] text-[#6f877d]">
-                        Confirmed {new Date(application.proposal.groupJoinedConfirmedAt).toLocaleString()}
+                    {adminWhatsappLink ? (
+                      <a
+                        href={adminWhatsappLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-1.5 text-xs font-semibold text-[#1f4f43] hover:bg-[#e2f0e7]"
+                      >
+                        Open onboarding group
+                      </a>
+                    ) : (
+                      <span className="text-xs text-[#6f877d]">
+                        {application?.proposal?.whatsappLink
+                          ? "Admin shared an invalid link format. Please request a valid WhatsApp invite URL."
+                          : "Group link will be shared after review."}
                       </span>
                     )}
                   </div>
-                )}
+                  {adminWhatsappLink && proposalReviewStatus !== "Rejected" && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={confirmGroupJoined}
+                        disabled={groupJoinConfirming || groupJoinConfirmed}
+                        className={`inline-flex items-center rounded-full px-4 py-1.5 text-xs font-semibold ${
+                          groupJoinConfirmed
+                            ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border border-[#bcd6c9] bg-[#1f4f43] text-white hover:bg-[#2d6b5a] disabled:opacity-60"
+                        }`}
+                      >
+                        {groupJoinConfirmed ? "Group join confirmed" : groupJoinConfirming ? "Confirming..." : "Confirm group joined"}
+                      </button>
+                      {application?.proposal?.groupJoinedConfirmedAt && (
+                        <span className="text-[11px] text-[#6f877d]">
+                          Confirmed {new Date(application.proposal.groupJoinedConfirmedAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                  <span className="font-semibold text-[#294b40]">Next steps:</span>{" "}
+                  {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group joined, then wait for admin approval or revision feedback."}
+                </div>
               </div>
-              <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                <span className="font-semibold text-[#294b40]">Next steps:</span>{" "}
-                {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group joined, then wait for admin approval or revision feedback."}
-              </div>
+
+              <aside className="rounded-2xl border border-[#d4dfd7] bg-white p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Onboarding workflow</div>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex items-center justify-between rounded-lg border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2">
+                    <span className="text-[#355d50]">Proposal submitted</span>
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Done</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2">
+                    <span className="text-[#355d50]">WhatsApp invite issued</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${adminWhatsappLink ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                      {adminWhatsappLink ? "Ready" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2">
+                    <span className="text-[#355d50]">Group join confirmation</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${groupJoinConfirmed ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                      {groupJoinConfirmed ? "Confirmed" : "Awaiting"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2">
+                    <span className="text-[#355d50]">Final admin decision</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      proposalReviewStatus === "Rejected"
+                        ? "bg-rose-50 text-rose-700"
+                        : "bg-slate-100 text-slate-600"
+                    }`}>
+                      {proposalReviewStatus === "Rejected"
+                        ? "Revision"
+                        : "In review"}
+                    </span>
+                  </div>
+                </div>
+              </aside>
             </div>
 
             <div className="mt-3 text-[11px] text-[#6f877d]">
@@ -1130,11 +1167,31 @@ function ProceedPageInner() {
           </div>
         )}
 
+        {!isCustomFlow && hasApplication && proposalReviewStatus === "Accepted" && (
+          <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b725f]">Offer letter</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#173e31]">Congratulations, you are pre-approved.</div>
+                <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#355d50]">
+                  Your proposal has cleared the review round. Welcome to the next stage of Reelencer operations.
+                </div>
+              </div>
+              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                Offer issued
+              </span>
+            </div>
+            <div className="mt-4 rounded-2xl border border-[#cfe3d7] bg-white px-4 py-3 text-sm text-[#355d50]">
+              <span className="font-semibold text-[#284b40]">Next action:</span> Complete onboarding handoff and start execution from your assigned workflow panel.
+            </div>
+          </div>
+        )}
+
         {!isCustomFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
-            <div className="text-sm font-semibold text-[#1c3e33]">Proposal approved</div>
+            <div className="text-sm font-semibold text-[#1c3e33]">Offer accepted: Workspace access active</div>
             <div className="mt-2 text-sm text-[#4d665c]">
-              Your application is approved. Continue to workspace to start operations and complete assigned tasks.
+              Your pre-approval is confirmed. Continue to workspace to start operations and complete assigned tasks.
             </div>
             <Link
               href="/workspace"
@@ -1148,9 +1205,9 @@ function ProceedPageInner() {
         {!isCustomFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
         <>
         <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
-          <div className="text-sm font-semibold text-slate-900">Assigned dashboard emails (5)</div>
+          <div className="text-sm font-semibold text-slate-900">Offer accepted: Assigned dashboard emails (5)</div>
           <div className="mt-2 text-sm text-slate-600">
-            Use these five emails to create the five Twitter accounts. Each email must be used once.
+            Your pre-approval is complete. Use these five emails to create the five Twitter accounts. Each email must be used once.
           </div>
           <div className="mt-2 text-xs">
             <Link href="/work-email-creator" className="font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { randomUUID } from "crypto";
+import nodemailer from "nodemailer";
 
 const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -63,6 +64,23 @@ function decodeWorkerName(raw: unknown): { workerName?: string; proposal?: Propo
   } catch {
     return {};
   }
+}
+
+async function sendDecisionEmail(to: string, subject: string, html: string) {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.SMTP_FROM || user;
+  if (!host || !user || !pass || !from) return;
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+  await transporter.sendMail({ from, to, subject, html });
 }
 
 export async function GET(req: Request) {
@@ -147,6 +165,11 @@ export async function PATCH(req: Request) {
     }
     const updates = body.updates ?? {};
     const sb = supabaseAdmin();
+    const { data: prevRow } = await sb
+      .from("gig_applications")
+      .select("*")
+      .eq("id", String(body.id))
+      .maybeSingle();
     const shouldEncodeWorkerName = Object.prototype.hasOwnProperty.call(updates, "workerName") || Object.prototype.hasOwnProperty.call(updates, "proposal");
     const encodedWorkerName = shouldEncodeWorkerName ? encodeWorkerName(updates.workerName, updates.proposal ?? null) : undefined;
     const { data, error } = await sb
@@ -164,6 +187,45 @@ export async function PATCH(req: Request) {
     }
     if (!data) {
       return NextResponse.json({ error: "Application not found" }, { status: 404, headers: NO_STORE_HEADERS });
+    }
+    const nextStatus = String(data.status ?? "");
+    const prevStatus = String(prevRow?.status ?? "");
+    const isFinalDecision = (nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus;
+    if (isFinalDecision) {
+      try {
+        const workerCode = String(data.worker_code ?? "");
+        const gigId = String(data.gig_id ?? "");
+        const [{ data: worker }, { data: gig }] = await Promise.all([
+          sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
+          sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
+        ]);
+        const profile = worker?.user_id
+          ? await sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
+          : { data: null };
+        const to = String(profile.data?.email ?? worker?.email ?? "").trim();
+        if (to) {
+          const recipient = profile.data?.display_name || worker?.name || "there";
+          const gigTitle = String(gig?.title ?? "your project");
+          const company = String(gig?.company ?? "Reelencer");
+          const subject =
+            nextStatus === "Accepted"
+              ? `Offer update: ${gigTitle} is approved`
+              : `Update on your proposal for ${gigTitle}`;
+          const html =
+            nextStatus === "Accepted"
+              ? `<p>Hi ${recipient},</p>
+                 <p>Congratulations. Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been pre-approved for the next onboarding round.</p>
+                 <p>You can now continue in your workspace/proceed panel to complete handoff and start execution.</p>
+                 <p>Regards,<br/>Reelencer Operations</p>`
+              : `<p>Hi ${recipient},</p>
+                 <p>Your proposal for <b>${gigTitle}</b> at <b>${company}</b> was reviewed and needs revision before the next round.</p>
+                 <p>Please review admin notes in your proceed panel and submit an improved update.</p>
+                 <p>Regards,<br/>Reelencer Operations</p>`;
+          await sendDecisionEmail(to, subject, html);
+        }
+      } catch {
+        // optional notification only
+      }
     }
     return NextResponse.json(
       {
