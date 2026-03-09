@@ -17,6 +17,11 @@ type ProposalPayload = {
   budget?: string;
   portfolio?: string;
   submittedAt?: string;
+  reviewStatus?: "Pending" | "Accepted" | "Rejected";
+  adminNote?: string;
+  adminExplanation?: string;
+  whatsappLink?: string;
+  reviewedAt?: string;
 };
 
 function encodeWorkerName(workerName?: string | null, proposal?: ProposalPayload | null) {

@@ -34,6 +34,30 @@ type Assignment = {
   subjectFilter?: string;
 };
 
+type ProposalPayload = {
+  pitch?: string;
+  approach?: string;
+  timeline?: string;
+  budget?: string;
+  portfolio?: string;
+  submittedAt?: string;
+  reviewStatus?: "Pending" | "Accepted" | "Rejected";
+  adminNote?: string;
+  adminExplanation?: string;
+  whatsappLink?: string;
+  reviewedAt?: string;
+};
+
+type GigApplication = {
+  id: string;
+  gigId: string;
+  workerId: string;
+  status: string;
+  appliedAt: string;
+  decidedAt?: string;
+  proposal?: ProposalPayload;
+};
+
 type CredentialRow = {
   handle: string;
   email: string;
@@ -56,6 +80,13 @@ function isCustomGigType(gig: Pick<Gig, "gigType" | "title">) {
   if (raw === "email creator" || raw === "part-time" || raw === "part time") return false;
   if (raw === "workspace" || raw === "full-time" || raw === "full time" || raw === "fulltime") return false;
   return true;
+}
+
+function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
+  const raw = String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "" || raw === "email creator" || raw === "part-time" || raw === "part time";
 }
 
 function customTypeLabel(raw?: string) {
@@ -143,6 +174,8 @@ function ProceedPageInner() {
   const [sessionReady, setSessionReady] = useState(false);
   const [gig, setGig] = useState<Gig | null>(null);
   const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [application, setApplication] = useState<GigApplication | null>(null);
+  const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
 
   const [rows, setRows] = useState<CredentialRow[]>(emptyRows());
   const [loading, setLoading] = useState(true);
@@ -184,13 +217,40 @@ function ProceedPageInner() {
     setSessionReady(true);
   }, []);
 
+  const ensureAssignment = React.useCallback(
+    async (targetGigId: string, targetWorkerId: string) => {
+      const res = await fetch("/api/gig-assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gigId: targetGigId,
+          workerId: targetWorkerId,
+          subjectFilter: "verification|confirm|security|code|twitter|x",
+        }),
+      });
+      if (!res.ok) {
+        const failure = await res.json().catch(() => ({}));
+        throw new Error(failure?.error || "Unable to assign email. Please try again.");
+      }
+      const data = await res.json();
+      setAssignment(data);
+      if (data?.id) {
+        const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(data.id)}`);
+        const inboxData = inboxRes.ok ? await inboxRes.json() : [];
+        setInbox(Array.isArray(inboxData) ? inboxData : []);
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (!gigId) {
       setError("Missing gigId.");
       setLoading(false);
       return;
     }
-    if (!session?.workerId) return;
+    const currentWorkerId = session?.workerId;
+    if (!currentWorkerId) return;
 
     let alive = true;
 
@@ -212,11 +272,30 @@ function ProceedPageInner() {
           setLoading(false);
           return;
         }
-        if (match && isWorkspaceGig(match)) {
-          window.location.replace("/workspace");
+        if (match && isCustomGigType(match)) {
+          setLoading(false);
           return;
         }
-        if (match && isCustomGigType(match)) {
+
+        const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(currentWorkerId)}`, { method: "GET" });
+        const appPayload = appRes.ok ? await appRes.json() : [];
+        const matchApp = Array.isArray(appPayload)
+          ? appPayload.find((item: any) => String(item?.gigId) === String(gigId))
+          : null;
+        setApplication(matchApp ?? null);
+        const status = matchApp?.status ? String(matchApp.status) : null;
+        setApplicationStatus(status);
+        if (!status) {
+          setLoading(false);
+          return;
+        }
+        if (isWorkspaceGig(match)) {
+          setLoading(false);
+          return;
+        }
+        const reviewStatus = String(matchApp?.proposal?.reviewStatus ?? "").trim();
+        const isApproved = reviewStatus === "Accepted" || status === "Accepted";
+        if (!isApproved) {
           setLoading(false);
           return;
         }
@@ -226,32 +305,7 @@ function ProceedPageInner() {
 
       // Get/create assignment + initial inbox
       try {
-        const res = await fetch("/api/gig-assignments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // keep your existing behavior; subjectFilter still passed (even though poller now grabs all recent mails)
-          body: JSON.stringify({
-            gigId,
-            workerId: session.workerId,
-            subjectFilter: "verification|confirm|security|code|twitter|x",
-          }),
-        });
-
-        if (!res.ok) {
-          const failure = await res.json().catch(() => ({}));
-          throw new Error(failure?.error || "Unable to assign email. Please try again.");
-        }
-
-        const data = await res.json();
-        if (!alive) return;
-
-        setAssignment(data);
-
-        if (data?.id) {
-          const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(data.id)}`);
-          const inboxData = inboxRes.ok ? await inboxRes.json() : [];
-          if (alive) setInbox(Array.isArray(inboxData) ? inboxData : []);
-        }
+        await ensureAssignment(gigId, currentWorkerId);
       } catch (err: any) {
         if (alive) setError("Unable to open this project workspace right now. Please retry in a moment.");
       }
@@ -262,9 +316,25 @@ function ProceedPageInner() {
     return () => {
       alive = false;
     };
-  }, [gigId, session?.workerId]);
+  }, [ensureAssignment, gigId, session?.workerId]);
 
   const isCustomFlow = useMemo(() => (gig ? isCustomGigType(gig) : false), [gig]);
+  const isWorkspaceFlow = useMemo(() => (gig ? isWorkspaceGig(gig) : false), [gig]);
+  const isEmailCreatorFlow = useMemo(() => (gig ? isEmailCreatorGig(gig) : false), [gig]);
+  const proposalReviewStatus = useMemo(() => {
+    if (!applicationStatus) return null;
+    const explicit = application?.proposal?.reviewStatus;
+    if (explicit) return explicit;
+    if (applicationStatus === "Accepted") return "Accepted";
+    if (applicationStatus === "Rejected") return "Rejected";
+    return "Pending";
+  }, [application?.proposal?.reviewStatus, applicationStatus]);
+  const isProposalApproved = proposalReviewStatus === "Accepted";
+  const hasApplication = useMemo(
+    () => !!applicationStatus && applicationStatus !== "Withdrawn",
+    [applicationStatus]
+  );
+  const canAccessOperations = isProposalApproved || !!assignment;
   const customType = useMemo(() => customTypeLabel(gig?.gigType), [gig?.gigType]);
   const customBrief = useMemo(() => {
     const list = gig?.requirements ?? [];
@@ -291,6 +361,29 @@ function ProceedPageInner() {
       (gig?.requirements ?? []).filter((item) => {
         const lower = String(item).toLowerCase();
         return !lower.startsWith("brief::") && !lower.startsWith("media::");
+      }),
+    [gig?.requirements]
+  );
+  const projectMeta = useMemo(() => {
+    const rows = gig?.requirements ?? [];
+    return rows
+      .filter((item) => String(item).toLowerCase().startsWith("meta::"))
+      .reduce<Record<string, string>>((acc, item) => {
+        const clean = String(item).replace(/^meta::/i, "");
+        const sep = clean.indexOf("=");
+        if (sep > 0) {
+          const key = clean.slice(0, sep).trim().toLowerCase();
+          const value = clean.slice(sep + 1).trim();
+          if (key && value) acc[key] = value;
+        }
+        return acc;
+      }, {});
+  }, [gig?.requirements]);
+  const standardRequirementItems = useMemo(
+    () =>
+      (gig?.requirements ?? []).filter((item) => {
+        const lower = String(item).toLowerCase();
+        return !lower.startsWith("brief::") && !lower.startsWith("media::") && !lower.startsWith("meta::");
       }),
     [gig?.requirements]
   );
@@ -326,14 +419,16 @@ function ProceedPageInner() {
     };
   }, [assignment?.id, autoSync]);
 
-  const assignmentStatus = assignment?.status ?? "Assigned";
+  const assignmentStatus = assignment?.status ?? proposalReviewStatus ?? applicationStatus ?? "Not applied";
   const statusTone =
     assignmentStatus === "Accepted"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : assignmentStatus === "Rejected"
+    : assignmentStatus === "Rejected"
       ? "border-rose-200 bg-rose-50 text-rose-700"
-      : assignmentStatus === "Submitted"
+    : assignmentStatus === "Submitted"
       ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
+      : assignmentStatus === "Applied" || assignmentStatus === "Pending"
+      ? "border-[#d4dfd7] bg-white text-[#4d665c]"
       : "border-[#d4dccf] bg-[#f4f8f1] text-[#5f746a]";
 
   const assignedList = useMemo(() => {
@@ -494,13 +589,49 @@ function ProceedPageInner() {
           gigId,
           workerId: session.workerId,
           workerName: session.workerId,
-          status: "Applied",
+          status: "Pending",
           proposal: {
             pitch: proposalPitch.trim(),
             approach: proposalApproach.trim(),
             timeline: proposalTimeline.trim(),
             budget: proposalBudget.trim(),
             portfolio: proposalPortfolio.trim(),
+            submittedAt: new Date().toISOString(),
+            reviewStatus: "Pending",
+          },
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.error || "Proposal could not be saved.");
+      }
+      const payload = await res.json();
+      setApplication(payload ?? null);
+      setApplicationStatus(String(payload?.status ?? "Pending"));
+      setSuccess("Proposal submitted successfully. Your project application is now in review.");
+    } catch (e: any) {
+      setError(e?.message || "Unable to submit proposal right now.");
+    } finally {
+      setProposalSaving(false);
+    }
+  };
+
+  const submitStandardProposal = async () => {
+    if (!gigId || !session?.workerId) return;
+    setProposalSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/gig-applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gigId,
+          workerId: session.workerId,
+          workerName: session.workerId,
+          status: "Pending",
+          proposal: {
+            reviewStatus: "Pending",
             submittedAt: new Date().toISOString(),
           },
         }),
@@ -509,7 +640,10 @@ function ProceedPageInner() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.error || "Proposal could not be saved.");
       }
-      setSuccess("Proposal received. Our operations team will review and share the next step shortly.");
+      const payload = await res.json();
+      setApplication(payload ?? null);
+      setApplicationStatus(String(payload?.status ?? "Pending"));
+      setSuccess("Proposal submitted successfully. You can track review updates in this project feed.");
     } catch (e: any) {
       setError(e?.message || "Unable to submit proposal right now.");
     } finally {
@@ -597,15 +731,31 @@ function ProceedPageInner() {
       </div>
 
       <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
-        <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="text-xs text-slate-500">Gig</div>
-              <div className="mt-1 text-xl font-semibold text-slate-900">{gig?.title ?? "Gig"}</div>
-              <div className="mt-2 text-sm text-slate-600">
-                {gig?.company} • {gig?.platform} • {gig?.location}
-              </div>
-            </div>
+        <div className="rounded-[1.4rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:rounded-3xl sm:p-6">
+          <div className="text-xs text-slate-500">Gig</div>
+          <h1 className="mt-2 text-balance text-[1.95rem] font-semibold leading-[1.06] tracking-tight text-[#162038] sm:text-5xl">
+            {gig?.title ?? "Gig"}
+          </h1>
+          <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.98rem] text-slate-500 sm:text-lg">
+            <span className="inline-flex items-center gap-2">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              Posted {gig?.postedAt || "recently"}
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0z" />
+                <circle cx="12" cy="10" r="3" />
+              </svg>
+              {gig?.location}
+            </span>
+          </div>
+          <div className="mt-5 border-t border-[#e4e7e4]" />
+          <div className="mt-3 sm:mt-4">
             <span className={`rounded-full border px-3 py-1 text-xs ${statusTone}`}>Status: {assignmentStatus}</span>
           </div>
         </div>
@@ -725,6 +875,33 @@ function ProceedPageInner() {
                 </label>
               </div>
             </div>
+            {hasApplication && (
+              <div className="mt-4 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
+                <span className="font-semibold">
+                  {proposalReviewStatus === "Rejected"
+                    ? "Proposal revision requested:"
+                    : proposalReviewStatus === "Accepted"
+                      ? "Proposal approved:"
+                      : "Proposal in review:"}
+                </span>{" "}
+                {application?.proposal?.adminNote || "Admin is reviewing your submission and will share detailed guidance here."}
+              </div>
+            )}
+            {application?.proposal?.adminExplanation && (
+              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
+                <span className="font-semibold">Explanation:</span> {application.proposal.adminExplanation}
+              </div>
+            )}
+            {application?.proposal?.whatsappLink && (
+              <a
+                href={application.proposal.whatsappLink}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-xs font-semibold text-[#2f6655] hover:bg-[#e2f0e7]"
+              >
+                Open WhatsApp onboarding group
+              </a>
+            )}
 
             {error && (
               <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
@@ -738,15 +915,150 @@ function ProceedPageInner() {
               <button
                 className="w-full rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50 sm:w-auto"
                 onClick={submitCustomProposal}
-                disabled={proposalSaving}
+                disabled={proposalSaving || (hasApplication && proposalReviewStatus !== "Rejected")}
               >
-                {proposalSaving ? "Submitting plan..." : "Submit project plan"}
+                {proposalSaving
+                  ? "Submitting plan..."
+                  : hasApplication && proposalReviewStatus !== "Rejected"
+                    ? "Plan submitted"
+                    : "Submit project plan"}
               </button>
             </div>
           </div>
         )}
 
-        {!isCustomFlow && (
+        {!isCustomFlow && !hasApplication && (
+          <div className="rounded-[1.4rem] border border-[#c4d5cb] bg-[radial-gradient(circle_at_top_left,rgba(86,146,118,0.16),transparent_42%),linear-gradient(180deg,#f3f8f3,#edf4ee)] p-3 shadow-[0_26px_55px_rgba(24,64,49,0.14)] backdrop-blur sm:rounded-3xl sm:p-6">
+            <div className="grid gap-3 sm:gap-5 lg:grid-cols-[1.85fr_0.95fr]">
+              <article className="rounded-[1.2rem] border border-[#d5e2da] bg-white p-4 sm:rounded-2xl sm:p-6">
+                <h2 className="text-lg font-semibold tracking-[0.03em] text-[#6f7c95]">Project overview</h2>
+                <div className="mt-2.5 flex flex-wrap items-center gap-3 text-[0.98rem] text-[#6c7686] sm:mt-3 sm:text-sm">
+                  <span>{gig?.postedAt || "Recently posted"}</span>
+                  <span className="h-1 w-1 rounded-full bg-[#b5bfcc]" />
+                  <span>{gig?.location}</span>
+                </div>
+
+                <div className="mt-4 border-t border-[#e5ece9] pt-4 sm:mt-5 sm:pt-5">
+                  <h3 className="text-[2.05rem] font-semibold leading-[1.06] tracking-tight text-[#1d2a3f] sm:text-4xl">Project brief</h3>
+                  <p className="mt-3 text-[1.02rem] leading-8 text-[#27324a] sm:text-base">
+                    {customBrief ||
+                      "In this project, you will execute an outcome-focused delivery plan aligned with Reelencer quality standards, timeline discipline, and transparent reporting requirements."}
+                  </p>
+                </div>
+
+                <div className="mt-6 sm:mt-7">
+                  <div className="text-[1.85rem] font-semibold tracking-tight text-[#1d2a3f] sm:text-2xl">Responsibilities</div>
+                  <div className="mt-3.5 space-y-3 sm:mt-4">
+                    {standardRequirementItems.map((req, idx) => (
+                        <div key={`${req}-${idx}`} className="flex items-start gap-3 text-[#27324a]">
+                          <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#49b86b] text-xs font-bold text-white">
+                            ✓
+                          </span>
+                          <span className="text-[1.03rem] leading-7">{String(req).replace(/^brief::/i, "")}</span>
+                        </div>
+                    ))}
+                    {standardRequirementItems.length === 0 && (
+                      <div className="rounded-xl border border-[#d9e4de] bg-[#f7fbf8] px-3 py-2 text-sm text-[#5f6f66]">
+                        Detailed responsibilities will be shared by operations after proposal review.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </article>
+
+              <aside className="rounded-[1.2rem] border border-[#d5e2da] bg-white p-4 sm:rounded-2xl sm:p-6">
+                <div className="inline-flex rounded-full border border-[#8bb4f0]/35 bg-[#dbe9ff] px-3 py-1 text-xs font-semibold text-[#2f68c6]">
+                  {isWorkspaceFlow ? "Workspace project" : "Email creator project"}
+                </div>
+                <div className="mt-4 text-[2.3rem] font-semibold leading-none tracking-tight text-[#1d2a3f] sm:mt-5 sm:text-4xl">{gig?.payout}</div>
+                <div className="mt-1 text-sm text-[#6a7284]">{gig?.payoutType}</div>
+
+                <div className="mt-6 border-t border-[#e5ece9] pt-5 sm:mt-7 sm:pt-6">
+                  <div className="text-xl font-semibold tracking-tight text-[#1d2a3f]">Project requirements</div>
+                  <div className="mt-4 space-y-3 text-sm">
+                    <div className="rounded-xl border border-[#d9e4de] bg-[#f7fbf8] px-3 py-2">
+                      <div className="text-[#6a7284]">Hiring capacity</div>
+                      <div className="font-semibold text-[#1f2a41]">{projectMeta.hiring_capacity || "1 creator"}</div>
+                    </div>
+                    <div className="rounded-xl border border-[#d9e4de] bg-[#f7fbf8] px-3 py-2">
+                      <div className="text-[#6a7284]">Expertise</div>
+                      <div className="font-semibold text-[#1f2a41]">{projectMeta.expertise || "Mid level"}</div>
+                    </div>
+                    <div className="rounded-xl border border-[#d9e4de] bg-[#f7fbf8] px-3 py-2">
+                      <div className="text-[#6a7284]">Languages</div>
+                      <div className="font-semibold text-[#1f2a41]">{projectMeta.languages || "English"}</div>
+                    </div>
+                    <div className="rounded-xl border border-[#d9e4de] bg-[#f7fbf8] px-3 py-2">
+                      <div className="text-[#6a7284]">Engagement mode</div>
+                      <div className="font-semibold text-[#1f2a41]">{gig?.location}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  className="mt-6 w-full rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50"
+                  onClick={submitStandardProposal}
+                  disabled={proposalSaving}
+                >
+                  {proposalSaving ? "Sending proposal..." : "Send proposal"}
+                </button>
+              </aside>
+            </div>
+          </div>
+        )}
+
+        {!isCustomFlow && hasApplication && !canAccessOperations && (
+          <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
+            <div className="text-sm font-semibold text-[#1c3e33]">
+              {proposalReviewStatus === "Rejected" ? "Proposal revision requested" : "Proposal in review"}
+            </div>
+            <div className="mt-2 text-sm text-[#4d665c]">
+              {proposalReviewStatus === "Rejected"
+                ? "Your proposal needs updates. Review admin feedback, revise your plan, and submit again from Browse."
+                : "Admin review is in progress. You will receive the final decision and onboarding details here."}
+            </div>
+            {application?.proposal?.adminNote && (
+              <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
+                <span className="font-semibold">Admin note:</span> {application.proposal.adminNote}
+              </div>
+            )}
+            {application?.proposal?.adminExplanation && (
+              <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-[#f7fbf5] px-3 py-2 text-xs text-[#355d50]">
+                <span className="font-semibold">Explanation:</span> {application.proposal.adminExplanation}
+              </div>
+            )}
+            {application?.proposal?.whatsappLink && (
+              <a
+                href={application.proposal.whatsappLink}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-xs font-semibold text-[#2f6655] hover:bg-[#e2f0e7]"
+              >
+                Open WhatsApp onboarding group
+              </a>
+            )}
+            {application?.proposal?.reviewedAt && (
+              <div className="mt-2 text-[11px] text-[#6f877d]">Last review update: {new Date(application.proposal.reviewedAt).toLocaleString()}</div>
+            )}
+          </div>
+        )}
+
+        {!isCustomFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
+          <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
+            <div className="text-sm font-semibold text-[#1c3e33]">Proposal approved</div>
+            <div className="mt-2 text-sm text-[#4d665c]">
+              Your application is approved. Continue to workspace to start operations and complete assigned tasks.
+            </div>
+            <Link
+              href="/workspace"
+              className="mt-4 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-sm font-semibold text-[#2f6655] hover:bg-[#e2f0e7]"
+            >
+              Go to workspace
+            </Link>
+          </div>
+        )}
+
+        {!isCustomFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
         <>
         <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="text-sm font-semibold text-slate-900">Assigned dashboard emails (5)</div>

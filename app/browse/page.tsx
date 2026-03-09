@@ -9,7 +9,7 @@ import { supabase } from "@/lib/supabaseClient";
 type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
 type PayoutType = "Per task" | "Per post" | "Monthly";
 type GigStatus = "Open" | "Paused" | "Closed";
-type ApplicationStatus = "Applied" | "Accepted" | "Rejected" | "Withdrawn";
+type ApplicationStatus = "Applied" | "Pending" | "Accepted" | "Rejected" | "Withdrawn";
 
 type Gig = {
   id: string;
@@ -34,6 +34,13 @@ type GigApplication = {
   status: ApplicationStatus;
   appliedAt: string;
   decidedAt?: string;
+  proposal?: {
+    reviewStatus?: "Pending" | "Accepted" | "Rejected";
+    adminNote?: string;
+    adminExplanation?: string;
+    whatsappLink?: string;
+    reviewedAt?: string;
+  };
 };
 
 type GigAssignment = {
@@ -452,41 +459,7 @@ export default function BrowsePage() {
       return;
     }
     if (gig.status !== "Open") return;
-
-    const optimistic: GigApplication = {
-      id: `APP-${gig.id}-${workerId}`,
-      gigId: gig.id,
-      workerId,
-      status: "Applied",
-      appliedAt: new Date().toISOString(),
-    };
-
-    setApps((prev) => {
-      const next = prev.filter((app) => app.gigId !== gig.id || app.workerId !== workerId);
-      const updated = [optimistic, ...next];
-      writeLS(LS_KEYS.GIG_APPS, updated);
-      return updated;
-    });
-
-    try {
-      const res = await fetch("/api/gig-applications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gigId: gig.id, workerId, status: "Applied" }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setApps((prev) => {
-          const next = prev.map((app) => (app.gigId === gig.id && app.workerId === workerId ? data : app));
-          writeLS(LS_KEYS.GIG_APPS, next);
-          return next;
-        });
-      }
-      const nextPath = isWorkspaceGig(gig) ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`;
-      window.location.href = nextPath;
-    } catch {
-      // keep optimistic
-    }
+    window.location.href = `/proceed?gigId=${encodeURIComponent(gig.id)}`;
   };
 
   const resetFilters = () => {
@@ -811,7 +784,7 @@ export default function BrowsePage() {
               </div>
             )}
 
-            <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
+            <div className="grid gap-3 sm:gap-4">
               {visibleGigs.map((gig, index) => {
                 const app = appByGig.get(gig.id);
                 const assignment = assignmentByGig.get(gig.id);
@@ -827,29 +800,33 @@ export default function BrowsePage() {
                     : role === "Worker"
                       ? `/proceed?gigId=${encodeURIComponent(gig.id)}&kyc=1`
                       : loginHref;
-                const derivedStatus = app?.status ?? assignment?.status ?? undefined;
+                const proposalReviewStatus =
+                  app?.proposal?.reviewStatus ??
+                  (app?.status === "Accepted"
+                    ? "Accepted"
+                    : app?.status === "Rejected"
+                      ? "Rejected"
+                      : app?.status
+                        ? "Pending"
+                        : undefined);
+                const derivedStatus = proposalReviewStatus ?? app?.status ?? assignment?.status ?? undefined;
                 const canApply = gig.status === "Open" && !!workerId && !kycLocked;
                 const needsSignIn = !workerId;
                 const canProceed =
                   !!workerId &&
                   !kycLocked &&
-                  (app?.status === "Applied" || app?.status === "Accepted" || assignment?.status === "Submitted" || assignment?.status === "Assigned");
+                  (proposalReviewStatus === "Accepted" ||
+                    app?.status === "Accepted" ||
+                    assignment?.status === "Submitted" ||
+                    assignment?.status === "Assigned");
                 const statusTone =
                   derivedStatus === "Accepted"
-                    ? isFreelanceCustom
-                      ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-                      : "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
+                    ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
                   : derivedStatus === "Rejected"
-                    ? isFreelanceCustom
-                      ? "border-rose-200 bg-rose-50 text-rose-700"
-                      : "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
-                  : derivedStatus === "Applied" || derivedStatus === "Assigned"
-                    ? isFreelanceCustom
-                      ? "border-[#d4dfd7] bg-white text-[#4d665c]"
-                      : "border-white/12 bg-white/8 text-white/82"
-                    : isFreelanceCustom
-                      ? "border-[#d4dfd7] bg-white text-[#5b7469]"
-                      : "border-white/10 bg-white/6 text-white/58";
+                    ? "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
+                  : derivedStatus === "Applied" || derivedStatus === "Pending" || derivedStatus === "Assigned"
+                    ? "border-white/12 bg-white/8 text-white/82"
+                    : "border-white/10 bg-white/6 text-white/58";
                 const gigStatusTone =
                   gig.status === "Open"
                     ? isFreelanceCustom
@@ -867,10 +844,10 @@ export default function BrowsePage() {
                   : assignment
                   ? "Assigned"
                   : app
-                  ? "Applied"
-                  : isFreelanceCustom
-                  ? "Send proposal"
-                  : "Apply now";
+                  ? proposalReviewStatus === "Accepted"
+                    ? "Approved"
+                    : "In review"
+                  : "Send proposal";
                 const applyBtnClass =
                   !canApply || !!app || !!assignment
                     ? "bg-white/14 text-white/55"
@@ -954,24 +931,24 @@ export default function BrowsePage() {
                 return (
                   <div
                     key={gig.id}
-                    className={`relative overflow-hidden rounded-[1.6rem] border p-3 shadow-[0_20px_45px_rgba(0,0,0,0.16)] transition hover:-translate-y-0.5 animate-[slideDown_220ms_ease-out] sm:rounded-[1.75rem] sm:p-4 lg:p-5 ${isFreelanceCustom ? "border-[#c7d5ce] bg-[linear-gradient(180deg,#f9fcf7,#f2f7f0)] hover:border-[#a9beb3]" : "border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(8,33,28,0.94))] hover:border-white/16 hover:bg-[linear-gradient(180deg,rgba(22,76,62,0.96),rgba(8,33,28,0.96))]"} ${isFeaturedCard ? "xl:col-span-2 xl:grid xl:grid-cols-[1.25fr_0.75fr] xl:gap-6" : ""}`}
+                    className="relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(8,33,28,0.94))] p-3 shadow-[0_20px_45px_rgba(0,0,0,0.16)] transition hover:-translate-y-0.5 hover:border-white/16 hover:bg-[linear-gradient(180deg,rgba(22,76,62,0.96),rgba(8,33,28,0.96))] animate-[slideDown_220ms_ease-out] sm:rounded-[1.75rem] sm:p-4 lg:grid lg:grid-cols-[1.38fr_0.62fr] lg:gap-6 lg:p-5 xl:grid-cols-[1.48fr_0.52fr]"
                     style={{ animationDelay: `${Math.min(index, 8) * 55}ms`, animationFillMode: "both" }}
                   >
-                    <div className={`pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full blur-2xl ${isFreelanceCustom ? "bg-[#84d85e]/18" : "bg-[#5a45e3]/14"}`} />
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#5a45e3]/14 blur-2xl" />
                     <div>
                     <div className="flex flex-col gap-2.5 sm:gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
-                        <div className={`flex flex-wrap items-center gap-2 text-xs font-medium sm:text-sm ${isFreelanceCustom ? "text-[#4d665c]" : "text-white/42"}`}>
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-white/42 sm:text-sm">
                           <span>{gig.postedAt}</span>
                           <span className="h-1 w-1 rounded-full bg-white/25" />
                           <span>{gig.id}</span>
                           {gig.status === "Open" && (
-                            <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${isFreelanceCustom ? "border border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "bg-[#8fe05f]/10 text-[#b7f18e]"}`}>
+                            <span className="rounded-full bg-[#8fe05f]/10 px-3 py-1 text-[11px] font-semibold text-[#b7f18e]">
                               Hiring now
                             </span>
                           )}
                           {isFeaturedCard && (
-                            <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#5b7469]" : "bg-white/8 text-white/80"}`}>
+                            <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] font-semibold text-white/80">
                               Featured match
                             </span>
                           )}
@@ -979,17 +956,17 @@ export default function BrowsePage() {
                             {derivedStatus ? derivedStatus : "Not applied"}
                           </span>
                         </div>
-                        <div className={`mt-1.5 text-balance font-semibold leading-tight ${isFreelanceCustom ? "text-[#1c3e33]" : "text-white"} ${isFeaturedCard ? "text-[1.35rem] sm:text-[1.7rem] lg:text-[2rem]" : "text-[1.15rem] sm:text-[1.35rem] lg:text-[1.55rem]"}`}>{gig.title}</div>
-                        <div className={`mt-2 flex flex-wrap items-center gap-1.5 text-sm sm:mt-2.5 sm:gap-2 ${isFreelanceCustom ? "text-[#5b7469]" : "text-white/62"}`}>
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold sm:px-3 sm:py-1.5 sm:text-sm ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#1c3e33]" : "border border-white/10 bg-white/6 text-white"}`}>{gig.company}</span>
+                        <div className="mt-1.5 text-balance text-[1.25rem] font-semibold leading-tight text-white sm:text-[1.5rem] lg:text-[1.9rem]">{gig.title}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-white/62 sm:mt-2.5 sm:gap-2">
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-semibold text-white sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
                           {gig.verified && (
                             <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
                               Verified
                             </span>
                           )}
-                          <span className={`rounded-full px-2.5 py-1 text-xs sm:px-3 sm:text-sm ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#4d665c]" : "border border-white/10 bg-white/6"}`}>{gig.platform}</span>
+                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
                           {gig.gigType && (
-                            <span className={`rounded-full px-2.5 py-1 text-xs sm:px-3 sm:text-sm ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#4d665c]" : "border border-white/10 bg-white/6"}`}>
+                            <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
                               {gig.gigType}
                             </span>
                           )}
@@ -1004,20 +981,20 @@ export default function BrowsePage() {
                             </span>
                           )}
                           {isFreelanceCustom && (
-                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
                               Freelance marketplace
                             </span>
                           )}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold sm:px-3 sm:text-sm ${gigStatusTone}`}>{gig.status}</span>
                         </div>
                       </div>
-                      <div className="flex w-full flex-col items-start gap-2 sm:gap-2.5 md:w-auto md:min-w-[220px] md:items-end">
+                      <div className="flex w-full flex-col items-start gap-2 sm:gap-2.5 md:w-auto md:min-w-[250px] md:items-end lg:min-w-[290px]">
                         <span className={`hidden rounded-full border px-3 py-1 text-xs sm:px-4 sm:py-1.5 sm:text-sm md:inline-flex ${statusTone}`}>
                           {derivedStatus ? `Status: ${derivedStatus}` : "Not applied"}
                         </span>
                         <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 md:grid-cols-1">
                           <button
-                            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition sm:px-4 sm:py-2 ${isFreelanceCustom ? "border-[#d4dfd7] bg-white text-[#2f6655] hover:bg-[#edf5ef]" : "border-white/10 bg-white/6 text-white hover:bg-white/10"}`}
+                            className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10 sm:px-4 sm:py-2"
                             onClick={() => setSelectedGig(gig)}
                           >
                             View details
@@ -1031,7 +1008,7 @@ export default function BrowsePage() {
                           </button>
                           {canProceed && (
                             <Link
-                              className={`col-span-2 rounded-full border px-3 py-1.5 text-center text-xs font-semibold sm:px-4 sm:py-2 md:col-span-1 ${isFreelanceCustom ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"}`}
+                              className="col-span-2 rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-3 py-1.5 text-center text-xs font-semibold text-[#b7f18e] sm:px-4 sm:py-2 md:col-span-1"
                               href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               {isFullTime ? "Go to workspace" : isFreelanceCustom ? "Open proposal flow" : "Proceed"}
@@ -1046,29 +1023,65 @@ export default function BrowsePage() {
                         In verification: Admin is reviewing your submitted credentials.
                       </div>
                     )}
+                    {app && (
+                      <div
+                        className={`mt-3 rounded-2xl border px-4 py-3 text-xs ${
+                          proposalReviewStatus === "Accepted"
+                            ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
+                            : proposalReviewStatus === "Rejected"
+                              ? "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
+                              : "border-white/12 bg-white/8 text-white/80"
+                        }`}
+                      >
+                        <div className="font-semibold">
+                          {proposalReviewStatus === "Accepted"
+                            ? "Proposal approved"
+                            : proposalReviewStatus === "Rejected"
+                              ? "Proposal needs revision"
+                              : "Proposal under review"}
+                        </div>
+                        {app.proposal?.adminNote && <div className="mt-1 text-white/85">Note: {app.proposal.adminNote}</div>}
+                        {app.proposal?.adminExplanation && <div className="mt-1 text-white/75">{app.proposal.adminExplanation}</div>}
+                        {app.proposal?.whatsappLink && (
+                          <a
+                            href={app.proposal.whatsappLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-flex font-semibold underline underline-offset-2"
+                          >
+                            Join WhatsApp group
+                          </a>
+                        )}
+                      </div>
+                    )}
 
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-2.5 md:grid-cols-3">
-                      <div className={`rounded-xl p-3 text-sm sm:rounded-2xl sm:p-3.5 ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#5b7469]" : "border border-white/10 bg-white/[0.05] text-white/62"}`}>
-                        <div className={`text-xs sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>Workload</div>
-                        <div className={`mt-1.5 text-[1.1rem] font-semibold leading-tight sm:text-[1.2rem] ${isFreelanceCustom ? "text-[#1c3e33]" : "text-white"}`}>{gig.workload}</div>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-white/42 sm:text-sm">Workload</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.workload}</div>
                       </div>
-                      <div className={`rounded-xl p-3 text-sm sm:rounded-2xl sm:p-3.5 ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#5b7469]" : "border border-white/10 bg-white/[0.05] text-white/62"}`}>
-                        <div className={`text-xs sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>Budget</div>
-                        <div className={`mt-1.5 text-[1.1rem] font-semibold leading-tight sm:text-[1.2rem] ${isFreelanceCustom ? "text-[#1c3e33]" : "text-white"}`}>{gig.payout}</div>
-                        <div className={`text-xs sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>{gig.payoutType}</div>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-white/42 sm:text-sm">Budget</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.payout}</div>
+                        <div className="text-xs text-white/42 sm:text-sm">{gig.payoutType}</div>
                       </div>
-                      <div className={`col-span-2 rounded-xl p-3 text-sm sm:rounded-2xl sm:p-3.5 md:col-span-1 ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#5b7469]" : "border border-white/10 bg-white/[0.05] text-white/62"}`}>
-                        <div className={`text-xs sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>Application status</div>
-                        <div className={`mt-1.5 text-[1.1rem] font-semibold leading-tight sm:text-[1.2rem] ${isFreelanceCustom ? "text-[#1c3e33]" : "text-white"}`}>{derivedStatus ?? "Not applied"}</div>
-                        <div className={`text-xs sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>Updated hourly</div>
+                      <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5 md:col-span-1">
+                        <div className="text-xs text-white/42 sm:text-sm">Application status</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
+                        <div className="text-xs text-white/42 sm:text-sm">Updated hourly</div>
                       </div>
                     </div>
 
                     <div className="mt-3 sm:mt-4">
-                      <div className={`text-xs font-semibold sm:text-sm ${isFreelanceCustom ? "text-[#6f877d]" : "text-white/42"}`}>Key requirements</div>
+                      <div className="text-xs font-semibold text-white/42 sm:text-sm">Key requirements</div>
                       <div className="mt-2 flex flex-wrap gap-1.5 sm:gap-2">
-                        {gig.requirements.map((req) => (
-                          <span key={req} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] sm:px-3 sm:py-1.5 sm:text-sm ${isFreelanceCustom ? "border border-[#d4dfd7] bg-white text-[#4d665c]" : "border border-white/10 bg-white/[0.05] text-white/70"}`}>
+                        {gig.requirements
+                          .filter((req) => {
+                            const lower = String(req).toLowerCase();
+                            return !lower.startsWith("brief::") && !lower.startsWith("meta::") && !lower.startsWith("media::");
+                          })
+                          .map((req) => (
+                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 sm:px-3 sm:py-1.5 sm:text-sm">
                             <span className="h-1.5 w-1.5 rounded-full bg-[#8fe05f]" />
                             <span>{req}</span>
                           </span>
@@ -1076,8 +1089,7 @@ export default function BrowsePage() {
                       </div>
                     </div>
                     </div>
-                    {isFeaturedCard && !isFreelanceCustom && (
-                      <div className="mt-4 grid gap-3 xl:mt-0 xl:content-start">
+                      <div className="mt-4 hidden w-full gap-3 lg:mt-0 lg:grid lg:max-w-[360px] lg:justify-self-end lg:content-start">
                         <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-4">
                           <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[#95ea63]">Why this gig</div>
                           <div className="mt-3 text-sm leading-6 text-white/72">
@@ -1093,7 +1105,6 @@ export default function BrowsePage() {
                           </div>
                         </div>
                       </div>
-                    )}
                   </div>
                 );
               })}

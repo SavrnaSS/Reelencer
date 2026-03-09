@@ -8,7 +8,7 @@ type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
 type PayoutType = "Per task" | "Per post" | "Monthly";
 type GigStatus = "Open" | "Paused" | "Closed";
 type GigType = string;
-type ApplicationStatus = "Applied" | "Accepted" | "Rejected" | "Withdrawn";
+type ApplicationStatus = "Applied" | "Pending" | "Accepted" | "Rejected" | "Withdrawn";
 
 type Gig = {
   id: string;
@@ -38,6 +38,11 @@ type GigApplication = {
     budget?: string;
     portfolio?: string;
     submittedAt?: string;
+    reviewStatus?: "Pending" | "Accepted" | "Rejected";
+    adminNote?: string;
+    adminExplanation?: string;
+    whatsappLink?: string;
+    reviewedAt?: string;
   };
   status: ApplicationStatus;
   appliedAt: string;
@@ -126,6 +131,10 @@ function buildRequirementsPayload(input: {
   customBrief: string;
   customRequirements: string;
   customMedia: string;
+  projectBrief: string;
+  hiringCapacity: string;
+  expertise: string;
+  languages: string;
 }) {
   if (input.gigType === "Custom") {
     const out: string[] = [];
@@ -134,10 +143,18 @@ function buildRequirementsPayload(input: {
     out.push(...parseCustomRequirementsText(input.customRequirements));
     return out;
   }
-  return input.requirements
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const out: string[] = [];
+  if (input.projectBrief.trim()) out.push(`Brief::${input.projectBrief.trim()}`);
+  if (input.hiringCapacity.trim()) out.push(`Meta::hiring_capacity=${input.hiringCapacity.trim()}`);
+  if (input.expertise.trim()) out.push(`Meta::expertise=${input.expertise.trim()}`);
+  if (input.languages.trim()) out.push(`Meta::languages=${input.languages.trim()}`);
+  out.push(
+    ...input.requirements
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+  return out;
 }
 
 function readCustomFieldsFromRequirements(requirements: string[]) {
@@ -152,6 +169,38 @@ function readCustomFieldsFromRequirements(requirements: string[]) {
     .filter((item) => !item.toLowerCase().startsWith("brief::") && !item.toLowerCase().startsWith("media::"))
     .join("\n");
   return { customBrief, customRequirements, customMedia };
+}
+
+function readProjectFieldsFromRequirements(requirements: string[]) {
+  const briefLine = requirements.find((item) => item.toLowerCase().startsWith("brief::"));
+  const projectBrief = briefLine ? briefLine.replace(/^brief::/i, "").trim() : "";
+  const meta = requirements
+    .filter((item) => item.toLowerCase().startsWith("meta::"))
+    .reduce<Record<string, string>>((acc, item) => {
+      const clean = item.replace(/^meta::/i, "");
+      const sep = clean.indexOf("=");
+      if (sep > 0) {
+        const key = clean.slice(0, sep).trim().toLowerCase();
+        const value = clean.slice(sep + 1).trim();
+        if (key && value) acc[key] = value;
+      }
+      return acc;
+    }, {});
+  const requirementsText = requirements
+    .filter(
+      (item) =>
+        !item.toLowerCase().startsWith("brief::") &&
+        !item.toLowerCase().startsWith("meta::") &&
+        !item.toLowerCase().startsWith("media::")
+    )
+    .join(", ");
+  return {
+    projectBrief,
+    hiringCapacity: meta.hiring_capacity ?? "",
+    expertise: meta.expertise ?? "",
+    languages: meta.languages ?? "",
+    requirementsText,
+  };
 }
 
 function readLS<T>(key: string, fallback: T): T {
@@ -222,6 +271,9 @@ export default function GigAdminConsole({
   const [formError, setFormError] = useState<string | null>(null);
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const [proposalReviewDraft, setProposalReviewDraft] = useState<
+    Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string }>
+  >({});
 
   const [form, setForm] = useState({
     title: "",
@@ -236,6 +288,10 @@ export default function GigAdminConsole({
     customBrief: "",
     customRequirements: "",
     customMedia: "",
+    projectBrief: "",
+    hiringCapacity: "",
+    expertise: "",
+    languages: "",
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -537,6 +593,10 @@ export default function GigAdminConsole({
       customBrief: "",
       customRequirements: "",
       customMedia: "",
+      projectBrief: "",
+      hiringCapacity: "",
+      expertise: "",
+      languages: "",
       requirements: "",
       status: "Open",
     });
@@ -548,6 +608,7 @@ export default function GigAdminConsole({
     const isCustom = normalizedType.toLowerCase().startsWith("custom:");
     const customLabel = isCustom ? normalizedType.replace(/^custom:\s*/i, "").trim() : "";
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
+    const projectFields = readProjectFieldsFromRequirements(gig.requirements);
     setForm({
       title: gig.title,
       company: gig.company,
@@ -561,7 +622,11 @@ export default function GigAdminConsole({
       customBrief: customFields.customBrief,
       customRequirements: customFields.customRequirements,
       customMedia: customFields.customMedia,
-      requirements: gig.requirements.join(", "),
+      projectBrief: projectFields.projectBrief,
+      hiringCapacity: projectFields.hiringCapacity,
+      expertise: projectFields.expertise,
+      languages: projectFields.languages,
+      requirements: isCustom ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
     setFormError(null);
@@ -628,6 +693,10 @@ export default function GigAdminConsole({
       customBrief: "",
       customRequirements: "",
       customMedia: "",
+      projectBrief: "",
+      hiringCapacity: "",
+      expertise: "",
+      languages: "",
       requirements: "",
       status: "Open",
     });
@@ -695,10 +764,26 @@ export default function GigAdminConsole({
     }
   };
 
-  const updateApplication = async (app: GigApplication, status: ApplicationStatus) => {
+  const updateApplication = async (
+    app: GigApplication,
+    status: ApplicationStatus,
+    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string }
+  ) => {
     const decidedAt = new Date().toISOString();
+    const reviewStatus: NonNullable<GigApplication["proposal"]>["reviewStatus"] =
+      status === "Rejected" ? "Rejected" : status === "Accepted" ? "Accepted" : "Pending";
+    const nextProposal: GigApplication["proposal"] = app.proposal
+      ? {
+          ...app.proposal,
+          reviewStatus,
+          adminNote: review?.adminNote ?? app.proposal.adminNote ?? "",
+          adminExplanation: review?.adminExplanation ?? app.proposal.adminExplanation ?? "",
+          whatsappLink: review?.whatsappLink ?? app.proposal.whatsappLink ?? "",
+          reviewedAt: decidedAt,
+        }
+      : undefined;
     setApps((prev) => {
-      const next = prev.map((a) => (a.id === app.id ? { ...a, status, decidedAt } : a));
+      const next = prev.map((a) => (a.id === app.id ? { ...a, status, decidedAt, proposal: nextProposal } : a));
       writeLS(LS_KEYS.GIG_APPS, next);
       return next;
     });
@@ -707,7 +792,15 @@ export default function GigAdminConsole({
       await fetch("/api/gig-applications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: app.id, updates: { status, decidedAt } }),
+        body: JSON.stringify({
+          id: app.id,
+          updates: {
+            status,
+            decidedAt,
+            workerName: app.workerName ?? app.workerId,
+            proposal: nextProposal,
+          },
+        }),
       });
     } catch {
       // ignore
@@ -1072,6 +1165,50 @@ export default function GigAdminConsole({
                   {mediaUploading && <div className="mt-2 text-xs font-semibold text-[#2f6655]">Uploading media...</div>}
                 </label>
               )}
+              {form.gigType !== "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Project brief (shown before proposal submission)
+                  <textarea
+                    className="mt-2 h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.projectBrief}
+                    onChange={(e) => setForm((prev) => ({ ...prev, projectBrief: e.target.value }))}
+                    placeholder="Describe project scope, expected outcomes, and execution context."
+                  />
+                </label>
+              )}
+              {form.gigType !== "Custom" && (
+                <label className="text-xs font-semibold text-slate-600">
+                  Hiring capacity
+                  <input
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.hiringCapacity}
+                    onChange={(e) => setForm((prev) => ({ ...prev, hiringCapacity: e.target.value }))}
+                    placeholder="e.g., 1 creator"
+                  />
+                </label>
+              )}
+              {form.gigType !== "Custom" && (
+                <label className="text-xs font-semibold text-slate-600">
+                  Expertise
+                  <input
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.expertise}
+                    onChange={(e) => setForm((prev) => ({ ...prev, expertise: e.target.value }))}
+                    placeholder="e.g., Mid level"
+                  />
+                </label>
+              )}
+              {form.gigType !== "Custom" && (
+                <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                  Languages
+                  <input
+                    className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    value={form.languages}
+                    onChange={(e) => setForm((prev) => ({ ...prev, languages: e.target.value }))}
+                    placeholder="e.g., English, Hindi"
+                  />
+                </label>
+              )}
               <label className="text-xs font-semibold text-slate-600">
                 Status
                 <select
@@ -1125,6 +1262,10 @@ export default function GigAdminConsole({
                         customBrief: "",
                         customRequirements: "",
                         customMedia: "",
+                        projectBrief: "",
+                        hiringCapacity: "",
+                        expertise: "",
+                        languages: "",
                         requirements: "",
                         status: "Open",
                       });
@@ -1162,7 +1303,9 @@ export default function GigAdminConsole({
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs text-slate-500">Pending review</div>
-                <div className="mt-2 text-2xl font-semibold text-slate-900">{apps.filter((a) => a.status === "Applied").length}</div>
+                <div className="mt-2 text-2xl font-semibold text-slate-900">
+                  {apps.filter((a) => a.status === "Applied" || a.status === "Pending").length}
+                </div>
               </div>
             </div>
           </div>
@@ -1283,6 +1426,14 @@ export default function GigAdminConsole({
               )}
               {filteredApps.map((app) => (
                 <div key={app.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+                  {(() => {
+                    const draft = proposalReviewDraft[app.id] ?? {
+                      adminNote: app.proposal?.adminNote ?? "",
+                      adminExplanation: app.proposal?.adminExplanation ?? "",
+                      whatsappLink: app.proposal?.whatsappLink ?? "",
+                    };
+                    return (
+                      <>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="break-words text-sm font-semibold text-slate-900">{app.workerName ?? app.workerId}</div>
@@ -1331,22 +1482,96 @@ export default function GigAdminConsole({
                           <span className="font-semibold text-slate-700">Portfolio:</span> {app.proposal.portfolio}
                         </div>
                       )}
+                      {app.proposal.reviewedAt && (
+                        <div className="mt-2 text-[11px] text-slate-500">Reviewed: {new Date(app.proposal.reviewedAt).toLocaleString()}</div>
+                      )}
                     </div>
                   )}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <label className="text-[11px] font-semibold text-slate-600">
+                      Admin note
+                      <input
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                        value={draft.adminNote}
+                        onChange={(e) =>
+                          setProposalReviewDraft((prev) => ({
+                            ...prev,
+                            [app.id]: { ...draft, adminNote: e.target.value },
+                          }))
+                        }
+                        placeholder="Short status note for worker feed"
+                      />
+                    </label>
+                    <label className="text-[11px] font-semibold text-slate-600">
+                      WhatsApp group link
+                      <input
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                        value={draft.whatsappLink}
+                        onChange={(e) =>
+                          setProposalReviewDraft((prev) => ({
+                            ...prev,
+                            [app.id]: { ...draft, whatsappLink: e.target.value },
+                          }))
+                        }
+                        placeholder="https://chat.whatsapp.com/..."
+                      />
+                    </label>
+                  </div>
+                  <label className="mt-2 block text-[11px] font-semibold text-slate-600">
+                    Admin explanation
+                    <textarea
+                      className="mt-1 h-16 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+                      value={draft.adminExplanation}
+                      onChange={(e) =>
+                        setProposalReviewDraft((prev) => ({
+                          ...prev,
+                          [app.id]: { ...draft, adminExplanation: e.target.value },
+                        }))
+                      }
+                      placeholder="Explain next steps, reason, or onboarding guidance."
+                    />
+                  </label>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
-                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
-                      onClick={() => updateApplication(app, "Accepted")}
+                      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                      onClick={() =>
+                        updateApplication(app, "Pending", {
+                          adminNote: draft.adminNote,
+                          adminExplanation: draft.adminExplanation,
+                          whatsappLink: draft.whatsappLink,
+                        })
+                      }
                     >
-                      Accept
+                      Mark pending
+                    </button>
+                    <button
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
+                      onClick={() =>
+                        updateApplication(app, "Accepted", {
+                          adminNote: draft.adminNote,
+                          adminExplanation: draft.adminExplanation,
+                          whatsappLink: draft.whatsappLink,
+                        })
+                      }
+                    >
+                      Approve
                     </button>
                     <button
                       className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700"
-                      onClick={() => updateApplication(app, "Rejected")}
+                      onClick={() =>
+                        updateApplication(app, "Rejected", {
+                          adminNote: draft.adminNote,
+                          adminExplanation: draft.adminExplanation,
+                          whatsappLink: draft.whatsappLink,
+                        })
+                      }
                     >
                       Reject
                     </button>
                   </div>
+                      </>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
