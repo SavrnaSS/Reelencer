@@ -1014,6 +1014,14 @@ export default function BrowsePage() {
                               {isFullTime ? "Go to workspace" : isFreelanceCustom ? "Open proposal flow" : "Proceed"}
                             </Link>
                           )}
+                          {!canProceed && !!app && (
+                            <Link
+                              className="col-span-2 rounded-full border border-white/14 bg-white/8 px-3 py-1.5 text-center text-xs font-semibold text-white/88 sm:px-4 sm:py-2 md:col-span-1"
+                              href={`/proceed?gigId=${encodeURIComponent(gig.id)}`}
+                            >
+                              View status
+                            </Link>
+                          )}
                         </div>
                       </div>
                     </div>

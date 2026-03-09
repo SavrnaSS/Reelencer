@@ -277,7 +277,10 @@ function ProceedPageInner() {
           return;
         }
 
-        const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(currentWorkerId)}`, { method: "GET" });
+        const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(currentWorkerId)}`, {
+          method: "GET",
+          cache: "no-store",
+        });
         const appPayload = appRes.ok ? await appRes.json() : [];
         const matchApp = Array.isArray(appPayload)
           ? appPayload.find((item: any) => String(item?.gigId) === String(gigId))

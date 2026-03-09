@@ -774,11 +774,12 @@ export default function GigAdminConsole({
     }
   };
 
-  const updateApplication = async (
+  const persistApplicationReview = async (
     app: GigApplication,
-    status: ApplicationStatus,
-    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string }
+    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string },
+    statusOverride?: ApplicationStatus
   ) => {
+    const status = statusOverride ?? app.status;
     const decidedAt = new Date().toISOString();
     const reviewStatus: NonNullable<GigApplication["proposal"]>["reviewStatus"] =
       status === "Rejected" ? "Rejected" : status === "Accepted" ? "Accepted" : "Pending";
@@ -814,6 +815,14 @@ export default function GigAdminConsole({
     } catch {
       // ignore
     }
+  };
+
+  const updateApplication = async (
+    app: GigApplication,
+    status: ApplicationStatus,
+    review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string }
+  ) => {
+    await persistApplicationReview(app, review, status);
   };
 
   const updateAssignment = async (assignment: Assignment, status: string) => {
@@ -1508,6 +1517,13 @@ export default function GigAdminConsole({
                             [app.id]: { ...draft, adminNote: e.target.value },
                           }))
                         }
+                        onBlur={() =>
+                          persistApplicationReview(
+                            app,
+                            proposalReviewDraft[app.id] ?? draft,
+                            app.status
+                          )
+                        }
                         placeholder="Short status note for worker feed"
                       />
                     </label>
@@ -1521,6 +1537,13 @@ export default function GigAdminConsole({
                             ...prev,
                             [app.id]: { ...draft, whatsappLink: e.target.value },
                           }))
+                        }
+                        onBlur={() =>
+                          persistApplicationReview(
+                            app,
+                            proposalReviewDraft[app.id] ?? draft,
+                            app.status
+                          )
                         }
                         placeholder="https://chat.whatsapp.com/..."
                       />
@@ -1536,6 +1559,13 @@ export default function GigAdminConsole({
                           ...prev,
                           [app.id]: { ...draft, adminExplanation: e.target.value },
                         }))
+                      }
+                      onBlur={() =>
+                        persistApplicationReview(
+                          app,
+                          proposalReviewDraft[app.id] ?? draft,
+                          app.status
+                        )
                       }
                       placeholder="Explain next steps, reason, or onboarding guidance."
                     />
