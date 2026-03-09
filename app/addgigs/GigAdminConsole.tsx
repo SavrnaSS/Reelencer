@@ -101,6 +101,7 @@ const LS_KEYS = {
   GIG_ASSIGNMENTS: "igops:gig-assignments",
   GIG_KYC_ROWS: "igops:gig-kyc-rows",
   GIG_KYC_SYNC_AT: "igops:gig-kyc-sync-at",
+  PROPOSAL_REVIEW_DRAFT: "igops:proposal-review-draft",
 } as const;
 
 const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
@@ -308,14 +309,23 @@ export default function GigAdminConsole({
     const cachedAssignments = toArray<Assignment>(readLS(LS_KEYS.GIG_ASSIGNMENTS, []), []);
     const cachedKyc = toArray<KycRow>(readLS<KycRow[]>(LS_KEYS.GIG_KYC_ROWS, []), []);
     const cachedKycSync = readLS<string | null>(LS_KEYS.GIG_KYC_SYNC_AT, null);
+    const cachedProposalDraft = readLS<Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string }>>(
+      LS_KEYS.PROPOSAL_REVIEW_DRAFT,
+      {}
+    );
 
     if (cachedGigs.length) setGigs(cachedGigs);
     if (cachedApps.length) setApps(cachedApps);
     if (cachedAssignments.length) setAssignments(cachedAssignments);
     if (cachedKyc.length) setKycRows(cachedKyc);
     if (cachedKycSync) setKycLastSyncAt(cachedKycSync);
+    if (Object.keys(cachedProposalDraft).length) setProposalReviewDraft(cachedProposalDraft);
     if (cachedGigs.length || cachedApps.length || cachedAssignments.length || cachedKyc.length) setLoading(false);
   }, []);
+
+  useEffect(() => {
+    writeLS(LS_KEYS.PROPOSAL_REVIEW_DRAFT, proposalReviewDraft);
+  }, [proposalReviewDraft]);
 
   useEffect(() => {
     let alive = true;
