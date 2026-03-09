@@ -1220,21 +1220,27 @@ function ProceedPageInner() {
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b725f]">Offer Update</div>
-                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#173e31]">Congratulations, your proposal is approved.</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b725f]">
+                  {onboardingRequired ? "Offer Update" : "Project Access Update"}
+                </div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#173e31]">
+                  {onboardingRequired ? "Congratulations, your proposal is approved." : "Congratulations, your proposal is approved and activated."}
+                </div>
                 <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#355d50]">
-                  Your proposal has cleared final review. Welcome to the next stage of Reelencer operations.
+                  {onboardingRequired
+                    ? "Your proposal has cleared final review. Welcome to the next stage of Reelencer operations."
+                    : "Your proposal has cleared final review. You can now move directly to your project execution workflow."}
                 </div>
               </div>
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                Offer Issued
+                {onboardingRequired ? "Offer Issued" : "Access Granted"}
               </span>
             </div>
             <div className="mt-4 rounded-2xl border border-[#cfe3d7] bg-white px-4 py-3 text-sm text-[#355d50]">
               <span className="font-semibold text-[#284b40]">Next Action:</span>{" "}
               {onboardingRequired
                 ? "Complete onboarding handoff, then begin execution from your assigned workflow panel."
-                : "Your onboarding requirement is waived for this project. Start execution from your assigned workflow panel."}
+                : "Start execution from your assigned workflow panel."}
             </div>
           </div>
         )}
