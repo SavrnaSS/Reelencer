@@ -139,16 +139,19 @@ function buildRequirementsPayload(input: {
   hiringCapacity: string;
   expertise: string;
   languages: string;
+  onboardingRequired: boolean;
 }) {
   if (input.gigType === "Custom") {
     const out: string[] = [];
     if (input.customBrief.trim()) out.push(`Brief::${input.customBrief.trim()}`);
+    out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
     parseCustomRequirementsText(input.customMedia).forEach((line) => out.push(`Media::${line}`));
     out.push(...parseCustomRequirementsText(input.customRequirements));
     return out;
   }
   const out: string[] = [];
   if (input.projectBrief.trim()) out.push(`Brief::${input.projectBrief.trim()}`);
+  out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
   if (input.hiringCapacity.trim()) out.push(`Meta::hiring_capacity=${input.hiringCapacity.trim()}`);
   if (input.expertise.trim()) out.push(`Meta::expertise=${input.expertise.trim()}`);
   if (input.languages.trim()) out.push(`Meta::languages=${input.languages.trim()}`);
@@ -170,7 +173,12 @@ function readCustomFieldsFromRequirements(requirements: string[]) {
     .filter(Boolean)
     .join("\n");
   const customRequirements = requirements
-    .filter((item) => !item.toLowerCase().startsWith("brief::") && !item.toLowerCase().startsWith("media::"))
+    .filter(
+      (item) =>
+        !item.toLowerCase().startsWith("brief::") &&
+        !item.toLowerCase().startsWith("media::") &&
+        !item.toLowerCase().startsWith("meta::")
+    )
     .join("\n");
   return { customBrief, customRequirements, customMedia };
 }
@@ -203,6 +211,7 @@ function readProjectFieldsFromRequirements(requirements: string[]) {
     hiringCapacity: meta.hiring_capacity ?? "",
     expertise: meta.expertise ?? "",
     languages: meta.languages ?? "",
+    onboardingRequired: !["false", "0", "no", "off"].includes((meta.onboarding_required ?? "true").toLowerCase()),
     requirementsText,
   };
 }
@@ -296,6 +305,7 @@ export default function GigAdminConsole({
     hiringCapacity: "",
     expertise: "",
     languages: "",
+    onboardingRequired: true,
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -612,6 +622,7 @@ export default function GigAdminConsole({
       hiringCapacity: "",
       expertise: "",
       languages: "",
+      onboardingRequired: true,
       requirements: "",
       status: "Open",
     });
@@ -641,6 +652,7 @@ export default function GigAdminConsole({
       hiringCapacity: projectFields.hiringCapacity,
       expertise: projectFields.expertise,
       languages: projectFields.languages,
+      onboardingRequired: projectFields.onboardingRequired,
       requirements: isCustom ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
@@ -712,6 +724,7 @@ export default function GigAdminConsole({
       hiringCapacity: "",
       expertise: "",
       languages: "",
+      onboardingRequired: true,
       requirements: "",
       status: "Open",
     });
@@ -1233,6 +1246,20 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
+              <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.onboardingRequired}
+                    onChange={(e) => setForm((prev) => ({ ...prev, onboardingRequired: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 text-[#1f4f43] focus:ring-[#1f4f43]"
+                  />
+                  Require structured onboarding workflow for this gig
+                </span>
+                <div className="mt-1 text-[11px] font-normal text-slate-500">
+                  When enabled, workers must complete the onboarding steps before workspace handoff.
+                </div>
+              </label>
               <label className="text-xs font-semibold text-slate-600">
                 Status
                 <select
@@ -1290,6 +1317,7 @@ export default function GigAdminConsole({
                         hiringCapacity: "",
                         expertise: "",
                         languages: "",
+                        onboardingRequired: true,
                         requirements: "",
                         status: "Open",
                       });

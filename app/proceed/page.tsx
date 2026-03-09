@@ -387,7 +387,7 @@ function ProceedPageInner() {
     () =>
       (gig?.requirements ?? []).filter((item) => {
         const lower = String(item).toLowerCase();
-        return !lower.startsWith("brief::") && !lower.startsWith("media::");
+        return !lower.startsWith("brief::") && !lower.startsWith("media::") && !lower.startsWith("meta::");
       }),
     [gig?.requirements]
   );
@@ -414,6 +414,10 @@ function ProceedPageInner() {
       }),
     [gig?.requirements]
   );
+  const onboardingRequired = useMemo(() => {
+    const raw = String(projectMeta.onboarding_required ?? "true").trim().toLowerCase();
+    return !["false", "0", "no", "off"].includes(raw);
+  }, [projectMeta.onboarding_required]);
 
   // Auto-sync poller
   useEffect(() => {
@@ -1047,7 +1051,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && !canAccessOperations && (
+        {!isCustomFlow && hasApplication && !canAccessOperations && onboardingRequired && (
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1167,6 +1171,51 @@ function ProceedPageInner() {
           </div>
         )}
 
+        {!isCustomFlow && hasApplication && !canAccessOperations && !onboardingRequired && (
+          <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Proposal Desk</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">
+                  {proposalReviewStatus === "Rejected" ? "Revision Requested" : "Proposal Under Review"}
+                </div>
+                <div className="mt-2 max-w-2xl text-sm leading-relaxed text-[#4d665c]">
+                  {proposalReviewStatus === "Rejected"
+                    ? "Your proposal did not pass review. Please update your submission based on the feedback below."
+                    : "Your proposal is in admin review. You will receive the final decision and next actions here."}
+                </div>
+              </div>
+              <span className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
+                {proposalReviewStatus === "Rejected" ? "Revision Required" : "In Queue"}
+              </span>
+            </div>
+            {hasAdminUpdate && (
+              <div className="mt-4 space-y-3">
+                {application?.proposal?.adminNote?.trim() && (
+                  <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                    <span className="font-semibold text-[#294b40]">Note:</span> {application.proposal.adminNote}
+                  </div>
+                )}
+                {application?.proposal?.adminExplanation?.trim() && (
+                  <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                    <span className="font-semibold text-[#294b40]">Guidance:</span> {application.proposal.adminExplanation}
+                  </div>
+                )}
+              </div>
+            )}
+            {!hasAdminUpdate && (
+              <div className="mt-4 rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
+                No additional instructions were published yet.
+              </div>
+            )}
+            <div className="mt-3 text-[11px] text-[#6f877d]">
+              {application?.proposal?.reviewedAt
+                ? `Updated: ${new Date(application.proposal.reviewedAt).toLocaleString()}`
+                : `Submitted: ${new Date(application?.appliedAt ?? Date.now()).toLocaleString()}`}
+            </div>
+          </div>
+        )}
+
         {!isCustomFlow && hasApplication && proposalReviewStatus === "Accepted" && (
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1182,7 +1231,10 @@ function ProceedPageInner() {
               </span>
             </div>
             <div className="mt-4 rounded-2xl border border-[#cfe3d7] bg-white px-4 py-3 text-sm text-[#355d50]">
-              <span className="font-semibold text-[#284b40]">Next Action:</span> Complete onboarding handoff, then begin execution from your assigned workflow panel.
+              <span className="font-semibold text-[#284b40]">Next Action:</span>{" "}
+              {onboardingRequired
+                ? "Complete onboarding handoff, then begin execution from your assigned workflow panel."
+                : "Your onboarding requirement is waived for this project. Start execution from your assigned workflow panel."}
             </div>
           </div>
         )}
