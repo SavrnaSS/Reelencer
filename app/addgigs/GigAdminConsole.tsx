@@ -782,16 +782,15 @@ export default function GigAdminConsole({
     const decidedAt = new Date().toISOString();
     const reviewStatus: NonNullable<GigApplication["proposal"]>["reviewStatus"] =
       status === "Rejected" ? "Rejected" : status === "Accepted" ? "Accepted" : "Pending";
-    const nextProposal: GigApplication["proposal"] = app.proposal
-      ? {
-          ...app.proposal,
-          reviewStatus,
-          adminNote: review?.adminNote ?? app.proposal.adminNote ?? "",
-          adminExplanation: review?.adminExplanation ?? app.proposal.adminExplanation ?? "",
-          whatsappLink: review?.whatsappLink ?? app.proposal.whatsappLink ?? "",
-          reviewedAt: decidedAt,
-        }
-      : undefined;
+    const nextProposal: GigApplication["proposal"] = {
+      ...(app.proposal ?? {}),
+      submittedAt: app.proposal?.submittedAt ?? app.appliedAt,
+      reviewStatus,
+      adminNote: review?.adminNote ?? app.proposal?.adminNote ?? "",
+      adminExplanation: review?.adminExplanation ?? app.proposal?.adminExplanation ?? "",
+      whatsappLink: review?.whatsappLink ?? app.proposal?.whatsappLink ?? "",
+      reviewedAt: decidedAt,
+    };
     setApps((prev) => {
       const next = prev.map((a) => (a.id === app.id ? { ...a, status, decidedAt, proposal: nextProposal } : a));
       writeLS(LS_KEYS.GIG_APPS, next);
