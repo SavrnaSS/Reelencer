@@ -1532,13 +1532,13 @@ export default function GigAdminConsole({
                         onChange={(e) =>
                           setProposalReviewDraft((prev) => ({
                             ...prev,
-                            [app.id]: { ...draft, adminNote: e.target.value },
+                            [app.id]: { ...(prev[app.id] ?? draft), adminNote: e.target.value },
                           }))
                         }
-                        onBlur={() =>
+                        onBlur={(e) =>
                           persistApplicationReview(
                             app,
-                            proposalReviewDraft[app.id] ?? draft,
+                            { ...(proposalReviewDraft[app.id] ?? draft), adminNote: e.target.value },
                             app.status
                           )
                         }
@@ -1553,13 +1553,13 @@ export default function GigAdminConsole({
                         onChange={(e) =>
                           setProposalReviewDraft((prev) => ({
                             ...prev,
-                            [app.id]: { ...draft, whatsappLink: e.target.value },
+                            [app.id]: { ...(prev[app.id] ?? draft), whatsappLink: e.target.value },
                           }))
                         }
-                        onBlur={() =>
+                        onBlur={(e) =>
                           persistApplicationReview(
                             app,
-                            proposalReviewDraft[app.id] ?? draft,
+                            { ...(proposalReviewDraft[app.id] ?? draft), whatsappLink: e.target.value },
                             app.status
                           )
                         }
@@ -1575,13 +1575,13 @@ export default function GigAdminConsole({
                       onChange={(e) =>
                         setProposalReviewDraft((prev) => ({
                           ...prev,
-                          [app.id]: { ...draft, onboardingSteps: e.target.value },
+                          [app.id]: { ...(prev[app.id] ?? draft), onboardingSteps: e.target.value },
                         }))
                       }
-                      onBlur={() =>
+                      onBlur={(e) =>
                         persistApplicationReview(
                           app,
-                          proposalReviewDraft[app.id] ?? draft,
+                          { ...(proposalReviewDraft[app.id] ?? draft), onboardingSteps: e.target.value },
                           app.status
                         )
                       }
@@ -1596,13 +1596,13 @@ export default function GigAdminConsole({
                       onChange={(e) =>
                         setProposalReviewDraft((prev) => ({
                           ...prev,
-                          [app.id]: { ...draft, adminExplanation: e.target.value },
+                          [app.id]: { ...(prev[app.id] ?? draft), adminExplanation: e.target.value },
                         }))
                       }
-                      onBlur={() =>
+                      onBlur={(e) =>
                         persistApplicationReview(
                           app,
-                          proposalReviewDraft[app.id] ?? draft,
+                          { ...(proposalReviewDraft[app.id] ?? draft), adminExplanation: e.target.value },
                           app.status
                         )
                       }
@@ -1612,40 +1612,43 @@ export default function GigAdminConsole({
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
-                      onClick={() =>
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
                         updateApplication(app, "Pending", {
-                          adminNote: draft.adminNote,
-                          adminExplanation: draft.adminExplanation,
-                          whatsappLink: draft.whatsappLink,
-                          onboardingSteps: draft.onboardingSteps,
-                        })
-                      }
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
                     >
                       Mark pending
                     </button>
                     <button
                       className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
-                      onClick={() =>
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
                         updateApplication(app, "Accepted", {
-                          adminNote: draft.adminNote,
-                          adminExplanation: draft.adminExplanation,
-                          whatsappLink: draft.whatsappLink,
-                          onboardingSteps: draft.onboardingSteps,
-                        })
-                      }
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
                     >
                       Approve
                     </button>
                     <button
                       className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700"
-                      onClick={() =>
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
                         updateApplication(app, "Rejected", {
-                          adminNote: draft.adminNote,
-                          adminExplanation: draft.adminExplanation,
-                          whatsappLink: draft.whatsappLink,
-                          onboardingSteps: draft.onboardingSteps,
-                        })
-                      }
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
                     >
                       Reject
                     </button>
