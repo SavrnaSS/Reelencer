@@ -851,8 +851,8 @@ export default function HomePage() {
                   </div>
                 )}
                 {authResolved && !role && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 px-1 text-sm text-white/60">
-                    <span>Use any email to create your Reelencer account.</span>
+                  <div className="mt-3 flex items-center gap-1.5 px-1 text-[0.82rem] tracking-[-0.01em] text-white/60 sm:flex-wrap sm:gap-2 sm:text-sm sm:tracking-normal">
+                    <span className="whitespace-nowrap">Use any email to create your Reelencer account.</span>
                     <Link href={loginHref} className="font-semibold text-[#9eea6d] transition hover:text-white">
                       Sign in
                     </Link>
