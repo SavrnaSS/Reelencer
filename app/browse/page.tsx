@@ -160,20 +160,20 @@ function getBrowseDisplayName(user: { email?: string | null; user_metadata?: { n
 
 function BrandMark({ compact = false, showTagline = true }: { compact?: boolean; showTagline?: boolean }) {
   return (
-    <Link href="/" className="flex items-center gap-3 text-white">
+    <Link href="/" className="flex items-center gap-3 text-slate-900">
       <div className={`relative overflow-hidden ${compact ? "h-11 w-11" : "h-14 w-14"}`}>
         <Image src="/logo-mark.svg" alt="Reelencer logo mark" fill sizes={compact ? "44px" : "56px"} className="object-contain" />
       </div>
       <div className="leading-none">
         <div
-          className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-white ${
+          className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-slate-900 ${
             compact ? "text-[1.2rem] sm:text-[1.55rem]" : "text-[2.05rem] sm:text-[2.2rem]"
           }`}
         >
           Reelencer
         </div>
         {showTagline && (
-          <div className={`${compact ? "mt-0.5 text-[0.72rem]" : "mt-1 text-[0.95rem]"} font-medium text-white/82`}>
+          <div className={`${compact ? "mt-0.5 text-[0.72rem]" : "mt-1 text-[0.95rem]"} font-medium text-slate-500`}>
             Freelance Creator Platform
           </div>
         )}
@@ -472,10 +472,10 @@ export default function BrowsePage() {
 
   const renderProfileMenu = (desktop = false) => (
     <>
-      <div className="flex items-center justify-between border-b border-white/8 px-4 py-4">
-        <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[#95ea63]">Command Center</div>
+      <div className="flex items-center justify-between border-b border-[#d4dccf] px-4 py-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[#2f6655]">Command Center</div>
         <button
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/12 bg-white/6 text-xs font-semibold text-white/80 shadow-sm transition hover:bg-white/10 cursor-pointer"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#d1dacb] bg-[#f8faf7] text-xs font-semibold text-slate-700 transition hover:bg-[#ecf3e8] cursor-pointer"
           onClick={closeMenu}
           aria-label="Close menu"
         >
@@ -483,26 +483,26 @@ export default function BrowsePage() {
         </button>
       </div>
       <div className={desktop ? "px-4 pb-4 pt-4" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
-        <div className="rounded-[1.8rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+        <div className="rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] px-4 py-4 shadow-[0_16px_36px_rgba(22,58,46,0.08)]">
           <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-lg font-bold text-[#10251b]">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1f4f43] text-lg font-bold text-white">
               {displayName.slice(0, 1).toUpperCase()}
             </div>
             <div>
-              <div className="text-base font-semibold text-white">{displayName}</div>
-              <div className="text-xs text-white/50">{role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}</div>
+              <div className="text-base font-semibold text-slate-900">{displayName}</div>
+              <div className="text-xs text-slate-500">{role ? `${role} • ${workerId ? `ID ${workerId}` : "No worker ID"}` : "Guest"}</div>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {isGuest ? (
               <>
-                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/58">Sign in required</span>
-                <span className="inline-flex items-center rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-[#a6f56f]">Guest access</span>
+                <span className="inline-flex items-center rounded-full border border-[#d3dbce] bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">Sign in required</span>
+                <span className="inline-flex items-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-[#2f6655]">Guest access</span>
               </>
             ) : (
               <>
-                <span className="inline-flex items-center rounded-full border border-white/10 bg-white/6 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/58">KYC: {kycBadgeStatus}</span>
-                <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${hasApprovedKyc ? "border border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#a6f56f]" : "border border-white/10 bg-white/6 text-white/58"}`}>
+                <span className="inline-flex items-center rounded-full border border-[#d3dbce] bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">KYC: {kycBadgeStatus}</span>
+                <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${hasApprovedKyc ? "border border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border border-[#d3dbce] bg-white text-slate-500"}`}>
                   {hasApprovedKyc ? "Trusted" : "Verification required"}
                 </span>
               </>
@@ -511,56 +511,55 @@ export default function BrowsePage() {
         </div>
 
         {isGuest ? (
-          <div className="mt-4 rounded-[1.6rem] border border-white/10 bg-black/10 px-4 py-4">
-            <div className="text-sm font-semibold text-white">Sign in to unlock the workspace</div>
-            <p className="mt-1 text-xs leading-5 text-white/62">Access assignments, payouts, and verified gigs once you’re signed in.</p>
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <div className="text-sm font-semibold text-slate-900">Sign in to unlock the workspace</div>
+            <p className="mt-1 text-xs leading-5 text-slate-600">Access assignments, payouts, and verified gigs once you’re signed in.</p>
             <div className="mt-3 grid gap-2">
-              <Link className="rounded-xl bg-[#8fe05f] px-3 py-3 text-center text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d] cursor-pointer" href={loginHref} onClick={closeMenu}>Sign in</Link>
-              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-center text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href={signupHref} onClick={closeMenu}>Create account</Link>
-              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-center text-xs font-semibold text-white/82 shadow-sm transition hover:bg-white/10 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+              <Link className="rounded-xl bg-[#1f4f43] px-3 py-3 text-center text-xs font-semibold text-white transition hover:bg-[#2d6b5a] cursor-pointer" href={loginHref} onClick={closeMenu}>Sign in</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={signupHref} onClick={closeMenu}>Create account</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-center text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
             </div>
           </div>
         ) : (
           <>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Admin" : "Workspace"}</Link>
-              <Link className="rounded-xl border border-white/10 bg-white/6 px-3 py-3 text-xs font-semibold text-white shadow-sm transition hover:bg-white/10 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Admin" : "Workspace"}</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
             </div>
-            <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/42">Quick links</div>
+            <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quick links</div>
             <div className="mt-2 space-y-1">
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-white/35">›</span></Link>
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Go to admin" : "Go to workspace"}<span className="text-white/35">›</span></Link>
-              {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-white/35">›</span></Link>}
-              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white/82 transition hover:bg-white/8 cursor-pointer" href={role === "Admin" ? dashboardHref : "/my-assignments"} onClick={closeMenu}>{role === "Admin" ? "Approval queue" : "My assignments"}<span className="text-white/35">›</span></Link>
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-slate-400">›</span></Link>
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Go to admin" : "Go to workspace"}<span className="text-slate-400">›</span></Link>
+              {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-slate-400">›</span></Link>}
+              <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href={role === "Admin" ? dashboardHref : "/my-assignments"} onClick={closeMenu}>{role === "Admin" ? "Approval queue" : "My assignments"}<span className="text-slate-400">›</span></Link>
             </div>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 px-3 py-2">
-              <button className="w-full text-left text-sm font-semibold text-[#ff9f9f] cursor-pointer" onClick={signOut}>Sign out</button>
+            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2">
+              <button className="w-full text-left text-sm font-semibold text-rose-700 cursor-pointer" onClick={signOut}>Sign out</button>
             </div>
           </>
         )}
         <Link
           href="mailto:support@reelencer.com"
-          className="group mt-4 flex items-center gap-3 rounded-2xl border border-white/14 bg-[linear-gradient(135deg,#1f2228,#171a1f)] px-3 py-3 text-left shadow-[0_14px_28px_rgba(0,0,0,0.28)] transition hover:border-white/22 hover:bg-[linear-gradient(135deg,#22262d,#1a1d23)]"
+          className="group mt-4 flex items-center gap-3 rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] px-3 py-3 text-left shadow-[0_16px_36px_rgba(22,58,46,0.08)] transition hover:bg-[#edf4e8]"
           onClick={closeMenu}
         >
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[1.25rem]">✉️</span>
           <span className="min-w-0 flex-1 leading-tight">
-            <span className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.13em] text-white/62">Send us mail for any query</span>
-            <span className="block truncate text-[1.03rem] font-bold text-white">support@reelencer.com</span>
+            <span className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.13em] text-slate-500">Send us mail for any query</span>
+            <span className="block truncate text-[1.03rem] font-bold text-slate-900">support@reelencer.com</span>
           </span>
-          <span className="text-xl text-white/62 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
+          <span className="text-xl text-slate-400 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
         </Link>
       </div>
     </>
   );
 
   return (
-    <div className="min-h-screen bg-[#041f1a] text-white">
-      <div className="relative isolate min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(45,130,105,0.22),transparent_34%),radial-gradient(circle_at_top_right,rgba(18,64,53,0.36),transparent_26%),linear-gradient(135deg,#0d4b3d_0%,#08342b_58%,#051916_100%)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/45 to-transparent" />
-        <header className="relative z-30">
-          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-3 pb-3 pt-3 sm:px-6 sm:pb-4 sm:pt-5 lg:px-8">
+    <div className="ops-dashboard-skin min-h-screen overflow-x-hidden bg-slate-50 text-slate-900">
+      <div className="relative min-h-screen overflow-hidden bg-[#eef4ea]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_45%)]" />
+        <header className="sticky top-0 z-30 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-3 py-3 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
             <div className="hidden lg:block">
               <BrandMark showTagline={false} />
@@ -568,30 +567,29 @@ export default function BrowsePage() {
             <div className="lg:hidden">
               <BrandMark compact showTagline={false} />
             </div>
-            
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="relative" data-profile-menu>
               <button
                 ref={menuButtonRef}
-                className="flex items-center gap-1.5 rounded-full border border-white/12 bg-white/6 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm backdrop-blur-md transition hover:bg-white/10 cursor-pointer sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
                 onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
               >
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[linear-gradient(180deg,#8fe05f,#6fc447)] text-xs font-bold text-[#10251b] sm:h-9 sm:w-9 sm:text-sm">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1f4f43] text-xs font-bold text-white sm:h-9 sm:w-9 sm:text-sm">
                   {displayName.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="max-w-[5rem] truncate text-xs text-white/90 sm:hidden">{mobileDisplayName}</span>
-                <span className="hidden max-w-[12rem] truncate text-sm text-white/90 sm:block">{displayName}</span>
-                <span className="text-white/45">▾</span>
+                <span className="max-w-[5rem] truncate text-xs text-slate-700 sm:hidden">{mobileDisplayName}</span>
+                <span className="hidden max-w-[12rem] truncate text-sm text-slate-700 sm:block">{displayName}</span>
+                <span className="text-slate-400">▾</span>
               </button>
               {menuOpen &&
                 typeof document !== "undefined" &&
                 createPortal(
                   <>
-                    <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-black/45 md:hidden">
+                    <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/30 md:hidden">
                       <div
                         data-profile-menu-panel
-                        className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-white/10 bg-[#103e34]/98 text-white shadow-2xl transition-all duration-200 ease-out ${
+                        className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl transition-all duration-200 ease-out ${
                           menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
                         }`}
                       >
@@ -600,7 +598,7 @@ export default function BrowsePage() {
                     </div>
                     <div
                       data-profile-menu-panel
-                      className={`fixed z-[9991] hidden w-80 rounded-[1.6rem] border border-white/10 bg-[#103e34]/98 text-white shadow-2xl backdrop-blur-xl md:block ${
+                      className={`fixed z-[9991] hidden w-80 rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
                         menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
                       }`}
                       style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left } : { top: 80, right: 24 }}
@@ -615,69 +613,72 @@ export default function BrowsePage() {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-2 sm:px-6 sm:pb-14 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl px-4 pb-10 pt-4 sm:px-6 sm:pb-14 lg:px-8">
         <section className="relative grid gap-6 lg:grid-cols-[1.12fr_0.88fr] lg:items-center">
           <div>
-            <h1 className="mt-5 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-white sm:mt-6 sm:text-[3.35rem] lg:text-[4.2rem]">
+            <div className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
+              Marketplace Console
+            </div>
+            <h1 className="mt-5 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-slate-900 sm:mt-6 sm:text-[3.15rem] lg:text-[3.85rem]">
               Browse Verified
               <br />
               Gigs, Clear
               <br />
               Payouts, Faster.
             </h1>
-            <p className="mt-5 max-w-3xl text-[0.95rem] font-medium leading-[1.54] tracking-[-0.015em] text-white/80 sm:mt-6 sm:text-[1.08rem] lg:text-[1.18rem]">
-              Explore Reelencer opportunities with structured briefs, visible workload expectations, and transparent payout logic. The browse flow now carries the same premium operating-system feel as the homepage.
+            <p className="mt-5 max-w-3xl text-[0.95rem] font-medium leading-[1.54] tracking-[-0.015em] text-slate-600 sm:mt-6 sm:text-[1.08rem] lg:text-[1.12rem]">
+              Explore Reelencer opportunities with structured briefs, visible workload expectations, and transparent payout logic. The browse experience now follows the same dashboard language used in the workspace.
             </p>
             {!workerId && (
-              <div className="mt-4 inline-flex rounded-full border border-[#8fe05f]/25 bg-[#8fe05f]/8 px-3 py-1.5 text-xs font-medium text-[#b7f18e] sm:mt-5 sm:px-4 sm:py-2 sm:text-sm">
+              <div className="mt-4 inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-xs font-medium text-[#2f6655] sm:mt-5 sm:px-4 sm:py-2 sm:text-sm">
                 Sign in to apply. Browsing stays public, applications require an authenticated workspace session.
               </div>
             )}
           </div>
-          <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(22,72,60,0.88),rgba(10,38,31,0.92))] p-4 shadow-[0_25px_60px_rgba(0,0,0,0.18)] backdrop-blur-md sm:p-6">
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#95ea63]">Marketplace summary</div>
-            <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-white/70 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
-              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
-                <div className="text-xs text-white/45">Active gigs</div>
-                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">{gigs.filter(isGigActive).length}</div>
+          <div className="rounded-3xl border border-[#d4dccf] bg-white/95 p-5 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-6">
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#2f6655]">Marketplace summary</div>
+            <div className="mt-4 grid grid-flow-col auto-cols-[72%] gap-3 overflow-x-auto pb-1 text-sm text-slate-600 sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-2 sm:overflow-visible">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Active gigs</div>
+                <div className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">{gigs.filter(isGigActive).length}</div>
               </div>
-              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
-                <div className="text-xs text-white/45">Verified employers</div>
-                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">18</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Verified employers</div>
+                <div className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">18</div>
               </div>
-              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
-                <div className="text-xs text-white/45">Median payout</div>
-                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">₹52k</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Median payout</div>
+                <div className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">₹52k</div>
               </div>
-              <div className="rounded-[1.5rem] border border-white/8 bg-white/[0.04] p-4">
-                <div className="text-xs text-white/45">Avg. response</div>
-                <div className="mt-2 text-xl font-semibold text-white sm:text-2xl">36h</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Avg. response</div>
+                <div className="mt-2 text-xl font-semibold text-slate-900 sm:text-2xl">36h</div>
               </div>
             </div>
           </div>
         </section>
 
         <section className="mt-7 grid gap-6 lg:mt-10 lg:grid-cols-[320px_1fr]">
-          <aside className="sticky top-20 hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(7,31,26,0.92))] p-6 shadow-[0_24px_55px_rgba(0,0,0,0.16)] backdrop-blur-md lg:block">
-            <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[#95ea63]">Filters</div>
-            <div className="mt-4 space-y-4 text-sm text-white/72">
+          <aside className="sticky top-24 hidden rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] p-6 shadow-[0_16px_36px_rgba(22,58,46,0.08)] lg:block">
+            <div className="text-sm font-semibold uppercase tracking-[0.18em] text-[#2f6655]">Filters</div>
+            <div className="mt-4 space-y-4 text-sm text-slate-700">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Keyword</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Keyword</div>
                 <input
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35 focus:border-[#8fe05f]/45 focus:ring-2 focus:ring-[#8fe05f]/10"
+                  className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-[#0078d4]/20"
                   placeholder="Search title, brand, platform"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                 />
               </div>
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Platform</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-white/78">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Platform</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
                   {PLATFORM_OPTIONS.map((p) => (
-                    <label key={p} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/6 px-3 py-2.5">
+                    <label key={p} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 accent-[#8fe05f]"
+                        className="h-4 w-4 accent-[#0078d4]"
                         checked={platforms.includes(p)}
                         onChange={(e) => {
                           setPlatforms((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)));
@@ -689,14 +690,14 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Payout model</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Payout model</div>
                 <div className="mt-2 space-y-2">
                   {(["All", "Per task", "Per post", "Monthly"] as const).map((p) => (
-                    <label key={p} className="flex items-center gap-2 text-sm">
+                    <label key={p} className="flex items-center gap-2 text-sm text-slate-700">
                       <input
                         type="radio"
                         name="payout"
-                        className="h-4 w-4 accent-[#8fe05f]"
+                        className="h-4 w-4 accent-[#0078d4]"
                         checked={payoutType === p}
                         onChange={() => setPayoutType(p)}
                       />
@@ -706,13 +707,13 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Status</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status</div>
                 <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
                   {["All", ...STATUS_OPTIONS].map((s) => (
                     <button
                       key={s}
                       className={`rounded-full border px-3 py-1 text-xs ${
-                        statusFilter === s ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                        statusFilter === s ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"
                       }`}
                       onClick={() => setStatusFilter(s as GigStatus | "All")}
                     >
@@ -722,13 +723,13 @@ export default function BrowsePage() {
                 </div>
               </div>
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Gig type</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                   {(["All", "Email Creator", "Workspace", "Custom"] as const).map((t) => (
                     <button
                       key={t}
                       className={`rounded-full border px-3 py-1 text-xs ${
-                        gigTypeFilter === t ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                        gigTypeFilter === t ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"
                       }`}
                       onClick={() => setGigTypeFilter(t)}
                     >
@@ -738,7 +739,7 @@ export default function BrowsePage() {
                 </div>
               </div>
               <button
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-3 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 onClick={resetFilters}
               >
                 Reset filters
@@ -748,17 +749,17 @@ export default function BrowsePage() {
 
           <section className="space-y-4">
             <div className="lg:hidden">
-              <div className="flex items-center gap-3 rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-3 backdrop-blur-sm">
+              <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                 <button
                   type="button"
                   onClick={() => setMobileFiltersOpen(true)}
-                  className="inline-flex min-h-11 items-center justify-center rounded-[1rem] bg-[#8fe05f] px-4 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d] sm:min-h-12 sm:rounded-[1.2rem] sm:px-5 sm:text-sm"
+                  className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[#1f4f43] px-4 text-xs font-semibold text-white transition hover:bg-[#2d6b5a] sm:min-h-12 sm:px-5 sm:text-sm"
                 >
                   Open filters
                 </button>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-white/42">Marketplace view</div>
-                  <div className="truncate text-sm text-white/78">
+                  <div className="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-slate-500">Marketplace view</div>
+                  <div className="truncate text-sm text-slate-600">
                     {visibleGigs.length} gigs matching your current filters
                   </div>
                 </div>
@@ -766,17 +767,17 @@ export default function BrowsePage() {
             </div>
 
             {loading && (
-              <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-4 py-6 text-sm text-white/60 backdrop-blur-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600 shadow-sm">
                 Loading marketplace...
               </div>
             )}
 
             {!loading && visibleGigs.length === 0 && (
-              <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-6 text-sm text-white/62 shadow-sm backdrop-blur-sm">
-                <div className="text-base font-semibold text-white">No gigs match your filters</div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm">
+                <div className="text-base font-semibold text-slate-900">No gigs match your filters</div>
                 <p className="mt-1">Try clearing filters or broadening your search terms.</p>
                 <button
-                  className="mt-3 rounded-full border border-white/10 bg-white/6 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
+                  className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
                   onClick={resetFilters}
                 >
                   Reset all filters
@@ -821,24 +822,24 @@ export default function BrowsePage() {
                     assignment?.status === "Assigned");
                 const statusTone =
                   derivedStatus === "Accepted"
-                    ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
+                    ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                   : derivedStatus === "Rejected"
-                    ? "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
+                    ? "border-rose-200 bg-rose-50 text-rose-700"
                   : derivedStatus === "Applied" || derivedStatus === "Pending" || derivedStatus === "Assigned"
-                    ? "border-white/12 bg-white/8 text-white/82"
-                    : "border-white/10 bg-white/6 text-white/58";
+                    ? "border-slate-200 bg-slate-50 text-slate-700"
+                    : "border-slate-200 bg-white text-slate-500";
                 const gigStatusTone =
                   gig.status === "Open"
                     ? isFreelanceCustom
                       ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-                      : "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
+                      : "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                     : gig.status === "Paused"
                       ? isFreelanceCustom
                         ? "border-[#d4dfd7] bg-white text-[#5b7469]"
-                        : "border-white/12 bg-white/8 text-white/72"
+                        : "border-slate-200 bg-slate-50 text-slate-600"
                       : isFreelanceCustom
                         ? "border-[#d4dfd7] bg-white text-[#7b9087]"
-                        : "border-white/10 bg-white/6 text-white/50";
+                        : "border-slate-200 bg-white text-slate-500";
                 const applyLabel = needsSignIn
                   ? "Sign in to apply"
                   : assignment
@@ -850,48 +851,48 @@ export default function BrowsePage() {
                   : "Send proposal";
                 const applyBtnClass =
                   !canApply || !!app || !!assignment
-                    ? "bg-white/14 text-white/55"
-                    : "bg-[#8fe05f] text-[#10251b] shadow-sm transition hover:bg-[#9aed6d]";
+                    ? "bg-slate-200 text-slate-500"
+                    : "bg-[#1f4f43] text-white shadow-sm transition hover:bg-[#2d6b5a]";
                 if (accessLocked) {
                   return (
                     <div
                       key={gig.id}
-                      className={`relative overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(17,61,51,0.96),rgba(8,33,28,0.96))] p-4 shadow-[0_22px_45px_rgba(0,0,0,0.16)] sm:p-6 ${isFeaturedCard ? "xl:col-span-2" : ""}`}
+                      className={`relative overflow-hidden rounded-3xl border border-[#d4dccf] bg-white p-4 shadow-[0_16px_36px_rgba(22,58,46,0.08)] sm:p-6 ${isFeaturedCard ? "xl:col-span-2" : ""}`}
                     >
-                      <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#5a45e3]/15 blur-2xl" />
-                      <div className="pointer-events-none absolute -bottom-10 -left-8 h-28 w-28 rounded-full bg-[#8fe05f]/10 blur-2xl" />
+                      <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-[#dce9de] blur-2xl" />
+                      <div className="pointer-events-none absolute -bottom-10 -left-8 h-28 w-28 rounded-full bg-[#edf5ef] blur-2xl" />
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/72">
+                        <span className="rounded-full border border-[#d3dbce] bg-[#f2f6ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#4f6359]">
                           Protected Listing
                         </span>
-                        <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#b7f18e]">
+                        <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
                           {guestLocked ? "Sign in required" : "Mini KYC Pending"}
                         </span>
                       </div>
 
-                      <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/[0.05] p-3">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/42">Hidden gig preview</div>
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Hidden gig preview</div>
                         <div className="mt-3 space-y-2">
-                          <div className="h-4 w-[72%] rounded-full bg-white/14" />
-                          <div className="h-3 w-[52%] rounded-full bg-white/12" />
-                          <div className="h-3 w-[86%] rounded-full bg-white/10" />
+                          <div className="h-4 w-[72%] rounded-full bg-slate-200" />
+                          <div className="h-3 w-[52%] rounded-full bg-slate-200" />
+                          <div className="h-3 w-[86%] rounded-full bg-slate-200" />
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-400">
                             Role hidden
                           </span>
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-400">
                             Payout hidden
                           </span>
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-[10px] font-semibold text-white/45">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-400">
                             Requirements hidden
                           </span>
                         </div>
                       </div>
 
                       <div className="mt-4 flex items-start gap-3">
-                        <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/6">
-                          <svg className="h-5 w-5 text-[#95ea63]" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <div className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-[#bcd6c9] bg-[#edf5ef]">
+                          <svg className="h-5 w-5 text-[#2f6655]" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path
                               fillRule="evenodd"
                               d="M10 2a4 4 0 0 0-4 4v2H5a2 2 0 0 0-2 2v5a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3v-5a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4Zm2 6V6a2 2 0 1 0-4 0v2h4Z"
@@ -900,12 +901,12 @@ export default function BrowsePage() {
                           </svg>
                         </div>
                         <div>
-                          <div className="text-xl font-semibold leading-tight text-white">
+                          <div className="text-xl font-semibold leading-tight text-slate-900">
                             {guestLocked
                               ? "Sign in to reveal this gig"
                               : "Complete mini KYC to reveal this gig"}
                           </div>
-                          <div className="mt-1 text-sm text-white/62">
+                          <div className="mt-1 text-sm text-slate-600">
                             {guestLocked
                               ? "This listing is protected. Sign in to view full role details, payout terms, and application actions."
                               : "This listing is policy-protected. After KYC approval, full role details and actions unlock automatically."}
@@ -917,11 +918,11 @@ export default function BrowsePage() {
                         <button
                           type="button"
                           onClick={() => window.location.assign(kycActionHref)}
-                          className="inline-flex rounded-full bg-[#8fe05f] px-4 py-2 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
+                          className="inline-flex rounded-full bg-[#1f4f43] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#2d6b5a]"
                         >
                           {guestLocked ? "Sign in to continue" : kycActionLabel}
                         </button>
-                        <span className="rounded-full border border-white/10 bg-white/6 px-3 py-2 text-[11px] text-white/58">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
                           {guestLocked ? "Takes less than a minute" : "Estimated review: 5-15 mins"}
                         </span>
                       </div>
@@ -931,24 +932,24 @@ export default function BrowsePage() {
                 return (
                   <div
                     key={gig.id}
-                    className="relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.94),rgba(8,33,28,0.94))] p-3 shadow-[0_20px_45px_rgba(0,0,0,0.16)] transition hover:-translate-y-0.5 hover:border-white/16 hover:bg-[linear-gradient(180deg,rgba(22,76,62,0.96),rgba(8,33,28,0.96))] animate-[slideDown_220ms_ease-out] sm:rounded-[1.75rem] sm:p-4 lg:grid lg:grid-cols-[1.38fr_0.62fr] lg:gap-6 lg:p-5 xl:grid-cols-[1.48fr_0.52fr]"
+                    className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-[#bcd6c9] hover:bg-[#f8faf7] animate-[slideDown_220ms_ease-out] sm:p-4 lg:grid lg:grid-cols-[1.38fr_0.62fr] lg:gap-6 lg:p-5 xl:grid-cols-[1.48fr_0.52fr]"
                     style={{ animationDelay: `${Math.min(index, 8) * 55}ms`, animationFillMode: "both" }}
                   >
-                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#5a45e3]/14 blur-2xl" />
+                    <div className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full bg-[#edf5ef] blur-2xl" />
                     <div>
                     <div className="flex flex-col gap-2.5 sm:gap-3 md:flex-row md:items-start md:justify-between">
                     <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-white/42 sm:text-sm">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500 sm:text-sm">
                           <span>{gig.postedAt}</span>
-                          <span className="h-1 w-1 rounded-full bg-white/25" />
+                          <span className="h-1 w-1 rounded-full bg-slate-300" />
                           <span>{gig.id}</span>
                           {gig.status === "Open" && (
-                            <span className="rounded-full bg-[#8fe05f]/10 px-3 py-1 text-[11px] font-semibold text-[#b7f18e]">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-[11px] font-semibold text-[#2f6655]">
                               Hiring now
                             </span>
                           )}
                           {isFeaturedCard && (
-                            <span className="rounded-full bg-white/8 px-3 py-1 text-[11px] font-semibold text-white/80">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
                               Featured match
                             </span>
                           )}
@@ -956,32 +957,32 @@ export default function BrowsePage() {
                             {derivedStatus ? derivedStatus : "Not applied"}
                           </span>
                         </div>
-                        <div className="mt-1.5 text-balance text-[1.25rem] font-semibold leading-tight text-white sm:text-[1.5rem] lg:text-[1.9rem]">{gig.title}</div>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-white/62 sm:mt-2.5 sm:gap-2">
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs font-semibold text-white sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
+                        <div className="mt-1.5 text-balance text-[1.25rem] font-semibold leading-tight text-slate-900 sm:text-[1.5rem] lg:text-[1.9rem]">{gig.title}</div>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-slate-600 sm:mt-2.5 sm:gap-2">
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-900 sm:px-3 sm:py-1.5 sm:text-sm">{gig.company}</span>
                           {gig.verified && (
-                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Verified
                             </span>
                           )}
-                          <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
                           {gig.gigType && (
-                            <span className="rounded-full border border-white/10 bg-white/6 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
                               {gig.gigType}
                             </span>
                           )}
                           {kycLocked && (
-                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Mini KYC required
                             </span>
                           )}
                           {isFullTime && (
-                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Workspace ready
                             </span>
                           )}
                           {isFreelanceCustom && (
-                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-2.5 py-1 text-xs font-semibold text-[#b7f18e] sm:px-3 sm:text-sm">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Freelance marketplace
                             </span>
                           )}
@@ -994,7 +995,7 @@ export default function BrowsePage() {
                         </span>
                         <div className="grid w-full grid-cols-2 gap-1.5 sm:gap-2 md:grid-cols-1">
                           <button
-                            className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/10 sm:px-4 sm:py-2"
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 sm:px-4 sm:py-2"
                             onClick={() => setSelectedGig(gig)}
                           >
                             View details
@@ -1008,7 +1009,7 @@ export default function BrowsePage() {
                           </button>
                           {canProceed && (
                             <Link
-                              className="col-span-2 rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-3 py-1.5 text-center text-xs font-semibold text-[#b7f18e] sm:px-4 sm:py-2 md:col-span-1"
+                              className="col-span-2 rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-center text-xs font-semibold text-[#2f6655] sm:px-4 sm:py-2 md:col-span-1"
                               href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               {isFullTime ? "Go to workspace" : isFreelanceCustom ? "Open proposal flow" : "Proceed"}
@@ -1016,7 +1017,7 @@ export default function BrowsePage() {
                           )}
                           {!canProceed && !!app && (
                             <Link
-                              className="col-span-2 rounded-full border border-white/14 bg-white/8 px-3 py-1.5 text-center text-xs font-semibold text-white/88 sm:px-4 sm:py-2 md:col-span-1"
+                              className="col-span-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-center text-xs font-semibold text-slate-700 sm:px-4 sm:py-2 md:col-span-1"
                               href={`/proceed?gigId=${encodeURIComponent(gig.id)}`}
                             >
                               View status
@@ -1027,7 +1028,7 @@ export default function BrowsePage() {
                     </div>
 
                     {assignment?.status === "Submitted" && (
-                      <div className="mt-4 rounded-2xl border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-4 py-3 text-xs font-semibold text-[#b7f18e]">
+                      <div className="mt-4 rounded-2xl border border-[#bcd6c9] bg-[#edf5ef] px-4 py-3 text-xs font-semibold text-[#2f6655]">
                         In verification: Admin is reviewing your submitted credentials.
                       </div>
                     )}
@@ -1035,10 +1036,10 @@ export default function BrowsePage() {
                       <div
                         className={`mt-3 rounded-2xl border px-4 py-3 text-xs ${
                           proposalReviewStatus === "Accepted"
-                            ? "border-[#8fe05f]/35 bg-[#8fe05f]/10 text-[#b7f18e]"
+                            ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
                             : proposalReviewStatus === "Rejected"
-                              ? "border-[#ff8d8d]/30 bg-[#ff8d8d]/10 text-[#ffb0b0]"
-                              : "border-white/12 bg-white/8 text-white/80"
+                              ? "border-rose-200 bg-rose-50 text-rose-700"
+                              : "border-slate-200 bg-slate-50 text-slate-700"
                         }`}
                       >
                         <div className="font-semibold">
@@ -1048,8 +1049,8 @@ export default function BrowsePage() {
                               ? "Proposal needs revision"
                               : "Proposal under review"}
                         </div>
-                        {app.proposal?.adminNote && <div className="mt-1 text-white/85">Note: {app.proposal.adminNote}</div>}
-                        {app.proposal?.adminExplanation && <div className="mt-1 text-white/75">{app.proposal.adminExplanation}</div>}
+                        {app.proposal?.adminNote && <div className="mt-1 text-slate-700">Note: {app.proposal.adminNote}</div>}
+                        {app.proposal?.adminExplanation && <div className="mt-1 text-slate-600">{app.proposal.adminExplanation}</div>}
                         {app.proposal?.whatsappLink && (
                           <a
                             href={app.proposal.whatsappLink}
@@ -1064,24 +1065,24 @@ export default function BrowsePage() {
                     )}
 
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:gap-2.5 md:grid-cols-3">
-                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
-                        <div className="text-xs text-white/42 sm:text-sm">Workload</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.workload}</div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-slate-500 sm:text-sm">Workload</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.workload}</div>
                       </div>
-                      <div className="rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5">
-                        <div className="text-xs text-white/42 sm:text-sm">Budget</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{gig.payout}</div>
-                        <div className="text-xs text-white/42 sm:text-sm">{gig.payoutType}</div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5">
+                        <div className="text-xs text-slate-500 sm:text-sm">Budget</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{gig.payout}</div>
+                        <div className="text-xs text-slate-500 sm:text-sm">{gig.payoutType}</div>
                       </div>
-                      <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.05] p-3 text-sm text-white/62 sm:rounded-2xl sm:p-3.5 md:col-span-1">
-                        <div className="text-xs text-white/42 sm:text-sm">Application status</div>
-                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-white sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
-                        <div className="text-xs text-white/42 sm:text-sm">Updated hourly</div>
+                      <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 sm:rounded-2xl sm:p-3.5 md:col-span-1">
+                        <div className="text-xs text-slate-500 sm:text-sm">Application status</div>
+                        <div className="mt-1.5 text-[1.1rem] font-semibold leading-tight text-slate-900 sm:text-[1.2rem]">{derivedStatus ?? "Not applied"}</div>
+                        <div className="text-xs text-slate-500 sm:text-sm">Updated hourly</div>
                       </div>
                     </div>
 
                     <div className="mt-3 sm:mt-4">
-                      <div className="text-xs font-semibold text-white/42 sm:text-sm">Key requirements</div>
+                      <div className="text-xs font-semibold text-slate-500 sm:text-sm">Key requirements</div>
                       <div className="mt-2 flex flex-wrap gap-1.5 sm:gap-2">
                         {gig.requirements
                           .filter((req) => {
@@ -1089,8 +1090,8 @@ export default function BrowsePage() {
                             return !lower.startsWith("brief::") && !lower.startsWith("meta::") && !lower.startsWith("media::");
                           })
                           .map((req) => (
-                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/70 sm:px-3 sm:py-1.5 sm:text-sm">
-                            <span className="h-1.5 w-1.5 rounded-full bg-[#8fe05f]" />
+                          <span key={req} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-700 sm:px-3 sm:py-1.5 sm:text-sm">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#1f4f43]" />
                             <span>{req}</span>
                           </span>
                         ))}
@@ -1098,18 +1099,18 @@ export default function BrowsePage() {
                     </div>
                     </div>
                       <div className="mt-4 hidden w-full gap-3 lg:mt-0 lg:grid lg:max-w-[360px] lg:justify-self-end lg:content-start">
-                        <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-4">
-                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[#95ea63]">Why this gig</div>
-                          <div className="mt-3 text-sm leading-6 text-white/72">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[#2f6655]">Why this gig</div>
+                          <div className="mt-3 text-sm leading-6 text-slate-600">
                             Clear scope, visible payout model, and Reelencer workflow protections make this a stronger-fit opportunity for fast-moving freelance creators.
                           </div>
                         </div>
-                        <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-4">
-                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-white/42">Match signals</div>
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-slate-500">Match signals</div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <span className="rounded-full border border-[#8fe05f]/35 bg-[#8fe05f]/10 px-3 py-1 text-xs font-semibold text-[#b7f18e]">Transparent payout</span>
-                            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white/72">Verified client</span>
-                            <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white/72">Structured brief</span>
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">Transparent payout</span>
+                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">Verified client</span>
+                            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">Structured brief</span>
                           </div>
                         </div>
                       </div>
@@ -1122,40 +1123,40 @@ export default function BrowsePage() {
       </main>
 
       {mobileFiltersOpen && (
-        <div className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] lg:hidden">
+        <div className="fixed inset-0 z-50 bg-slate-900/30 backdrop-blur-[2px] lg:hidden">
           <div className="absolute inset-0" onClick={() => setMobileFiltersOpen(false)} />
-          <div className="absolute inset-x-0 bottom-0 rounded-t-[2rem] border-t border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.98),rgba(8,33,28,0.98))] p-5 shadow-[0_-20px_50px_rgba(0,0,0,0.25)] animate-[revealRise_260ms_ease-out]">
+          <div className="absolute inset-x-0 bottom-0 rounded-t-[2rem] border-t border-[#d4dccf] bg-[#f8faf7] p-5 shadow-[0_-20px_50px_rgba(15,23,42,0.16)] animate-[revealRise_260ms_ease-out]">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[#95ea63]">Filters</div>
-                <div className="mt-1 text-lg font-semibold text-white">Refine gigs faster</div>
+                <div className="text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-[#2f6655]">Filters</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">Refine gigs faster</div>
               </div>
               <button
                 type="button"
                 onClick={() => setMobileFiltersOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/6 text-white"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700"
               >
                 ✕
               </button>
             </div>
-            <div className="mt-5 space-y-4 text-sm text-white/72">
+            <div className="mt-5 space-y-4 text-sm text-slate-700">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Keyword</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Keyword</div>
                 <input
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm text-white outline-none placeholder:text-white/35"
+                  className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
                   placeholder="Search title, brand, platform"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                 />
               </div>
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Platform</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-white/78">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Platform</div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-700">
                   {PLATFORM_OPTIONS.map((p) => (
-                    <label key={p} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/6 px-3 py-2.5">
+                    <label key={p} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                       <input
                         type="checkbox"
-                        className="h-4 w-4 accent-[#8fe05f]"
+                        className="h-4 w-4 accent-[#0078d4]"
                         checked={platforms.includes(p)}
                         onChange={(e) => {
                           setPlatforms((prev) => (e.target.checked ? [...prev, p] : prev.filter((x) => x !== p)));
@@ -1168,13 +1169,13 @@ export default function BrowsePage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Status</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Status</div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
                     {["All", ...STATUS_OPTIONS].map((s) => (
                       <button
                         key={s}
                         className={`rounded-full border px-3 py-1.5 ${
-                          statusFilter === s ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                          statusFilter === s ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"
                         }`}
                         onClick={() => setStatusFilter(s as GigStatus | "All")}
                       >
@@ -1184,13 +1185,13 @@ export default function BrowsePage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/42">Gig type</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
                     {(["All", "Email Creator", "Workspace", "Custom"] as const).map((t) => (
                       <button
                         key={t}
                         className={`rounded-full border px-3 py-1.5 ${
-                          gigTypeFilter === t ? "border-[#8fe05f]/40 bg-[#8fe05f]/10 text-[#b7f18e]" : "border-white/10 bg-white/6 text-white/62"
+                          gigTypeFilter === t ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"
                         }`}
                         onClick={() => setGigTypeFilter(t)}
                       >
@@ -1204,14 +1205,14 @@ export default function BrowsePage() {
                 <button
                   type="button"
                   onClick={resetFilters}
-                  className="rounded-2xl border border-white/10 bg-white/6 px-4 py-3 text-sm font-semibold text-white"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
                 >
                   Reset
                 </button>
                 <button
                   type="button"
                   onClick={() => setMobileFiltersOpen(false)}
-                  className="rounded-2xl bg-[#8fe05f] px-4 py-3 text-sm font-semibold text-[#10251b]"
+                  className="rounded-2xl bg-[#1f4f43] px-4 py-3 text-sm font-semibold text-white"
                 >
                   Apply filters
                 </button>
@@ -1222,41 +1223,41 @@ export default function BrowsePage() {
       )}
 
       {selectedGig && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 backdrop-blur-[2px] md:items-center" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/30 backdrop-blur-[2px] md:items-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0" onClick={() => setSelectedGig(null)} />
-          <div className="relative z-10 w-full max-w-2xl rounded-t-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(20,68,56,0.98),rgba(8,33,28,0.98))] p-5 text-white shadow-xl md:rounded-[2rem] md:p-6">
+          <div className="relative z-10 w-full max-w-2xl rounded-t-[2rem] border border-slate-200 bg-white p-5 text-slate-900 shadow-xl md:rounded-[2rem] md:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-xs text-white/45">{selectedGig.id}</div>
-                <div className="mt-1 text-xl font-semibold text-white">{selectedGig.title}</div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/62">
-                  <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5">{selectedGig.company}</span>
-                  <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5">{selectedGig.platform}</span>
+                <div className="text-xs text-slate-500">{selectedGig.id}</div>
+                <div className="mt-1 text-xl font-semibold text-slate-900">{selectedGig.title}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.company}</span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.platform}</span>
                 </div>
               </div>
               <button
-                className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-white"
+                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 grid gap-3 text-sm text-white/62 md:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
-                <div className="text-xs text-white/42">Workload</div>
-                <div className="mt-1 text-base font-semibold text-white">{selectedGig.workload}</div>
+            <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Workload</div>
+                <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.workload}</div>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
-                <div className="text-xs text-white/42">Payout</div>
-                <div className="mt-1 text-base font-semibold text-white">{selectedGig.payout}</div>
-                <div className="text-xs text-white/42">{selectedGig.payoutType}</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs text-slate-500">Payout</div>
+                <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.payout}</div>
+                <div className="text-xs text-slate-500">{selectedGig.payoutType}</div>
               </div>
             </div>
             <div className="mt-4">
-              <div className="text-xs font-semibold text-white/42">Requirements</div>
+              <div className="text-xs font-semibold text-slate-500">Requirements</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {selectedGig.requirements.map((req) => (
-                  <span key={req} className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs text-white/70">
+                  <span key={req} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
                     {req}
                   </span>
                 ))}
@@ -1264,13 +1265,13 @@ export default function BrowsePage() {
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button
-                className="rounded-full border border-white/10 bg-white/6 px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
               <button
-                className="rounded-full bg-[#8fe05f] px-4 py-2 text-xs font-semibold text-[#10251b] transition hover:bg-[#9aed6d]"
+                className="rounded-full bg-[#1f4f43] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#2d6b5a]"
                 onClick={() => {
                   applyForGig(selectedGig);
                   setSelectedGig(null);
