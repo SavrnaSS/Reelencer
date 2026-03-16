@@ -292,7 +292,7 @@ export default function BrowsePage() {
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
   const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Email Creator" | "Workspace" | "Custom">("All");
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
-  const hasApprovedKyc = role === "Worker" && (!!workerId || kycStatus === "approved");
+  const hasApprovedKyc = role === "Worker" && kycStatus === "approved";
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
   const mobileDisplayName = displayName.trim().split(/\s+/)[0] || "User";
   const computeMenuAnchor = React.useCallback(() => {
@@ -333,16 +333,18 @@ export default function BrowsePage() {
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token;
-      if (token) {
-        const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}`, ...DEV_ADMIN_HEADERS } });
-        const payload = res.ok ? await res.json() : null;
-        setKycStatus(payload?.status ?? "none");
-        if (payload?.status === "approved" && payload?.workerId && role === "Worker") {
-          setWorkerId(String(payload.workerId));
-        }
+      if (!token) {
+        setKycStatus("none");
+        return;
+      }
+      const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}`, ...DEV_ADMIN_HEADERS } });
+      const payload = res.ok ? await res.json() : null;
+      setKycStatus(payload?.status ?? "none");
+      if (payload?.status === "approved" && payload?.workerId && role === "Worker") {
+        setWorkerId(String(payload.workerId));
       }
     } catch {
-      // ignore
+      setKycStatus("none");
     }
   }, [role]);
 
