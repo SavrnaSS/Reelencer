@@ -72,7 +72,8 @@ function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
 function formatGigTypeLabel(raw?: string) {
   const value = String(raw ?? "").trim();
   if (!value) return "";
-  if (/^custom:\s*/i.test(value)) return `Category: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
+  if (/^custom:\s*/i.test(value)) return `Ct: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
+  if (/^category:\s*/i.test(value)) return `Ct: ${value.replace(/^category:\s*/i, "").trim() || "Freelance"}`;
   return value;
 }
 
@@ -1077,11 +1078,6 @@ export default function BrowsePage() {
                           {isFullTime && (
                             <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Workspace ready
-                            </span>
-                          )}
-                          {isFreelanceCustom && (
-                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
-                              Freelance marketplace
                             </span>
                           )}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold sm:px-3 sm:text-sm ${gigStatusTone}`}>{gig.status}</span>
