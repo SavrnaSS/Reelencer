@@ -125,8 +125,8 @@ function normalizeGigType(raw?: string) {
 function formatGigTypeLabel(raw?: string) {
   const value = String(raw ?? "").trim();
   if (!value) return "Email Creator";
-  if (/^custom:\s*/i.test(value)) return `Ct: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
-  if (/^category:\s*/i.test(value)) return `Ct: ${value.replace(/^category:\s*/i, "").trim() || "Freelance"}`;
+  if (/^custom:\s*/i.test(value)) return `Cat: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
+  if (/^category:\s*/i.test(value)) return `Cat: ${value.replace(/^category:\s*/i, "").trim() || "Freelance"}`;
   return value;
 }
 
