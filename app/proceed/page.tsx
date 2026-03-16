@@ -513,6 +513,10 @@ function ProceedPageInner() {
     const raw = String(projectMeta.onboarding_required ?? "true").trim().toLowerCase();
     return !["false", "0", "no", "off"].includes(raw);
   }, [projectMeta.onboarding_required]);
+  const kycRequiredForGig = useMemo(() => {
+    const raw = String(projectMeta.kyc_required ?? "true").trim().toLowerCase();
+    return !["false", "0", "no", "off"].includes(raw);
+  }, [projectMeta.kyc_required]);
 
   // Auto-sync poller
   useEffect(() => {
@@ -1332,7 +1336,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && proposalReviewStatus === "Accepted" && (
+        {!isCustomFlow && hasApplication && proposalReviewStatus === "Accepted" && kycRequiredForGig && (
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
