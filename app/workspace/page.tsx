@@ -1735,10 +1735,10 @@ export default function MarketplaceWorkerPage() {
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
                       Date of birth
-                      <div className="mt-2 rounded-xl border border-slate-300 bg-white p-2.5">
-                        <div className="grid grid-cols-3 gap-2">
+                      <div className="mt-2 rounded-xl border border-slate-300 bg-white p-3 sm:p-2.5">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                           <select
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-900"
+                            className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900"
                             value={dobParts.day}
                             onChange={(e) => updateDobPart("day", e.target.value)}
                           >
@@ -1750,7 +1750,7 @@ export default function MarketplaceWorkerPage() {
                             ))}
                           </select>
                           <select
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-900"
+                            className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900"
                             value={dobParts.month}
                             onChange={(e) => updateDobPart("month", e.target.value)}
                           >
@@ -1762,7 +1762,7 @@ export default function MarketplaceWorkerPage() {
                             ))}
                           </select>
                           <select
-                            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-900"
+                            className="col-span-2 min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900 sm:col-span-1"
                             value={dobParts.year}
                             onChange={(e) => updateDobPart("year", e.target.value)}
                           >
@@ -1774,7 +1774,7 @@ export default function MarketplaceWorkerPage() {
                             ))}
                           </select>
                         </div>
-                        <div className="mt-2 text-[11px] text-slate-500">Accepted format: DD/MM/YYYY • Minimum age: 18</div>
+                        <div className="mt-2 text-[11px] leading-4 text-slate-500 sm:leading-5">Accepted format: DD/MM/YYYY • Minimum age: 18</div>
                       </div>
                     </label>
                     <label className="text-xs font-semibold text-slate-600">
