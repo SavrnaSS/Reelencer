@@ -140,11 +140,13 @@ function buildRequirementsPayload(input: {
   expertise: string;
   languages: string;
   onboardingRequired: boolean;
+  kycRequired: boolean;
 }) {
   if (input.gigType === "Custom") {
     const out: string[] = [];
     if (input.customBrief.trim()) out.push(`Brief::${input.customBrief.trim()}`);
     out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
+    out.push(`Meta::kyc_required=${input.kycRequired ? "true" : "false"}`);
     parseCustomRequirementsText(input.customMedia).forEach((line) => out.push(`Media::${line}`));
     out.push(...parseCustomRequirementsText(input.customRequirements));
     return out;
@@ -152,6 +154,7 @@ function buildRequirementsPayload(input: {
   const out: string[] = [];
   if (input.projectBrief.trim()) out.push(`Brief::${input.projectBrief.trim()}`);
   out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
+  out.push(`Meta::kyc_required=${input.kycRequired ? "true" : "false"}`);
   if (input.hiringCapacity.trim()) out.push(`Meta::hiring_capacity=${input.hiringCapacity.trim()}`);
   if (input.expertise.trim()) out.push(`Meta::expertise=${input.expertise.trim()}`);
   if (input.languages.trim()) out.push(`Meta::languages=${input.languages.trim()}`);
@@ -167,6 +170,18 @@ function buildRequirementsPayload(input: {
 function readCustomFieldsFromRequirements(requirements: string[]) {
   const briefLine = requirements.find((item) => item.toLowerCase().startsWith("brief::"));
   const customBrief = briefLine ? briefLine.replace(/^brief::/i, "").trim() : "";
+  const meta = requirements
+    .filter((item) => item.toLowerCase().startsWith("meta::"))
+    .reduce<Record<string, string>>((acc, item) => {
+      const clean = item.replace(/^meta::/i, "");
+      const sep = clean.indexOf("=");
+      if (sep > 0) {
+        const key = clean.slice(0, sep).trim().toLowerCase();
+        const value = clean.slice(sep + 1).trim();
+        if (key && value) acc[key] = value;
+      }
+      return acc;
+    }, {});
   const customMedia = requirements
     .filter((item) => item.toLowerCase().startsWith("media::"))
     .map((item) => item.replace(/^media::/i, "").trim())
@@ -180,7 +195,12 @@ function readCustomFieldsFromRequirements(requirements: string[]) {
         !item.toLowerCase().startsWith("meta::")
     )
     .join("\n");
-  return { customBrief, customRequirements, customMedia };
+  return {
+    customBrief,
+    customRequirements,
+    customMedia,
+    kycRequired: !["false", "0", "no", "off"].includes((meta.kyc_required ?? "true").toLowerCase()),
+  };
 }
 
 function readProjectFieldsFromRequirements(requirements: string[]) {
@@ -212,6 +232,7 @@ function readProjectFieldsFromRequirements(requirements: string[]) {
     expertise: meta.expertise ?? "",
     languages: meta.languages ?? "",
     onboardingRequired: !["false", "0", "no", "off"].includes((meta.onboarding_required ?? "true").toLowerCase()),
+    kycRequired: !["false", "0", "no", "off"].includes((meta.kyc_required ?? "true").toLowerCase()),
     requirementsText,
   };
 }
@@ -306,6 +327,7 @@ export default function GigAdminConsole({
     expertise: "",
     languages: "",
     onboardingRequired: true,
+    kycRequired: true,
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -623,6 +645,7 @@ export default function GigAdminConsole({
       expertise: "",
       languages: "",
       onboardingRequired: true,
+      kycRequired: true,
       requirements: "",
       status: "Open",
     });
@@ -653,6 +676,7 @@ export default function GigAdminConsole({
       expertise: projectFields.expertise,
       languages: projectFields.languages,
       onboardingRequired: projectFields.onboardingRequired,
+      kycRequired: isCustom ? customFields.kycRequired : projectFields.kycRequired,
       requirements: isCustom ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
@@ -725,6 +749,7 @@ export default function GigAdminConsole({
       expertise: "",
       languages: "",
       onboardingRequired: true,
+      kycRequired: true,
       requirements: "",
       status: "Open",
     });
@@ -1260,6 +1285,20 @@ export default function GigAdminConsole({
                   When enabled, workers must complete the onboarding steps before workspace handoff.
                 </div>
               </label>
+              <label className="text-xs font-semibold text-slate-600 md:col-span-2">
+                <span className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.kycRequired}
+                    onChange={(e) => setForm((prev) => ({ ...prev, kycRequired: e.target.checked }))}
+                    className="h-4 w-4 rounded border-slate-300 text-[#1f4f43] focus:ring-[#1f4f43]"
+                  />
+                  Require KYC approval before workers can unlock this gig
+                </span>
+                <div className="mt-1 text-[11px] font-normal text-slate-500">
+                  Disable this for less restricted gigs that should be visible to signed-in workers without KYC.
+                </div>
+              </label>
               <label className="text-xs font-semibold text-slate-600">
                 Status
                 <select
@@ -1318,6 +1357,7 @@ export default function GigAdminConsole({
                         expertise: "",
                         languages: "",
                         onboardingRequired: true,
+                        kycRequired: true,
                         requirements: "",
                         status: "Open",
                       });
@@ -1418,6 +1458,9 @@ export default function GigAdminConsole({
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.workload}</span>
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.payout}</span>
                     {gig.gigType && <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.gigType}</span>}
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
+                      {readProjectFieldsFromRequirements(gig.requirements).kycRequired ? "KYC required" : "KYC optional"}
+                    </span>
                   </div>
                 </div>
               ))}

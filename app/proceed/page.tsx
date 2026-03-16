@@ -152,6 +152,78 @@ function cleanInboxBody(body: string) {
   return pick.length > 400 ? pick.slice(0, 400) : pick;
 }
 
+function parseBriefBlocks(raw: string) {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => block.split("\n").map((line) => line.trim()).filter(Boolean));
+}
+
+function isListLine(line: string) {
+  return /^(\d+[\).\:]|[-*•])\s+/.test(line);
+}
+
+function stripListMarker(line: string) {
+  return line.replace(/^(\d+[\).\:]|[-*•])\s+/, "").trim();
+}
+
+function looksLikeHeading(line: string) {
+  if (!line || line.length > 72) return false;
+  return !/[.!?]$/.test(line);
+}
+
+function FormattedBrief({
+  text,
+  bodyClassName,
+  headingClassName,
+  sectionClassName,
+}: {
+  text: string;
+  bodyClassName: string;
+  headingClassName: string;
+  sectionClassName?: string;
+}) {
+  const blocks = parseBriefBlocks(text);
+  if (blocks.length === 0) return null;
+
+  return (
+    <div className={sectionClassName ?? "space-y-4"}>
+      {blocks.map((lines, idx) => {
+        const first = lines[0] ?? "";
+        const heading = looksLikeHeading(first) && lines.length > 1 ? first : null;
+        const rest = heading ? lines.slice(1) : lines;
+        const allList = rest.length > 1 && rest.every(isListLine);
+
+        return (
+          <div key={`${first}-${idx}`} className="space-y-2">
+            {heading && <div className={headingClassName}>{heading}</div>}
+            {allList ? (
+              <ol className="space-y-2">
+                {rest.map((line, lineIdx) => (
+                  <li key={`${line}-${lineIdx}`} className={`flex items-start gap-3 ${bodyClassName}`}>
+                    <span className="mt-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#1f4f43] px-1 text-[11px] font-bold text-white">
+                      {lineIdx + 1}
+                    </span>
+                    <span>{stripListMarker(line)}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              rest.map((line, lineIdx) => (
+                <p key={`${line}-${lineIdx}`} className={`${bodyClassName} whitespace-pre-wrap`}>
+                  {line}
+                </p>
+              ))
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const LS_KEYS = { AUTH: "igops:auth" } as const;
 
 function readLS<T>(key: string, fallback: T): T {
@@ -839,7 +911,7 @@ function ProceedPageInner() {
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Project delivery workspace</div>
                 <div className="mt-1 text-base font-semibold text-[#1c3e33] sm:text-lg">Submit your execution plan for this project</div>
               </div>
-              <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
+              <span className="rounded-full bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
                 Project type: {customType}
               </span>
             </div>
@@ -847,9 +919,20 @@ function ProceedPageInner() {
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
               <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Project brief</div>
-                <div className="mt-2 text-sm text-[#4d665c]">
-                  {customBrief || "Review this project brief and submit a clear execution plan with milestones, communication cadence, and quality controls."}
-                </div>
+                {customBrief ? (
+                  <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-white px-4 py-3">
+                    <FormattedBrief
+                      text={customBrief}
+                      sectionClassName="space-y-3"
+                      headingClassName="text-base font-semibold text-[#1f4f43]"
+                      bodyClassName="text-sm leading-7 text-[#4d665c]"
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-2 text-sm text-[#4d665c]">
+                    Review this project brief and submit a clear execution plan with milestones, communication cadence, and quality controls.
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Platform: {gig?.platform}</span>
                   <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Location: {gig?.location}</span>
@@ -955,7 +1038,7 @@ function ProceedPageInner() {
             )}
 
             <div className="mt-6 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
-              <div className="text-xs text-[#6f877d]">Your project plan is sent for admin review along with your application.</div>
+              <div className="text-xs text-[#6f877d]">Your proposal will be sent to recruiter for review.</div>
               <button
                 className="w-full rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50 sm:w-auto"
                 onClick={submitCustomProposal}
@@ -984,10 +1067,20 @@ function ProceedPageInner() {
 
                 <div className="mt-4 border-t border-[#e5ece9] pt-4 sm:mt-5 sm:pt-5">
                   <h3 className="text-[2.05rem] font-semibold leading-[1.06] tracking-tight text-[#1d2a3f] sm:text-4xl">Project brief</h3>
-                  <p className="mt-3 text-[1.02rem] leading-8 text-[#27324a] sm:text-base">
-                    {customBrief ||
-                      "In this project, you will execute an outcome-focused delivery plan aligned with Reelencer quality standards, timeline discipline, and transparent reporting requirements."}
-                  </p>
+                  {customBrief ? (
+                    <div className="mt-4 rounded-[1.2rem] border border-[#d9e4de] bg-[#f7fbf8] px-4 py-4 sm:px-5">
+                      <FormattedBrief
+                        text={customBrief}
+                        sectionClassName="space-y-4"
+                        headingClassName="text-[1.1rem] font-semibold tracking-[0.01em] text-[#1d2a3f] sm:text-[1.18rem]"
+                        bodyClassName="text-[1.02rem] leading-8 text-[#27324a] sm:text-base"
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-[1.02rem] leading-8 text-[#27324a] sm:text-base">
+                      In this project, you will execute an outcome-focused delivery plan aligned with Reelencer quality standards, timeline discipline, and transparent reporting requirements.
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-6 sm:mt-7">

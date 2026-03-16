@@ -69,6 +69,14 @@ function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
   return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig);
 }
 
+function isKycRequired(gig: Pick<Gig, "requirements">) {
+  const meta = Array.isArray(gig.requirements) ? gig.requirements : [];
+  const line = meta.find((item) => String(item).toLowerCase().startsWith("meta::kyc_required="));
+  if (!line) return true;
+  const value = String(line).replace(/^meta::kyc_required=/i, "").trim().toLowerCase();
+  return !["false", "0", "no", "off"].includes(value);
+}
+
 type Role = "Admin" | "Worker";
 type AuthSession = { role: Role; workerId?: string; at: string };
 
@@ -791,8 +799,9 @@ export default function BrowsePage() {
                 const assignment = assignmentByGig.get(gig.id);
                 const isFullTime = isWorkspaceGig(gig);
                 const isFreelanceCustom = isCustomGig(gig);
+                const requiresKyc = isKycRequired(gig);
                 const isFeaturedCard = index === 0 || (index === 1 && visibleGigs[0]?.status !== "Open" && gig.status === "Open");
-                const kycLocked = isFullTime && role === "Worker" && !hasApprovedKyc;
+                const kycLocked = requiresKyc && role === "Worker" && !hasApprovedKyc;
                 const guestLocked = isGuest;
                 const accessLocked = kycLocked || guestLocked;
                 const kycActionHref =
@@ -866,7 +875,7 @@ export default function BrowsePage() {
                           Protected Listing
                         </span>
                         <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
-                          {guestLocked ? "Sign in required" : "Mini KYC Pending"}
+                          {guestLocked ? "Sign in required" : requiresKyc ? "Mini KYC Pending" : "Restricted listing"}
                         </span>
                       </div>
 
@@ -904,12 +913,16 @@ export default function BrowsePage() {
                           <div className="text-xl font-semibold leading-tight text-slate-900">
                             {guestLocked
                               ? "Sign in to reveal this gig"
-                              : "Complete mini KYC to reveal this gig"}
+                              : requiresKyc
+                                ? "Complete mini KYC to reveal this gig"
+                                : "Restricted gig access"}
                           </div>
                           <div className="mt-1 text-sm text-slate-600">
                             {guestLocked
                               ? "This listing is protected. Sign in to view full role details, payout terms, and application actions."
-                              : "This listing is policy-protected. After KYC approval, full role details and actions unlock automatically."}
+                              : requiresKyc
+                                ? "This listing is policy-protected. After KYC approval, full role details and actions unlock automatically."
+                                : "This listing needs a signed-in workspace session, but does not require KYC approval."}
                           </div>
                         </div>
                       </div>
@@ -920,10 +933,10 @@ export default function BrowsePage() {
                           onClick={() => window.location.assign(kycActionHref)}
                           className="inline-flex rounded-full bg-[#1f4f43] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#2d6b5a]"
                         >
-                          {guestLocked ? "Sign in to continue" : kycActionLabel}
+                          {guestLocked ? "Sign in to continue" : requiresKyc ? kycActionLabel : "Open gig"}
                         </button>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-                          {guestLocked ? "Takes less than a minute" : "Estimated review: 5-15 mins"}
+                          {guestLocked ? "Takes less than a minute" : requiresKyc ? "Estimated review: 5-15 mins" : "No KYC gate"}
                         </span>
                       </div>
                     </div>
@@ -974,6 +987,11 @@ export default function BrowsePage() {
                           {kycLocked && (
                             <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Mini KYC required
+                            </span>
+                          )}
+                          {!requiresKyc && (
+                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 sm:px-3 sm:text-sm">
+                              KYC optional
                             </span>
                           )}
                           {isFullTime && (
