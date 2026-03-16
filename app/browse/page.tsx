@@ -69,6 +69,82 @@ function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
   return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig);
 }
 
+function getGigBrief(gig: Pick<Gig, "requirements">) {
+  const line = (gig.requirements ?? []).find((item) => String(item).toLowerCase().startsWith("brief::"));
+  return line ? String(line).replace(/^brief::/i, "").trim() : "";
+}
+
+function getGigRequirementTags(gig: Pick<Gig, "requirements">) {
+  return (gig.requirements ?? []).filter((item) => {
+    const lower = String(item).toLowerCase();
+    return !lower.startsWith("brief::") && !lower.startsWith("meta::") && !lower.startsWith("media::");
+  });
+}
+
+function normalizeBriefText(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function isBriefListLine(line: string) {
+  return /^(\d+[\).\:]|[-*•]|[0-9]+️⃣)\s*/.test(line);
+}
+
+function stripBriefListMarker(line: string) {
+  return line.replace(/^(\d+[\).\:]|[-*•]|[0-9]+️⃣)\s*/, "").trim();
+}
+
+function formatBriefParagraphs(text: string) {
+  const lines = normalizeBriefText(text);
+  const blocks: Array<{ type: "p" | "li"; text: string }> = [];
+  let paragraphBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraphBuffer.length === 0) return;
+    blocks.push({ type: "p", text: paragraphBuffer.join(" ") });
+    paragraphBuffer = [];
+  };
+
+  for (const line of lines) {
+    if (isBriefListLine(line)) {
+      flushParagraph();
+      blocks.push({ type: "li", text: stripBriefListMarker(line) });
+      continue;
+    }
+    paragraphBuffer.push(line);
+  }
+  flushParagraph();
+
+  return blocks;
+}
+
+function BriefPreview({ text }: { text: string }) {
+  const blocks = formatBriefParagraphs(text);
+  if (blocks.length === 0) return null;
+
+  return (
+    <div className="space-y-2.5 sm:space-y-3">
+      {blocks.map((block, idx) =>
+        block.type === "li" ? (
+          <div key={`${block.text}-${idx}`} className="flex items-start gap-2.5 text-[0.95rem] leading-6 text-slate-700 sm:gap-3 sm:text-sm">
+            <span className="mt-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#1f4f43] px-1 text-[11px] font-bold text-white">
+              {idx + 1}
+            </span>
+            <span>{block.text}</span>
+          </div>
+        ) : (
+          <p key={`${block.text}-${idx}`} className="text-[0.95rem] leading-7 text-slate-700 sm:text-sm sm:leading-6">
+            {block.text}
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+
 function isKycRequired(gig: Pick<Gig, "requirements">) {
   const meta = Array.isArray(gig.requirements) ? gig.requirements : [];
   const line = meta.find((item) => String(item).toLowerCase().startsWith("meta::kyc_required="));
@@ -1243,53 +1319,67 @@ export default function BrowsePage() {
       {selectedGig && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/30 backdrop-blur-[2px] md:items-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0" onClick={() => setSelectedGig(null)} />
-          <div className="relative z-10 w-full max-w-2xl rounded-t-[2rem] border border-slate-200 bg-white p-5 text-slate-900 shadow-xl md:rounded-[2rem] md:p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
+          <div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-t-[2rem] border border-slate-200 bg-white px-4 pb-4 pt-5 text-slate-900 shadow-xl md:rounded-[2rem] md:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
                 <div className="text-xs text-slate-500">{selectedGig.id}</div>
-                <div className="mt-1 text-xl font-semibold text-slate-900">{selectedGig.title}</div>
+                <div className="mt-1 text-[1.35rem] font-semibold leading-tight text-slate-900 sm:text-xl">{selectedGig.title}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.company}</span>
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{selectedGig.platform}</span>
                 </div>
               </div>
               <button
-                className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+                className="self-end rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700 sm:self-auto"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
                 <div className="text-xs text-slate-500">Workload</div>
                 <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.workload}</div>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
                 <div className="text-xs text-slate-500">Payout</div>
                 <div className="mt-1 text-base font-semibold text-slate-900">{selectedGig.payout}</div>
                 <div className="text-xs text-slate-500">{selectedGig.payoutType}</div>
               </div>
             </div>
             <div className="mt-4">
-              <div className="text-xs font-semibold text-slate-500">Requirements</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {selectedGig.requirements.map((req) => (
-                  <span key={req} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-700">
-                    {req}
-                  </span>
-                ))}
+              {getGigBrief(selectedGig) && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 sm:p-4">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Project brief</div>
+                  <div className="mt-3">
+                    <BriefPreview text={getGigBrief(selectedGig)} />
+                  </div>
+                </div>
+              )}
+              <div className={getGigBrief(selectedGig) ? "mt-4" : ""}>
+                <div className="text-xs font-semibold text-slate-500">Requirements</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {getGigRequirementTags(selectedGig).length > 0 ? (
+                    getGigRequirementTags(selectedGig).map((req) => (
+                      <span key={req} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-700 sm:text-xs">
+                        {req}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-500">No additional requirements listed.</span>
+                  )}
+                </div>
               </div>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <button
-                className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700"
+                className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-semibold text-slate-700"
                 onClick={() => setSelectedGig(null)}
               >
                 Close
               </button>
               <button
-                className="rounded-full bg-[#1f4f43] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#2d6b5a]"
+                className="rounded-full bg-[#1f4f43] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#2d6b5a]"
                 onClick={() => {
                   applyForGig(selectedGig);
                   setSelectedGig(null);

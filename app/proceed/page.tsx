@@ -174,6 +174,29 @@ function looksLikeHeading(line: string) {
   return !/[.!?]$/.test(line);
 }
 
+function groupParagraphLines(lines: string[]) {
+  const grouped: string[] = [];
+  let buffer: string[] = [];
+
+  const flush = () => {
+    if (buffer.length === 0) return;
+    grouped.push(buffer.join(" "));
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    if (isListLine(line)) {
+      flush();
+      grouped.push(line);
+      continue;
+    }
+    buffer.push(line);
+  }
+
+  flush();
+  return grouped;
+}
+
 function FormattedBrief({
   text,
   bodyClassName,
@@ -193,7 +216,7 @@ function FormattedBrief({
       {blocks.map((lines, idx) => {
         const first = lines[0] ?? "";
         const heading = looksLikeHeading(first) && lines.length > 1 ? first : null;
-        const rest = heading ? lines.slice(1) : lines;
+        const rest = groupParagraphLines(heading ? lines.slice(1) : lines);
         const allList = rest.length > 1 && rest.every(isListLine);
 
         return (
@@ -917,23 +940,23 @@ function ProceedPageInner() {
             </div>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-4">
+              <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-3.5 sm:p-4">
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Project brief</div>
                 {customBrief ? (
-                  <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-white px-4 py-3">
+                  <div className="mt-2 rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 sm:px-4">
                     <FormattedBrief
                       text={customBrief}
                       sectionClassName="space-y-3"
-                      headingClassName="text-base font-semibold text-[#1f4f43]"
-                      bodyClassName="text-sm leading-7 text-[#4d665c]"
+                      headingClassName="text-[1.05rem] font-semibold text-[#1f4f43] sm:text-base"
+                      bodyClassName="text-[0.95rem] leading-7 text-[#4d665c] sm:text-sm sm:leading-7"
                     />
                   </div>
                 ) : (
-                  <div className="mt-2 text-sm text-[#4d665c]">
+                  <div className="mt-2 text-[0.95rem] leading-7 text-[#4d665c] sm:text-sm">
                     Review this project brief and submit a clear execution plan with milestones, communication cadence, and quality controls.
                   </div>
                 )}
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] sm:text-xs">
                   <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Platform: {gig?.platform}</span>
                   <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Location: {gig?.location}</span>
                   <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">Workload: {gig?.workload}</span>
