@@ -122,6 +122,14 @@ function normalizeGigType(raw?: string) {
   return raw ?? "Email Creator";
 }
 
+function formatGigTypeLabel(raw?: string) {
+  const value = String(raw ?? "").trim();
+  if (!value) return "Email Creator";
+  if (/^custom:\s*/i.test(value)) return `Category: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
+  if (/^category:\s*/i.test(value)) return `Category: ${value.replace(/^category:\s*/i, "").trim() || "Freelance"}`;
+  return value;
+}
+
 function parseCustomRequirementsText(text: string) {
   return text
     .split(/\r?\n/)
@@ -584,7 +592,7 @@ export default function GigAdminConsole({
     setFormError(null);
     const resolvedGigType =
       form.gigType === "Custom"
-        ? `Custom: ${form.customGigType.trim() || "Freelance"}`
+        ? `Category: ${form.customGigType.trim() || "Freelance"}`
         : normalizeGigType(form.gigType);
 
     const payload: Gig = {
@@ -654,8 +662,8 @@ export default function GigAdminConsole({
   const startEdit = (gig: Gig) => {
     setEditingGig(gig);
     const normalizedType = normalizeGigType(gig.gigType);
-    const isCustom = normalizedType.toLowerCase().startsWith("custom:");
-    const customLabel = isCustom ? normalizedType.replace(/^custom:\s*/i, "").trim() : "";
+    const isCustom = /^(custom|category):/i.test(normalizedType);
+    const customLabel = isCustom ? normalizedType.replace(/^(custom|category):\s*/i, "").trim() : "";
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
     const projectFields = readProjectFieldsFromRequirements(gig.requirements);
     setForm({
@@ -698,7 +706,7 @@ export default function GigAdminConsole({
     setFormError(null);
     const resolvedGigType =
       form.gigType === "Custom"
-        ? `Custom: ${form.customGigType.trim() || "Freelance"}`
+        ? `Category: ${form.customGigType.trim() || "Freelance"}`
         : normalizeGigType(form.gigType);
 
     const updates: Partial<Gig> = {
@@ -798,7 +806,7 @@ export default function GigAdminConsole({
     const normalized = normalizeGigType(gigType);
     const resolved =
       normalized === "Custom"
-        ? `Custom: ${window.prompt("Enter custom gig type label", "Freelance")?.trim() || "Freelance"}`
+        ? `Category: ${window.prompt("Enter custom gig type label", "Freelance")?.trim() || "Freelance"}`
         : normalized;
     setGigs((prev) => {
       const next = prev.map((gig) => (gig.id === gigId ? { ...gig, gigType: resolved } : gig));
@@ -1457,7 +1465,7 @@ export default function GigAdminConsole({
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.location}</span>
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.workload}</span>
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.payout}</span>
-                    {gig.gigType && <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{gig.gigType}</span>}
+                    {gig.gigType && <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">{formatGigTypeLabel(gig.gigType)}</span>}
                     <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
                       {readProjectFieldsFromRequirements(gig.requirements).kycRequired ? "KYC required" : "KYC optional"}
                     </span>

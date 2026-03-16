@@ -69,6 +69,13 @@ function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
   return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig);
 }
 
+function formatGigTypeLabel(raw?: string) {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  if (/^custom:\s*/i.test(value)) return `Category: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
+  return value;
+}
+
 function getGigBrief(gig: Pick<Gig, "requirements">) {
   const line = (gig.requirements ?? []).find((item) => String(item).toLowerCase().startsWith("brief::"));
   return line ? String(line).replace(/^brief::/i, "").trim() : "";
@@ -1059,17 +1066,12 @@ export default function BrowsePage() {
                           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">{gig.platform}</span>
                           {gig.gigType && (
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
-                              {gig.gigType}
+                              {formatGigTypeLabel(gig.gigType)}
                             </span>
                           )}
                           {kycLocked && (
                             <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Mini KYC required
-                            </span>
-                          )}
-                          {!requiresKyc && (
-                            <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 sm:px-3 sm:text-sm">
-                              KYC optional
                             </span>
                           )}
                           {isFullTime && (
