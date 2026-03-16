@@ -3,6 +3,7 @@
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
 type Role = "Admin" | "Worker";
 type AuthSession = { role: Role; workerId?: string; at: string };
@@ -274,6 +275,8 @@ function ProceedPageInner() {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [application, setApplication] = useState<GigApplication | null>(null);
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
+  const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">("none");
+  const [kycLoaded, setKycLoaded] = useState(false);
 
   const [rows, setRows] = useState<CredentialRow[]>(emptyRows());
   const [loading, setLoading] = useState(true);
@@ -314,6 +317,50 @@ function ProceedPageInner() {
     }
     setSession(s);
     setSessionReady(true);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    const refreshKyc = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) {
+          if (alive) {
+            setKycStatus("none");
+            setKycLoaded(true);
+          }
+          return;
+        }
+        const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}` } });
+        const payload = res.ok ? await res.json() : null;
+        if (!alive) return;
+        setKycStatus(payload?.status ?? "none");
+        setKycLoaded(true);
+      } catch {
+        if (!alive) return;
+        setKycStatus("none");
+        setKycLoaded(true);
+      }
+    };
+
+    void refreshKyc();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refreshKyc();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshKyc();
+    }, 30000);
+
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const ensureAssignment = React.useCallback(
@@ -517,6 +564,7 @@ function ProceedPageInner() {
     const raw = String(projectMeta.kyc_required ?? "true").trim().toLowerCase();
     return !["false", "0", "no", "off"].includes(raw);
   }, [projectMeta.kyc_required]);
+  const shouldBlockForKyc = session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
 
   // Auto-sync poller
   useEffect(() => {
@@ -822,7 +870,7 @@ function ProceedPageInner() {
     }
   };
 
-  if (!sessionReady || loading) {
+  if (!sessionReady || loading || !kycLoaded) {
     return (
       <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
@@ -876,6 +924,73 @@ function ProceedPageInner() {
             Back to browse
           </Link>
         </div>
+      </div>
+    );
+  }
+
+  if (shouldBlockForKyc) {
+    return (
+      <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
+        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+          <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+            <div>
+              <div className="text-lg font-semibold tracking-wide">Submission</div>
+              <div className="text-xs text-slate-500">Identity verification required before access is granted</div>
+            </div>
+            <Link
+              className="rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm text-[#284b3e] hover:border-[#a9bbb1]"
+              href="/browse"
+            >
+              Return
+            </Link>
+          </div>
+        </div>
+
+        <main className="relative mx-auto w-full max-w-3xl px-5 py-8">
+          <div className="rounded-3xl border border-[#cfdbc8] bg-white/95 p-5 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-7">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="rounded-full border border-[#d3dbce] bg-[#f2f6ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#4f6359]">
+                Protected gig access
+              </span>
+              <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#2f6655]">
+                KYC: {kycStatus}
+              </span>
+            </div>
+
+            <div className="mt-5 text-xs text-slate-500">Protected gig</div>
+            <h1 className="mt-2 text-3xl font-semibold leading-tight tracking-tight text-[#162038] sm:text-4xl">
+              Gig details will unlock after KYC approval
+            </h1>
+
+            <div className="mt-5 rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-4 sm:p-5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Why this is locked</div>
+              <div className="mt-2 text-base font-semibold text-[#1c3e33]">
+                {kycStatus === "pending" ? "Your mini KYC is under review." : "Complete mini KYC to unlock this gig."}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-[#4d665c]">
+                {kycStatus === "pending"
+                  ? "This project stays hidden until your verification is approved. Once approved, access will unlock automatically."
+                  : "This gig requires identity verification before proposal and submission tools become available."}
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              <Link
+                href="/workspace"
+                className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-3 text-sm font-semibold text-white hover:bg-[#2d6b5a]"
+              >
+                {kycStatus === "pending" ? "Open KYC status" : "Complete mini KYC"}
+              </Link>
+              <Link
+                href="/browse"
+                className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-5 py-3 text-sm font-semibold text-[#284b3e] hover:border-[#a9bbb1]"
+              >
+                Back to browse
+              </Link>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }

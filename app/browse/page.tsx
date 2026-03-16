@@ -886,7 +886,7 @@ export default function BrowsePage() {
                   role === "Admin"
                     ? "/addgigs#kyc-review"
                     : role === "Worker"
-                      ? `/proceed?gigId=${encodeURIComponent(gig.id)}&kyc=1`
+                      ? "/workspace"
                       : loginHref;
                 const proposalReviewStatus =
                   app?.proposal?.reviewStatus ??
