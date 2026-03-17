@@ -65,8 +65,14 @@ function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
   return raw === "" || raw === "email creator" || raw === "part-time" || raw === "part time";
 }
 
+function isProjectGig(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "project";
+}
+
 function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
-  return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig);
+  return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig) && !isProjectGig(gig);
 }
 
 function formatGigTypeLabel(raw?: string) {
@@ -298,7 +304,7 @@ export default function BrowsePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [payoutType, setPayoutType] = useState<PayoutType | "All">("All");
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
-  const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Email Creator" | "Workspace" | "Custom">("All");
+  const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Email Creator" | "Workspace" | "Project" | "Custom">("All");
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasApprovedKyc = role === "Worker" && kycStatus === "approved";
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
@@ -520,6 +526,7 @@ export default function BrowsePage() {
       if (gigTypeFilter !== "All") {
         if (gigTypeFilter === "Workspace" && !isWorkspaceGig(gig)) return false;
         if (gigTypeFilter === "Email Creator" && !isEmailCreatorGig(gig)) return false;
+        if (gigTypeFilter === "Project" && !isProjectGig(gig)) return false;
         if (gigTypeFilter === "Custom" && !isCustomGig(gig)) return false;
       }
       if (payoutType !== "All" && gig.payoutType !== payoutType) return false;
@@ -819,7 +826,7 @@ export default function BrowsePage() {
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  {(["All", "Email Creator", "Workspace", "Custom"] as const).map((t) => (
+                  {(["All", "Email Creator", "Workspace", "Project", "Custom"] as const).map((t) => (
                     <button
                       key={t}
                       className={`rounded-full border px-3 py-1 text-xs ${
@@ -1281,7 +1288,7 @@ export default function BrowsePage() {
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                    {(["All", "Email Creator", "Workspace", "Custom"] as const).map((t) => (
+                    {(["All", "Email Creator", "Workspace", "Project", "Custom"] as const).map((t) => (
                       <button
                         key={t}
                         className={`rounded-full border px-3 py-1.5 ${

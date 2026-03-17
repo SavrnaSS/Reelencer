@@ -82,8 +82,15 @@ function isCustomGigType(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "").trim().toLowerCase();
   if (!raw) return false;
   if (raw === "email creator" || raw === "part-time" || raw === "part time") return false;
+  if (raw === "project") return false;
   if (raw === "workspace" || raw === "full-time" || raw === "full time" || raw === "fulltime") return false;
   return true;
+}
+
+function isProjectGigType(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "project";
 }
 
 function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
@@ -96,7 +103,7 @@ function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
 function customTypeLabel(raw?: string) {
   const value = String(raw ?? "").trim();
   if (!value) return "Independent Project";
-  const cleaned = value.replace(/^custom:\s*/i, "").trim();
+  const cleaned = value.replace(/^(custom|category):\s*/i, "").trim();
   return cleaned || "Independent Project";
 }
 
@@ -151,6 +158,64 @@ function cleanInboxBody(body: string) {
 
   const pick = (cleanLines[0] || filtered[0] || lines[0] || text).trim();
   return pick.length > 400 ? pick.slice(0, 400) : pick;
+}
+
+function ProjectLineIcon({
+  kind,
+  className = "h-5 w-5",
+}: {
+  kind:
+    | "share"
+    | "heart"
+    | "warning"
+    | "location"
+    | "calendar"
+    | "views"
+    | "money"
+    | "duration"
+    | "level"
+    | "language"
+    | "chart"
+    | "external";
+  className?: string;
+}) {
+  const common = {
+    className,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (kind) {
+    case "share":
+      return <svg {...common}><path d="M8 12l8-8"/><path d="M10 4h6v6"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/></svg>;
+    case "heart":
+      return <svg {...common}><path d="M12 20s-6.5-4.2-8.4-8A4.9 4.9 0 0 1 12 6a4.9 4.9 0 0 1 8.4 6C18.5 15.8 12 20 12 20Z"/></svg>;
+    case "warning":
+      return <svg {...common}><path d="M12 4l8 14H4L12 4Z"/><path d="M12 9v4"/><circle cx="12" cy="16.5" r=".6" fill="currentColor" stroke="none"/></svg>;
+    case "location":
+      return <svg {...common}><path d="M12 21s6-5.4 6-11a6 6 0 1 0-12 0c0 5.6 6 11 6 11Z"/><circle cx="12" cy="10" r="2.4"/></svg>;
+    case "calendar":
+      return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>;
+    case "views":
+      return <svg {...common}><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
+    case "money":
+      return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 7v10M15 9.5c0-1.1-1.3-2-3-2s-3 .9-3 2 1.3 2 3 2 3 .9 3 2-1.3 2-3 2-3-.9-3-2"/></svg>;
+    case "duration":
+      return <svg {...common}><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2.5"/><path d="M9 2h6"/></svg>;
+    case "level":
+      return <svg {...common}><path d="M7 11v8M12 8v11M17 5v14"/><path d="M5 19h14"/></svg>;
+    case "language":
+      return <svg {...common}><path d="M4 6h8"/><path d="M8 4v2c0 3-1.2 5.8-3.5 8"/><path d="M6 11c1.2 1.8 2.8 3.2 4.8 4.2"/><rect x="13" y="5" width="7" height="7" rx="1.5"/><path d="M15 9h3"/><path d="M16.5 7.5v3"/></svg>;
+    case "chart":
+      return <svg {...common}><path d="M4 19h16"/><rect x="6" y="11" width="3" height="6" rx="1"/><rect x="11" y="8" width="3" height="9" rx="1"/><rect x="16" y="5" width="3" height="12" rx="1"/></svg>;
+    case "external":
+      return <svg {...common}><path d="M8 16l8-8"/><path d="M10 6h6v6"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>;
+  }
 }
 
 function parseBriefBlocks(raw: string) {
@@ -418,7 +483,7 @@ function ProceedPageInner() {
           setLoading(false);
           return;
         }
-        if (match && isCustomGigType(match)) {
+        if (match && (isCustomGigType(match) || isProjectGigType(match))) {
           setLoading(false);
           return;
         }
@@ -468,6 +533,7 @@ function ProceedPageInner() {
   }, [ensureAssignment, gigId, session?.workerId]);
 
   const isCustomFlow = useMemo(() => (gig ? isCustomGigType(gig) : false), [gig]);
+  const isProjectFlow = useMemo(() => (gig ? isProjectGigType(gig) : false), [gig]);
   const isWorkspaceFlow = useMemo(() => (gig ? isWorkspaceGig(gig) : false), [gig]);
   const isEmailCreatorFlow = useMemo(() => (gig ? isEmailCreatorGig(gig) : false), [gig]);
   const proposalReviewStatus = useMemo(() => {
@@ -996,27 +1062,65 @@ function ProceedPageInner() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
-      <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
-        <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="text-lg font-semibold tracking-wide">Submission</div>
-              <div className="text-xs text-slate-500">Secure credential verification and handoff</div>
+    <div className={`relative min-h-screen overflow-x-hidden ${isProjectFlow ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
+      {!isProjectFlow && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
+      {!isProjectFlow && (
+        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+          <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="text-lg font-semibold tracking-wide">Submission</div>
+                <div className="text-xs text-slate-500">Secure credential verification and handoff</div>
+              </div>
+            </div>
+
+            <Link
+              className="rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm text-[#284b3e] hover:border-[#a9bbb1]"
+              href="/browse"
+            >
+              Return
+            </Link>
+          </div>
+        </div>
+      )}
+
+      <main className={`relative mx-auto w-full ${isProjectFlow ? "max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8" : "max-w-5xl space-y-6 px-5 py-8"}`}>
+        {isProjectFlow && (
+          <div className="mb-4 flex flex-col gap-3 border-b border-[#eceef2] pb-4 sm:mb-5 sm:gap-4 sm:pb-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-y-2 text-sm">
+              <Link
+                href="/"
+                className="rounded-full px-2 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6]"
+              >
+                Home
+              </Link>
+              <span className="px-1.5 text-[#a0a5ae]">/</span>
+              <Link
+                href="/browse"
+                className="rounded-full px-2 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6]"
+              >
+                Projects
+              </Link>
+              <span className="px-1.5 text-[#a0a5ae]">/</span>
+              <span className="min-w-0 rounded-full bg-[#f6f7fa] px-2.5 py-1 text-[#7b808a]">
+                <span className="block max-w-[220px] truncate sm:max-w-[420px]">{gig.title}</span>
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5 text-sm font-semibold text-[#2f3747] sm:gap-3">
+              <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
+                <ProjectLineIcon kind="share" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+              </button>
+              <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
+                <ProjectLineIcon kind="heart" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+              </button>
+              <span>Share</span>
+              <span>Save</span>
+              <span className="text-[#d2a018]"><ProjectLineIcon kind="warning" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" /></span>
             </div>
           </div>
+        )}
 
-          <Link
-            className="rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm text-[#284b3e] hover:border-[#a9bbb1]"
-            href="/browse"
-          >
-            Return
-          </Link>
-        </div>
-      </div>
-
-      <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
+        {!isProjectFlow && (
         <div className="rounded-[1.4rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:rounded-3xl sm:p-6">
           <div className="text-xs text-slate-500">Gig</div>
           <h1 className="mt-2 text-balance text-[1.95rem] font-semibold leading-[1.06] tracking-tight text-[#162038] sm:text-5xl">
@@ -1045,6 +1149,7 @@ function ProceedPageInner() {
             <span className={`rounded-full border px-3 py-1 text-xs ${statusTone}`}>Status: {assignmentStatus}</span>
           </div>
         </div>
+        )}
 
         {isCustomFlow && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
@@ -1196,7 +1301,241 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && !hasApplication && (
+        {isProjectFlow && (
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="space-y-4 sm:space-y-5">
+              <section className="relative overflow-hidden rounded-[1.45rem] border border-[#f6e0d8] bg-[linear-gradient(135deg,#fff7f3,rgba(255,245,240,0.99))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
+                <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_1px_1px,rgba(201,157,136,0.16)_1px,transparent_0)] [background-size:18px_18px]" />
+                <div className="relative">
+                  <h2 className="max-w-4xl text-[1.55rem] font-semibold leading-tight tracking-tight text-[#24262d] sm:text-[3.2rem]">
+                    {gig.title}
+                  </h2>
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[0.95rem] font-medium text-[#4b4f59] sm:mt-6 sm:gap-x-6 sm:gap-y-3 sm:text-sm">
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="location" className="h-[18px] w-[18px]" />
+                      {gig.location}
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="calendar" className="h-[18px] w-[18px]" />
+                      {gig.postedAt || "Recently posted"}
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="views" className="h-[18px] w-[18px]" />
+                      {application?.proposal?.reviewedAt ? "Reviewed recently" : "Active listing"}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+                {[
+                  { icon: "location", label: "Project location type", value: gig.location },
+                  { icon: "money", label: "Project Type", value: gig.payoutType.toLowerCase() },
+                  { icon: "duration", label: "Duration", value: gig.workload },
+                  { icon: "level", label: "Level", value: projectMeta.expertise || "Open level" },
+                  { icon: "language", label: "Language", value: projectMeta.languages || "Flexible" },
+                  { icon: "chart", label: "English Level", value: projectMeta.expertise || "Professional" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-start gap-3 sm:gap-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f6f1e8] text-[#3e6357] sm:h-14 sm:w-14">
+                      <ProjectLineIcon kind={item.icon as "location" | "money" | "duration" | "level" | "language" | "chart"} className="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[0.9rem] font-semibold leading-5 text-[#2c3038] sm:text-[0.95rem] sm:leading-6">{item.label}</div>
+                      <div className="mt-0.5 text-[0.95rem] text-[#4a4f58] sm:mt-1 sm:text-[1.05rem]">{item.value}</div>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <section className="pt-1">
+                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Project Description</div>
+                {customBrief ? (
+                  <div className="mt-4 space-y-4">
+                    <FormattedBrief
+                      text={customBrief}
+                      sectionClassName="space-y-5"
+                      headingClassName="text-xl font-semibold text-[#24262d]"
+                      bodyClassName="text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9"
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-4 text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9">
+                    Review the scope, align on deliverables, and submit a proposal with your execution approach and expected timeline.
+                  </p>
+                )}
+              </section>
+
+              <section className="space-y-4">
+                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Proposal Desk</div>
+                <div className="rounded-[1.45rem] border border-[#eceef2] bg-white p-4 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  {hasApplication && proposalReviewStatus !== "Rejected" ? (
+                    <div className="space-y-3">
+                      <div className="rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-[#4d5563]">
+                        Your proposal is already submitted. Recruiter updates will appear here once the review advances.
+                      </div>
+                      {application?.proposal?.adminExplanation && (
+                        <div className="rounded-2xl border border-[#e7ebef] bg-white px-4 py-3 text-sm text-[#4d5563]">
+                          <span className="font-semibold text-[#2c3038]">Guidance:</span> {application.proposal.adminExplanation}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
+                        Proposal summary
+                        <textarea
+                          className="mt-2 h-24 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
+                          placeholder="Summarize your project approach, expected result, and why you are a strong fit."
+                          value={proposalPitch}
+                          onChange={(e) => setProposalPitch(e.target.value)}
+                        />
+                      </label>
+                      <label className="mt-3 block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
+                        Delivery plan
+                        <textarea
+                          className="mt-2 h-28 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
+                          placeholder="Break down your milestones, communication rhythm, review checkpoints, and quality controls."
+                          value={proposalApproach}
+                          onChange={(e) => setProposalApproach(e.target.value)}
+                        />
+                      </label>
+                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                        <label className="text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
+                          Timeline
+                          <input
+                            className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
+                            placeholder="e.g., 7 days with updates every 48 hours"
+                            value={proposalTimeline}
+                            onChange={(e) => setProposalTimeline(e.target.value)}
+                          />
+                        </label>
+                        <label className="text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
+                          Portfolio / links
+                          <input
+                            className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
+                            placeholder="Past work, Notion, drive folder, website, or GitHub"
+                            value={proposalPortfolio}
+                            onChange={(e) => setProposalPortfolio(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <label className="mt-3 block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
+                        Budget note
+                        <input
+                          className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
+                          placeholder="Milestone split, assumptions, or commercial notes"
+                          value={proposalBudget}
+                          onChange={(e) => setProposalBudget(e.target.value)}
+                        />
+                      </label>
+                    </>
+                  )}
+
+                  {error && (
+                    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+                  )}
+                  {success && (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
+                  )}
+                </div>
+              </section>
+
+              {customRequirementItems.length > 0 && (
+                <section className="space-y-3">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Project Requirements</div>
+                  <div className="grid gap-3">
+                    {customRequirementItems.map((req, idx) => (
+                      <div key={`${req}-${idx}`} className="rounded-2xl border border-[#eceef2] bg-white px-4 py-3 text-[1rem] leading-7 text-[#4d5563] shadow-sm">
+                        <span className="font-semibold text-[#2c3038]">{idx + 1}.</span> {req}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {customMediaItems.length > 0 && (
+                <section className="space-y-3">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Reference Media</div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {customMediaItems.map((url, idx) => (
+                      <div key={`${url}-${idx}`} className="overflow-hidden rounded-2xl border border-[#eceef2] bg-white shadow-sm">
+                        {isImageUrl(url) ? (
+                          <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                            <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                          </div>
+                        ) : isVideoUrl(url) ? (
+                          <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                            <video src={url} controls className="h-full w-full bg-slate-100 object-cover" preload="metadata" />
+                          </div>
+                        ) : (
+                          <div className="p-4 text-sm text-[#425952]">
+                            <a href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#1f4f43] underline-offset-2 hover:underline">
+                              Open reference asset {idx + 1}
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <aside className="space-y-4 sm:space-y-6 xl:sticky xl:top-6 xl:self-start">
+              <section className="rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                <div className="text-[2.45rem] font-semibold tracking-tight text-[#24262d] sm:text-[3rem]">{gig.payout}</div>
+                <div className="mt-1 text-[1rem] text-[#4d5563] sm:text-[1.1rem]">{gig.payoutType} rate</div>
+                <button
+                  className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#77c07d] px-5 py-3.5 text-[1rem] font-semibold text-white transition hover:bg-[#67b56e] disabled:opacity-50 sm:mt-7 sm:py-4 sm:text-[1.05rem]"
+                  onClick={submitCustomProposal}
+                  disabled={proposalSaving || (hasApplication && proposalReviewStatus !== "Rejected")}
+                >
+                  {proposalSaving
+                    ? "Submitting..."
+                    : hasApplication && proposalReviewStatus !== "Rejected"
+                      ? "Proposal submitted"
+                      : "Submit a proposal"}
+                </button>
+              </section>
+
+              <section className="rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                <div className="text-[1.7rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">About Seller</div>
+                <div className="mt-5 flex items-center gap-4">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f7faf8] text-2xl font-bold text-[#1f4f43]">
+                    {gig.company.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="text-[1.4rem] font-semibold text-[#24262d]">{gig.company}</div>
+                    <div className="text-sm text-[#4d5563]">Open Project - 1</div>
+                    <div className="mt-1 text-sm font-medium text-[#8b6d17]">★ 3.5 <span className="text-[#8a8f98]">2 Reviews</span></div>
+                  </div>
+                </div>
+                <div className="mt-5 border-t border-[#eceef2] pt-5" />
+                <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Location</div>
+                    <div className="mt-1 text-[#4d5563]">{gig.location}</div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Employees</div>
+                    <div className="mt-1 text-[#4d5563]">70-90</div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Categories</div>
+                    <div className="mt-1 text-[#4d5563]">Project</div>
+                  </div>
+                </div>
+              </section>
+
+              <button type="button" className="inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#77c07d] bg-white px-5 py-3.5 text-[1rem] font-semibold text-[#77c07d] transition hover:bg-[#f7fcf7] sm:py-4 sm:text-[1.05rem]">
+                Contact Me <ProjectLineIcon kind="external" className="h-4 w-4" />
+              </button>
+            </aside>
+          </div>
+        )}
+
+        {!isCustomFlow && !isProjectFlow && !hasApplication && (
           <div className="rounded-[1.4rem] border border-[#c4d5cb] bg-[radial-gradient(circle_at_top_left,rgba(86,146,118,0.16),transparent_42%),linear-gradient(180deg,#f3f8f3,#edf4ee)] p-3 shadow-[0_26px_55px_rgba(24,64,49,0.14)] backdrop-blur sm:rounded-3xl sm:p-6">
             <div className="grid gap-3 sm:gap-5 lg:grid-cols-[1.85fr_0.95fr]">
               <article className="rounded-[1.2rem] border border-[#d5e2da] bg-white p-4 sm:rounded-2xl sm:p-6">
@@ -1286,7 +1625,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && !canAccessOperations && onboardingRequired && (
+        {!isCustomFlow && !isProjectFlow && hasApplication && !canAccessOperations && onboardingRequired && (
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1406,7 +1745,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && !canAccessOperations && !onboardingRequired && (
+        {!isCustomFlow && !isProjectFlow && hasApplication && !canAccessOperations && !onboardingRequired && (
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1451,7 +1790,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && proposalReviewStatus === "Accepted" && kycRequiredForGig && (
+        {!isCustomFlow && !isProjectFlow && hasApplication && proposalReviewStatus === "Accepted" && kycRequiredForGig && (
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1480,7 +1819,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
+        {!isCustomFlow && !isProjectFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
             <div className="text-sm font-semibold text-[#1c3e33]">Offer accepted: Workspace access active</div>
             <div className="mt-2 text-sm text-[#4d665c]">
@@ -1495,7 +1834,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
+        {!isCustomFlow && !isProjectFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
         <>
         <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
           <div className="text-sm font-semibold text-slate-900">Offer accepted: Assigned dashboard emails (5)</div>

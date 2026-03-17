@@ -110,7 +110,7 @@ const LS_KEYS = {
 const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
 const PAYOUTS: PayoutType[] = ["Per task", "Per post", "Monthly"];
 const STATUSES: GigStatus[] = ["Open", "Paused", "Closed"];
-const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Custom"];
+const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Project", "Custom"];
 
 function normalizeGigType(raw?: string) {
   const value = String(raw ?? "")
@@ -119,6 +119,7 @@ function normalizeGigType(raw?: string) {
   if (!value) return "Email Creator";
   if (value === "part-time" || value === "part time") return "Email Creator";
   if (value === "full-time" || value === "full time" || value === "workspace") return "Workspace";
+  if (value === "project") return "Project";
   return raw ?? "Email Creator";
 }
 
@@ -150,7 +151,7 @@ function buildRequirementsPayload(input: {
   onboardingRequired: boolean;
   kycRequired: boolean;
 }) {
-  if (input.gigType === "Custom") {
+  if (input.gigType === "Custom" || input.gigType === "Project") {
     const out: string[] = [];
     if (input.customBrief.trim()) out.push(`Brief::${input.customBrief.trim()}`);
     out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
@@ -535,7 +536,7 @@ export default function GigAdminConsole({
     if (!form.workload.trim()) return "Workload is required.";
     if (!form.payout.trim()) return "Payout is required.";
     if (form.gigType === "Custom" && !form.customGigType.trim()) return "Custom gig type label is required.";
-    if (form.gigType === "Custom" && !form.customBrief.trim()) return "Custom brief is required for custom gigs.";
+    if ((form.gigType === "Custom" || form.gigType === "Project") && !form.customBrief.trim()) return "A project brief is required for this gig type.";
     return null;
   };
 
@@ -593,7 +594,9 @@ export default function GigAdminConsole({
     const resolvedGigType =
       form.gigType === "Custom"
         ? `Category: ${form.customGigType.trim() || "Freelance"}`
-        : normalizeGigType(form.gigType);
+        : form.gigType === "Project"
+          ? "Project"
+          : normalizeGigType(form.gigType);
 
     const payload: Gig = {
       id: makeId(),
@@ -662,6 +665,7 @@ export default function GigAdminConsole({
   const startEdit = (gig: Gig) => {
     setEditingGig(gig);
     const normalizedType = normalizeGigType(gig.gigType);
+    const isProject = normalizedType.toLowerCase() === "project";
     const isCustom = /^(custom|category):/i.test(normalizedType);
     const customLabel = isCustom ? normalizedType.replace(/^(custom|category):\s*/i, "").trim() : "";
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
@@ -674,7 +678,7 @@ export default function GigAdminConsole({
       workload: gig.workload,
       payout: gig.payout,
       payoutType: gig.payoutType,
-      gigType: isCustom ? "Custom" : normalizedType,
+      gigType: isCustom ? "Custom" : isProject ? "Project" : normalizedType,
       customGigType: customLabel,
       customBrief: customFields.customBrief,
       customRequirements: customFields.customRequirements,
@@ -684,8 +688,8 @@ export default function GigAdminConsole({
       expertise: projectFields.expertise,
       languages: projectFields.languages,
       onboardingRequired: projectFields.onboardingRequired,
-      kycRequired: isCustom ? customFields.kycRequired : projectFields.kycRequired,
-      requirements: isCustom ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
+      kycRequired: isCustom || isProject ? customFields.kycRequired : projectFields.kycRequired,
+      requirements: isCustom || isProject ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
     setFormError(null);
@@ -707,7 +711,9 @@ export default function GigAdminConsole({
     const resolvedGigType =
       form.gigType === "Custom"
         ? `Category: ${form.customGigType.trim() || "Freelance"}`
-        : normalizeGigType(form.gigType);
+        : form.gigType === "Project"
+          ? "Project"
+          : normalizeGigType(form.gigType);
 
     const updates: Partial<Gig> = {
       title: form.title,
@@ -807,6 +813,8 @@ export default function GigAdminConsole({
     const resolved =
       normalized === "Custom"
         ? `Category: ${window.prompt("Enter custom gig type label", "Freelance")?.trim() || "Freelance"}`
+        : normalized === "Project"
+          ? "Project"
         : normalized;
     setGigs((prev) => {
       const next = prev.map((gig) => (gig.id === gigId ? { ...gig, gigType: resolved } : gig));
@@ -1158,18 +1166,22 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {form.gigType === "Custom" && (
+              {(form.gigType === "Custom" || form.gigType === "Project") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
-                  Custom brief (shown in proposal desk)
+                  {form.gigType === "Project" ? "Project brief (shown in proposal desk)" : "Custom brief (shown in proposal desk)"}
                   <textarea
                     className="mt-2 h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                     value={form.customBrief}
                     onChange={(e) => setForm((prev) => ({ ...prev, customBrief: e.target.value }))}
-                    placeholder="Describe the custom project scope, expectations, and decision criteria."
+                    placeholder={
+                      form.gigType === "Project"
+                        ? "Describe the project scope, client expectation, deliverables, and review process."
+                        : "Describe the custom project scope, expectations, and decision criteria."
+                    }
                   />
                 </label>
               )}
-              {form.gigType === "Custom" && (
+              {(form.gigType === "Custom" || form.gigType === "Project") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Detailed requirements (one per line)
                   <textarea
@@ -1180,7 +1192,7 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {form.gigType === "Custom" && (
+              {(form.gigType === "Custom" || form.gigType === "Project") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Brief media upload (images/videos)
                   <input
@@ -1197,7 +1209,7 @@ export default function GigAdminConsole({
                     disabled={mediaUploading}
                   />
                   <div className="mt-2 text-[11px] text-slate-500">
-                    Uploaded media will appear in worker proposal UI automatically.
+                    Uploaded media will appear in the worker proposal UI automatically.
                   </div>
                   {mediaUploadError && (
                     <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
@@ -1235,7 +1247,7 @@ export default function GigAdminConsole({
                   {mediaUploading && <div className="mt-2 text-xs font-semibold text-[#2f6655]">Uploading media...</div>}
                 </label>
               )}
-              {form.gigType !== "Custom" && (
+              {form.gigType !== "Custom" && form.gigType !== "Project" && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Project brief (shown before proposal submission)
                   <textarea
@@ -1246,7 +1258,7 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {form.gigType !== "Custom" && (
+              {form.gigType !== "Custom" && form.gigType !== "Project" && (
                 <label className="text-xs font-semibold text-slate-600">
                   Hiring capacity
                   <input
@@ -1257,7 +1269,7 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {form.gigType !== "Custom" && (
+              {form.gigType !== "Custom" && form.gigType !== "Project" && (
                 <label className="text-xs font-semibold text-slate-600">
                   Expertise
                   <input
@@ -1268,7 +1280,7 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {form.gigType !== "Custom" && (
+              {form.gigType !== "Custom" && form.gigType !== "Project" && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Languages
                   <input
