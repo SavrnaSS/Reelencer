@@ -313,7 +313,7 @@ function FormattedBrief({
   );
 }
 
-const LS_KEYS = { AUTH: "igops:auth" } as const;
+const LS_KEYS = { AUTH: "igops:auth", GIGS: "igops:gigs" } as const;
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -366,6 +366,11 @@ function ProceedPageInner() {
   const [groupJoinConfirming, setGroupJoinConfirming] = useState(false);
 
   const pollingRef = React.useRef(false);
+  const cachedGig = useMemo(() => {
+    if (!gigId) return null;
+    const cached = readLS<Gig[]>(LS_KEYS.GIGS, []);
+    return Array.isArray(cached) ? cached.find((item) => String(item?.id) === String(gigId)) ?? null : null;
+  }, [gigId]);
 
   useEffect(() => {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -937,28 +942,100 @@ function ProceedPageInner() {
   };
 
   if (!sessionReady || loading || !kycLoaded) {
+    const showProjectSkeleton = !!(gig ?? cachedGig) && isProjectGigType((gig ?? cachedGig) as Gig);
     return (
-      <div className="relative min-h-screen overflow-x-hidden bg-[#eef4ea] text-slate-900">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />
-        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
-          <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+      <div className={`relative min-h-screen overflow-x-hidden ${showProjectSkeleton ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
+        {!showProjectSkeleton && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
+        <div className={`border-b ${showProjectSkeleton ? "border-[#eceef2] bg-white" : "border-[#d4dccf] bg-[#f8faf7]"}`}>
+          <div className={`relative mx-auto flex w-full items-center justify-between px-5 py-6 ${showProjectSkeleton ? "max-w-[1380px]" : "max-w-5xl"}`}>
             <div>
-              <div className="text-lg font-semibold tracking-wide">Submission</div>
-              <div className="text-xs text-slate-500">Preparing your project workspace...</div>
+              <div className="text-lg font-semibold tracking-wide">{showProjectSkeleton ? "Project" : "Submission"}</div>
+              <div className="text-xs text-slate-500">
+                {showProjectSkeleton ? "Preparing project marketplace view..." : "Preparing your project workspace..."}
+              </div>
             </div>
           </div>
         </div>
-        <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
-          <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
-            <div className="h-4 w-24 rounded bg-[#e7efe8]" />
-            <div className="mt-4 h-8 w-2/3 rounded bg-[#e7efe8]" />
-            <div className="mt-3 h-4 w-1/2 rounded bg-[#e7efe8]" />
-          </div>
-          <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
-            <div className="h-5 w-48 rounded bg-[#e7efe8]" />
-            <div className="mt-4 h-32 rounded-2xl bg-[#eef4ef]" />
-          </div>
-        </main>
+        {showProjectSkeleton ? (
+          <main className="relative mx-auto w-full max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
+            <div className="mb-4 flex animate-pulse flex-col gap-3 border-b border-[#eceef2] pb-4 sm:mb-5 sm:pb-5">
+              <div className="h-5 w-48 rounded-full bg-[#eef1f4]" />
+              <div className="flex items-center gap-2">
+                <div className="h-9 w-9 rounded-full bg-[#eef1f4]" />
+                <div className="h-9 w-9 rounded-full bg-[#eef1f4]" />
+                <div className="h-4 w-16 rounded-full bg-[#eef1f4]" />
+                <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
+              </div>
+            </div>
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className="space-y-4 sm:space-y-5">
+                <div className="animate-pulse rounded-[1.45rem] border border-[#f1dfd7] bg-[linear-gradient(135deg,#fff8f4,rgba(255,245,239,0.98))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
+                  <div className="h-10 w-4/5 rounded-2xl bg-white/80 sm:h-14" />
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <div className="h-5 w-24 rounded-full bg-white/80" />
+                    <div className="h-5 w-32 rounded-full bg-white/80" />
+                    <div className="h-5 w-28 rounded-full bg-white/80" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+                  {Array.from({ length: 6 }).map((_, idx) => (
+                    <div key={idx} className="flex animate-pulse items-start gap-3 sm:gap-4">
+                      <div className="h-11 w-11 rounded-full bg-[#f3f4f6] sm:h-14 sm:w-14" />
+                      <div className="flex-1">
+                        <div className="h-4 w-28 rounded-full bg-[#eef1f4]" />
+                        <div className="mt-2 h-4 w-20 rounded-full bg-[#eef1f4]" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="animate-pulse space-y-4">
+                  <div className="h-9 w-60 rounded-full bg-[#eef1f4]" />
+                  <div className="h-6 w-full rounded-full bg-[#f1f3f6]" />
+                  <div className="h-6 w-[88%] rounded-full bg-[#f1f3f6]" />
+                  <div className="h-6 w-[82%] rounded-full bg-[#f1f3f6]" />
+                </div>
+                <div className="animate-pulse rounded-[1.45rem] border border-[#eceef2] bg-white p-4 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  <div className="h-8 w-44 rounded-full bg-[#eef1f4]" />
+                  <div className="mt-4 h-24 rounded-2xl bg-[#f7f8fa]" />
+                  <div className="mt-3 h-28 rounded-2xl bg-[#f7f8fa]" />
+                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    <div className="h-12 rounded-2xl bg-[#f7f8fa]" />
+                    <div className="h-12 rounded-2xl bg-[#f7f8fa]" />
+                  </div>
+                </div>
+              </div>
+              <aside className="space-y-4 sm:space-y-6">
+                <div className="animate-pulse rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  <div className="h-12 w-36 rounded-full bg-[#eef1f4]" />
+                  <div className="mt-3 h-5 w-24 rounded-full bg-[#eef1f4]" />
+                  <div className="mt-6 h-12 rounded-xl bg-[#e5f2e5]" />
+                </div>
+                <div className="animate-pulse rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  <div className="h-8 w-40 rounded-full bg-[#eef1f4]" />
+                  <div className="mt-5 flex items-center gap-4">
+                    <div className="h-16 w-16 rounded-2xl bg-[#eef1f4]" />
+                    <div className="flex-1">
+                      <div className="h-5 w-28 rounded-full bg-[#eef1f4]" />
+                      <div className="mt-2 h-4 w-24 rounded-full bg-[#eef1f4]" />
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </main>
+        ) : (
+          <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
+            <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+              <div className="h-4 w-24 rounded bg-[#e7efe8]" />
+              <div className="mt-4 h-8 w-2/3 rounded bg-[#e7efe8]" />
+              <div className="mt-3 h-4 w-1/2 rounded bg-[#e7efe8]" />
+            </div>
+            <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+              <div className="h-5 w-48 rounded bg-[#e7efe8]" />
+              <div className="mt-4 h-32 rounded-2xl bg-[#eef4ef]" />
+            </div>
+          </main>
+        )}
       </div>
     );
   }
@@ -1086,36 +1163,38 @@ function ProceedPageInner() {
 
       <main className={`relative mx-auto w-full ${isProjectFlow ? "max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8" : "max-w-5xl space-y-6 px-5 py-8"}`}>
         {isProjectFlow && (
-          <div className="mb-4 flex flex-col gap-3 border-b border-[#eceef2] pb-4 sm:mb-5 sm:gap-4 sm:pb-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-y-2 text-sm">
+          <div className="mb-4 flex flex-col gap-2.5 border-b border-[#eceef2] pb-4 sm:mb-5 sm:gap-4 sm:pb-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-y-2 text-[0.95rem] sm:text-sm">
               <Link
                 href="/"
-                className="rounded-full px-2 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6]"
+                className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
               >
                 Home
               </Link>
-              <span className="px-1.5 text-[#a0a5ae]">/</span>
+              <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
               <Link
                 href="/browse"
-                className="rounded-full px-2 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6]"
+                className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
               >
                 Projects
               </Link>
-              <span className="px-1.5 text-[#a0a5ae]">/</span>
-              <span className="min-w-0 rounded-full bg-[#f6f7fa] px-2.5 py-1 text-[#7b808a]">
-                <span className="block max-w-[220px] truncate sm:max-w-[420px]">{gig.title}</span>
+              <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
+              <span className="min-w-0 rounded-full bg-[#f6f7fa] px-2 py-1 text-[#7b808a] sm:px-2.5">
+                <span className="block max-w-[140px] truncate sm:max-w-[420px]">{gig.title}</span>
               </span>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5 text-sm font-semibold text-[#2f3747] sm:gap-3">
-              <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
+            <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-semibold text-[#2f3747] sm:gap-3 sm:text-sm">
+              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
                 <ProjectLineIcon kind="share" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
               </button>
-              <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
+              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
                 <ProjectLineIcon kind="heart" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
               </button>
-              <span>Share</span>
-              <span>Save</span>
-              <span className="text-[#d2a018]"><ProjectLineIcon kind="warning" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" /></span>
+              <button type="button" className="rounded-full px-2 py-1 text-[#2f3747] transition hover:bg-[#f4f6f9]">Share</button>
+              <button type="button" className="rounded-full px-2 py-1 text-[#2f3747] transition hover:bg-[#f4f6f9]">Save</button>
+              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#d2a018] transition hover:bg-[#fff8e7] sm:h-10 sm:w-10">
+                <ProjectLineIcon kind="warning" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+              </button>
             </div>
           </div>
         )}
