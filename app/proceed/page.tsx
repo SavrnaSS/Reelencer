@@ -89,22 +89,27 @@ function isCustomGigType(gig: Pick<Gig, "gigType" | "title">) {
 }
 
 function isProjectGigType(gig: Pick<Gig, "gigType">) {
-  return String(gig.gigType ?? "")
+  const raw = String(gig.gigType ?? "")
     .trim()
-    .toLowerCase() === "project";
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  return raw === "project";
 }
 
 function isContentPostingGigType(gig: Pick<Gig, "gigType">) {
-  return String(gig.gigType ?? "")
+  const raw = String(gig.gigType ?? "")
     .trim()
-    .toLowerCase() === "content posting";
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  return raw === "content-posting";
 }
 
 function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
   const raw = String(gig.gigType ?? "")
     .trim()
-    .toLowerCase();
-  return raw === "" || raw === "email creator" || raw === "part-time" || raw === "part time";
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  return raw === "" || raw === "email-creator" || raw === "part-time" || raw === "parttime";
 }
 
 function customTypeLabel(raw?: string) {
@@ -657,11 +662,47 @@ function ProceedPageInner() {
     };
   }, [gigId, refreshApplicationState, session?.role, session?.workerId]);
 
-  const isCustomFlow = useMemo(() => (gig ? isCustomGigType(gig) : false), [gig]);
-  const isProjectFlow = useMemo(() => (gig ? isProjectGigType(gig) : false), [gig]);
-  const isContentPostingFlow = useMemo(() => (gig ? isContentPostingGigType(gig) : false), [gig]);
+  const normalizedGigTypeHint = useMemo(
+    () =>
+      String(gigTypeHint ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[_\s]+/g, "-"),
+    [gigTypeHint]
+  );
+  const normalizedGigTypeValue = useMemo(
+    () =>
+      String(gig?.gigType ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[_\s]+/g, "-"),
+    [gig?.gigType]
+  );
+  const isProjectFlow = useMemo(
+    () => normalizedGigTypeHint === "project" || normalizedGigTypeValue === "project" || (gig ? isProjectGigType(gig) : false),
+    [gig, normalizedGigTypeHint, normalizedGigTypeValue]
+  );
+  const isContentPostingFlow = useMemo(
+    () =>
+      normalizedGigTypeHint === "content-posting" ||
+      normalizedGigTypeValue === "content-posting" ||
+      (gig ? isContentPostingGigType(gig) : false),
+    [gig, normalizedGigTypeHint, normalizedGigTypeValue]
+  );
   const isWorkspaceFlow = useMemo(() => (gig ? isWorkspaceGig(gig) : false), [gig]);
-  const isEmailCreatorFlow = useMemo(() => (gig ? isEmailCreatorGig(gig) : false), [gig]);
+  const isCustomFlow = useMemo(
+    () => !isProjectFlow && !isContentPostingFlow && !isWorkspaceFlow && (gig ? isCustomGigType(gig) : false),
+    [gig, isContentPostingFlow, isProjectFlow, isWorkspaceFlow]
+  );
+  const isEmailCreatorFlow = useMemo(
+    () =>
+      normalizedGigTypeHint === "email-creator" ||
+      normalizedGigTypeValue === "email-creator" ||
+      normalizedGigTypeValue === "part-time" ||
+      normalizedGigTypeValue === "parttime" ||
+      (!isProjectFlow && !isContentPostingFlow && !isWorkspaceFlow && !isCustomFlow),
+    [isContentPostingFlow, isCustomFlow, isProjectFlow, isWorkspaceFlow, normalizedGigTypeHint, normalizedGigTypeValue]
+  );
   const isProjectStyleFlow = isProjectFlow || isContentPostingFlow;
   const proposalReviewStatus = useMemo(() => {
     if (!applicationStatus) return null;

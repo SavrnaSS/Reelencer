@@ -49,6 +49,23 @@ type GigAssignment = {
   status?: string;
 };
 
+type WorkerMetrics = {
+  counts?: {
+    total?: number;
+    approved?: number;
+    submitted?: number;
+    inProgress?: number;
+  };
+  money?: {
+    earnings?: number;
+    pending?: number;
+  };
+  sla?: {
+    met?: number;
+    breached?: number;
+  };
+};
+
 function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -123,6 +140,18 @@ function isBriefListLine(line: string) {
 
 function stripBriefListMarker(line: string) {
   return line.replace(/^(\d+[\).\:]|[-*•]|[0-9]+️⃣)\s*/, "").trim();
+}
+
+function formatINR(value: number) {
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `₹${value}`;
+  }
 }
 
 function formatBriefParagraphs(text: string) {
@@ -296,6 +325,7 @@ export default function BrowsePage() {
   const [menuClosing, setMenuClosing] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [displayName, setDisplayName] = useState<string>("User");
+  const [workerMetrics, setWorkerMetrics] = useState<WorkerMetrics | null>(null);
   const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">(() =>
     readLS<"none" | "pending" | "approved" | "rejected">(LS_KEYS.KYC_STATUS, "none")
   );
@@ -315,6 +345,7 @@ export default function BrowsePage() {
   const hasApprovedKyc = role === "Worker" && kycStatus === "approved";
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
   const mobileDisplayName = displayName.trim().split(/\s+/)[0] || "User";
+  const approvedEarnings = workerMetrics?.money?.earnings ?? 0;
   const computeMenuAnchor = React.useCallback(() => {
     const el = menuButtonRef.current;
     if (!el) return;
@@ -420,6 +451,30 @@ export default function BrowsePage() {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [refreshKyc, workerId]);
+
+  useEffect(() => {
+    if (!workerId || role !== "Worker") {
+      setWorkerMetrics(null);
+      return;
+    }
+    let alive = true;
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET" });
+        if (!res.ok) throw new Error("Failed to load worker metrics");
+        const data = await res.json();
+        if (!alive) return;
+        setWorkerMetrics(data ?? null);
+      } catch {
+        if (!alive) return;
+        setWorkerMetrics(null);
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [role, workerId]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -618,6 +673,24 @@ export default function BrowsePage() {
               </>
             )}
           </div>
+          {!isGuest && role === "Worker" && (
+            <div className="mt-4 rounded-2xl border border-[#d4dccf] bg-white px-4 py-3 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Approved earnings</div>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <div>
+                  <div className="text-[1.35rem] font-semibold leading-none text-slate-900">{formatINR(approvedEarnings)}</div>
+                  <div className="mt-1 text-[11px] text-slate-500">Synced from your workspace payout ledger</div>
+                </div>
+                <Link
+                  href="/payouts"
+                  className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-[11px] font-semibold text-[#2f6655] transition hover:bg-[#e2f0e7]"
+                  onClick={closeMenu}
+                >
+                  View payouts
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
 
         {isGuest ? (
@@ -634,13 +707,14 @@ export default function BrowsePage() {
           <>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Admin" : "Workspace"}</Link>
-              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href="/browse" onClick={closeMenu}>Browse gigs</Link>
+              <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={role === "Worker" ? "/payouts" : "/browse"} onClick={closeMenu}>{role === "Worker" ? "Payouts" : "Browse gigs"}</Link>
             </div>
             <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quick links</div>
             <div className="mt-2 space-y-1">
               <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href="/" onClick={closeMenu}>Home<span className="text-slate-400">›</span></Link>
               <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Go to admin" : "Go to workspace"}<span className="text-slate-400">›</span></Link>
               {role === "Admin" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href="/addgigs" onClick={closeMenu}>Admin console<span className="text-slate-400">›</span></Link>}
+              {role === "Worker" && <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href="/payouts" onClick={closeMenu}>Payouts<span className="text-slate-400">›</span></Link>}
               <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8] cursor-pointer" href={role === "Admin" ? dashboardHref : "/my-assignments"} onClick={closeMenu}>{role === "Admin" ? "Approval queue" : "My assignments"}<span className="text-slate-400">›</span></Link>
             </div>
             <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2">
