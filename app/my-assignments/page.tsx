@@ -71,6 +71,42 @@ function fmtDate(v?: string | null) {
   return d.toLocaleString();
 }
 
+function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
+  const raw = String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  if (raw === "workspace" || raw === "full-time" || raw === "fulltime") return true;
+  return /\b(workspace|full[\s-]?time)\b/i.test(gig.title || "");
+}
+
+function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
+  const raw = String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase();
+  return raw === "" || raw === "email creator" || raw === "part-time" || raw === "part time";
+}
+
+function isProjectGig(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "project";
+}
+
+function isContentPostingGig(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "content posting";
+}
+
+function buildProceedHref(gig: Pick<Gig, "id" | "gigType">) {
+  const params = new URLSearchParams({ gigId: String(gig.id) });
+  if (isProjectGig(gig)) params.set("gigType", "project");
+  if (isContentPostingGig(gig)) params.set("gigType", "content-posting");
+  if (isEmailCreatorGig(gig)) params.set("gigType", "email-creator");
+  return `/proceed?${params.toString()}`;
+}
+
 export default function MyAssignmentsPage() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [role, setRole] = useState<Role | null>(null);
@@ -204,10 +240,10 @@ export default function MyAssignmentsPage() {
 
   if (!sessionLoaded || loading) {
     return (
-      <div className="min-h-screen bg-[#041f1a] text-white">
+      <div className="min-h-screen bg-[#eef4ea] text-slate-900">
         <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/8 px-3 py-1 text-xs text-white/80">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-[#95ea63]" />
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#cdd9cd] bg-white px-3 py-1 text-xs font-semibold text-[#486455] shadow-sm">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-[#c3d1c3] border-t-[#1f4f43]" />
             Loading your assignments...
           </div>
         </div>
@@ -216,126 +252,207 @@ export default function MyAssignmentsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#041f1a] text-white">
-      <div className="relative isolate min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(45,130,105,0.22),transparent_34%),radial-gradient(circle_at_top_right,rgba(18,64,53,0.36),transparent_26%),linear-gradient(135deg,#0d4b3d_0%,#08342b_58%,#051916_100%)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
-
-        <div className="relative mx-auto w-full max-w-7xl px-4 pb-10 pt-8 sm:px-6 lg:px-8 lg:pt-10">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="min-h-screen bg-[#eef4ea] text-slate-900">
+      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,rgba(220,233,222,0.95),transparent_38%)]">
+        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
             <div>
-              <h1 className="text-[2rem] font-black tracking-[-0.04em] text-white sm:text-[2.5rem]">My assignments</h1>
-              <p className="mt-1 text-sm text-white/68">Track your gig applications, assigned work, and latest activity.</p>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">Assignment Desk</div>
+              <h1 className="mt-1 text-[1.9rem] font-semibold leading-tight tracking-tight text-[#1c3e33] sm:text-[2.35rem]">
+                My assignments
+              </h1>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-[#5c7368]">
+                Track recruiter decisions, assigned gigs, and your latest work activity in one browse-style dashboard.
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Link href="/browse" className="rounded-full border border-white/16 bg-white/6 px-4 py-2 text-sm font-semibold text-white/88 hover:bg-white/12">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link href="/browse" className="rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]">
                 Browse gigs
               </Link>
-              <Link href="/workspace" className="rounded-full bg-[#8fe05f] px-4 py-2 text-sm font-bold text-[#0b1914] hover:bg-[#9ae86a]">
+              <Link href="/workspace" className="rounded-full bg-[#1f4f43] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2d6b5a]">
                 Workspace
               </Link>
             </div>
           </div>
+        </div>
 
-          {err && <div className="mt-5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{err}</div>}
+        <div className="relative mx-auto w-full max-w-7xl px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+          {err && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{err}</div>}
 
           {!workerId && !err && (
-            <div className="mt-6 rounded-2xl border border-white/12 bg-white/6 p-5">
-              <div className="text-lg font-semibold text-white">Worker profile not linked yet</div>
-              <p className="mt-2 text-sm text-white/70">Complete verification/login flow once, then your assignments will appear here.</p>
-              <div className="mt-4 flex gap-2">
-                <Link href="/browse" className="rounded-lg border border-white/16 bg-white/8 px-4 py-2 text-sm font-semibold text-white">Go to browse</Link>
-                <Link href="/login?next=/my-assignments" className="rounded-lg bg-[#8fe05f] px-4 py-2 text-sm font-bold text-[#0b1914]">Sign in</Link>
+            <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-5 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
+              <div className="text-lg font-semibold text-[#1c3e33]">Worker profile not linked yet</div>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-[#5c7368]">
+                Complete the verification and sign-in flow once, then your assignments and recruiter activity will appear here automatically.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Link href="/browse" className="rounded-xl border border-[#c9d3c4] bg-white px-4 py-2 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]">
+                  Go to browse
+                </Link>
+                <Link href="/login?next=/my-assignments" className="rounded-xl bg-[#1f4f43] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2d6b5a]">
+                  Sign in
+                </Link>
               </div>
             </div>
           )}
 
           {workerId && (
             <>
-              <section className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 {[
-                  { label: "Assignments", value: stats.totalAssignments },
-                  { label: "Applications", value: stats.totalApplications },
-                  { label: "Pending", value: stats.pending },
-                  { label: "Submitted", value: stats.submitted },
-                  { label: "Accepted", value: stats.accepted },
+                  { label: "Assignments", value: stats.totalAssignments, detail: "Assigned by recruiter" },
+                  { label: "Applications", value: stats.totalApplications, detail: "Proposals on record" },
+                  { label: "Pending", value: stats.pending, detail: "Awaiting next action" },
+                  { label: "Submitted", value: stats.submitted, detail: "Work under review" },
+                  { label: "Accepted", value: stats.accepted, detail: "Approved access" },
                 ].map((item) => (
-                  <div key={item.label} className="rounded-xl border border-white/10 bg-white/6 px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] sm:rounded-2xl sm:p-4">
-                    <div className="text-[11px] uppercase tracking-[0.12em] text-white/50 sm:text-xs sm:tracking-[0.14em]">{item.label}</div>
-                    <div className="mt-1 text-2xl font-black leading-none tracking-[-0.03em] text-white sm:mt-2 sm:text-3xl sm:tracking-[-0.04em]">
-                      {item.value}
+                  <div key={item.label} className="relative rounded-[1.2rem] border border-[#cfdbc8] bg-white/90 px-4 py-3 shadow-lg shadow-[#d6dfd2]/35 backdrop-blur sm:rounded-[1.4rem] sm:px-5 sm:py-5">
+                    <span className="absolute right-4 top-3 inline-flex rounded-full border border-[#d9e4de] bg-[#f3f8f2] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#597568] sm:right-5 sm:top-5 sm:px-3 sm:text-[10px] sm:tracking-[0.16em]">
+                      {item.label}
+                    </span>
+                    <div className="min-w-0 pt-8 sm:pt-10">
+                      <div className="text-[2rem] font-semibold leading-none tracking-tight text-[#1c3e33] sm:text-4xl">{item.value}</div>
+                      <div className="mt-1.5 max-w-[14rem] text-[11px] leading-5 text-[#71887c] sm:mt-2 sm:text-xs">{item.detail}</div>
                     </div>
                   </div>
                 ))}
               </section>
 
-              <section className="mt-6 grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
-                <div className="rounded-2xl border border-white/10 bg-white/6 p-5">
-                  <div className="text-lg font-semibold text-white">Assigned gigs</div>
-                  <div className="mt-4 space-y-3">
-                    {normalizedAssignments.length === 0 && (
-                      <div className="rounded-xl border border-white/10 bg-black/10 px-4 py-5 text-sm text-white/65">No assignments yet.</div>
-                    )}
-                    {normalizedAssignments.map((a, idx) => {
-                      const g = gigById.get(a.gigKey);
-                      const emails = Array.isArray(a.assignedEmails)
-                        ? a.assignedEmails
-                        : Array.isArray(a.assigned_emails)
-                          ? a.assigned_emails
-                          : [a.assignedEmail ?? a.assigned_email].filter(Boolean);
-                      return (
-                        <article key={`${a.id ?? a.gigKey}-${idx}`} className="rounded-xl border border-white/10 bg-black/10 p-3 sm:p-4">
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0 flex-1">
-                              <div className="whitespace-normal break-words text-[1.05rem] font-semibold leading-tight text-white">{g?.title ?? a.gigKey}</div>
-                              <div className="mt-1 break-words text-xs text-white/62">{g?.company ?? "Gig"} • {g?.platform ?? "Platform"}</div>
+              <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)]">
+                <div className="space-y-6">
+                  <div className="rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Assigned gigs</div>
+                        <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">Recruiter-assigned work</div>
+                        <div className="mt-1 text-sm leading-6 text-[#5c7368]">Your accepted gigs, assignment packs, and current assignment state.</div>
+                      </div>
+                      <span className="inline-flex rounded-full border border-[#cfe0d4] bg-[#edf5ef] px-3 py-1 text-xs font-semibold text-[#2f6655]">
+                        {normalizedAssignments.length} total
+                      </span>
+                    </div>
+
+                    <div className="mt-5 space-y-3.5">
+                      {normalizedAssignments.length === 0 && (
+                        <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-5 text-sm text-[#5f6f66]">
+                          No assignments yet.
+                        </div>
+                      )}
+                      {normalizedAssignments.map((a, idx) => {
+                        const g = gigById.get(a.gigKey);
+                        const emails = Array.isArray(a.assignedEmails)
+                          ? a.assignedEmails
+                          : Array.isArray(a.assigned_emails)
+                            ? a.assigned_emails
+                            : [a.assignedEmail ?? a.assigned_email].filter(Boolean);
+                        const actionHref = g ? (isWorkspaceGig(g) ? "/workspace" : buildProceedHref(g)) : null;
+                        const actionLabel = g
+                          ? isWorkspaceGig(g)
+                            ? "Open workspace"
+                            : isEmailCreatorGig(g)
+                              ? "Continue assignment"
+                              : "Open gig"
+                          : "Open assignment";
+                        return (
+                          <article key={`${a.id ?? a.gigKey}-${idx}`} className="rounded-2xl border border-[#d9e4de] bg-[#f9fcf8] p-4 shadow-[0_10px_24px_rgba(172,190,176,0.16)]">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="break-words text-[1.02rem] font-semibold leading-tight text-[#23352d] sm:text-[1.08rem]">
+                                  {g?.title ?? a.gigKey}
+                                </div>
+                                <div className="mt-1 break-words text-xs leading-5 text-[#6a7f73]">
+                                  {g?.company ?? "Gig"} • {g?.platform ?? "Platform"}
+                                </div>
+                              </div>
+                              <span className="self-start rounded-full border border-[#cfe0d4] bg-white px-3 py-1 text-xs font-semibold text-[#315f50]">
+                                {a.status}
+                              </span>
                             </div>
-                            <span className="self-start rounded-full border border-white/14 bg-white/8 px-2.5 py-1 text-xs font-semibold text-white/80">{a.status}</span>
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-white/66 sm:gap-2 sm:text-xs">
-                            {g?.payout && <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 sm:py-1">{g.payout}</span>}
-                            {g?.gigType && <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 sm:py-1">{g.gigType}</span>}
-                            {!!emails.length && <span className="rounded-full border border-white/10 bg-white/6 px-2 py-0.5 sm:py-1">{emails.length} email(s)</span>}
-                          </div>
-                          <div className="mt-3 text-xs text-white/55">Submitted: {fmtDate(a.submittedAt)}</div>
-                          <div className="mt-1 text-xs text-white/55">Reviewed: {fmtDate(a.decidedAt)}</div>
-                        </article>
-                      );
-                    })}
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] sm:text-xs">
+                              {g?.payout && <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">{g.payout}</span>}
+                              {g?.gigType && <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">{g.gigType}</span>}
+                              {!!emails.length && <span className="rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[#4d665c]">{emails.length} email(s)</span>}
+                            </div>
+                            <div className="mt-4 grid gap-2 text-xs text-[#70857a] sm:grid-cols-2">
+                              <div className="rounded-xl border border-[#e1e8e0] bg-white px-3 py-2">Submitted: {fmtDate(a.submittedAt)}</div>
+                              <div className="rounded-xl border border-[#e1e8e0] bg-white px-3 py-2">Reviewed: {fmtDate(a.decidedAt)}</div>
+                            </div>
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-xs leading-5 text-[#6b8175]">
+                                Continue this assigned gig from the correct worker flow.
+                              </div>
+                              {actionHref ? (
+                                <Link
+                                  href={actionHref}
+                                  className="inline-flex items-center rounded-full bg-[#1f4f43] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#2d6b5a]"
+                                >
+                                  {actionLabel}
+                                </Link>
+                              ) : (
+                                <span className="inline-flex items-center rounded-full border border-[#d4dfd7] bg-white px-4 py-2 text-sm font-semibold text-[#6b8175]">
+                                  Assignment pending sync
+                                </span>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-6">
-                  <div className="rounded-2xl border border-white/10 bg-white/6 p-5">
-                    <div className="text-lg font-semibold text-white">Applications</div>
-                    <div className="mt-4 space-y-3">
-                      {apps.length === 0 && <div className="text-sm text-white/65">No applications yet.</div>}
+                  <div className="rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Applications</div>
+                        <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">Proposal activity</div>
+                      </div>
+                      <span className="inline-flex rounded-full border border-[#d9e4de] bg-[#f3f8f2] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#597568]">
+                        {apps.length} items
+                      </span>
+                    </div>
+                    <div className="mt-5 space-y-3">
+                      {apps.length === 0 && <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-5 text-sm text-[#5f6f66]">No applications yet.</div>}
                       {apps.map((a) => {
                         const g = gigById.get(String(a.gigId));
                         return (
-                          <div key={a.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
+                          <div key={a.id} className="rounded-2xl border border-[#d9e4de] bg-[#f9fcf8] p-4">
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0 flex-1">
-                                <div className="whitespace-normal break-words text-sm font-semibold text-white">{g?.title ?? a.gigId}</div>
-                                <div className="mt-1 break-words text-xs text-white/58">{g?.company ?? "Gig"}</div>
+                                <div className="break-words text-sm font-semibold text-[#23352d]">{g?.title ?? a.gigId}</div>
+                                <div className="mt-1 break-words text-xs leading-5 text-[#6a7f73]">{g?.company ?? "Gig"}</div>
                               </div>
-                              <span className="self-start rounded-full border border-white/14 bg-white/8 px-2 py-0.5 text-xs text-white/80">{a.status}</span>
+                              <span className="self-start rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-xs font-semibold text-[#315f50]">{a.status}</span>
                             </div>
-                            <div className="mt-2 text-xs text-white/55">Applied: {fmtDate(a.appliedAt)}</div>
+                            <div className="mt-3 rounded-xl border border-[#e1e8e0] bg-white px-3 py-2 text-xs text-[#70857a]">
+                              Applied: {fmtDate(a.appliedAt)}
+                            </div>
                           </div>
                         );
                       })}
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 bg-white/6 p-5">
-                    <div className="text-lg font-semibold text-white">Recent activity</div>
-                    <div className="mt-4 space-y-3">
-                      {activity.length === 0 && <div className="text-sm text-white/65">No recent activity.</div>}
+                  <div className="rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Recent activity</div>
+                        <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">Latest updates</div>
+                      </div>
+                      <span className="inline-flex rounded-full border border-[#d9e4de] bg-[#f3f8f2] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#597568]">
+                        Live log
+                      </span>
+                    </div>
+                    <div className="mt-5 space-y-3">
+                      {activity.length === 0 && <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-5 text-sm text-[#5f6f66]">No recent activity.</div>}
                       {activity.map((item) => (
-                        <div key={item.id} className="rounded-xl border border-white/10 bg-black/10 p-3">
-                          <div className="break-words text-sm font-semibold text-white">{item.title}</div>
-                          <div className="mt-1 break-words text-xs text-white/62">{item.subtitle}</div>
-                          <div className="mt-2 text-xs text-white/50">{fmtDate(String(item.when))}</div>
+                        <div key={item.id} className="rounded-2xl border border-[#d9e4de] bg-[#f9fcf8] p-4">
+                          <div className="break-words text-sm font-semibold text-[#23352d]">{item.title}</div>
+                          <div className="mt-1 break-words text-xs leading-5 text-[#6a7f73]">{item.subtitle}</div>
+                          <div className="mt-3 inline-flex rounded-full border border-[#d4dfd7] bg-white px-3 py-1 text-[11px] font-medium text-[#70857a]">
+                            {fmtDate(String(item.when))}
+                          </div>
                         </div>
                       ))}
                     </div>

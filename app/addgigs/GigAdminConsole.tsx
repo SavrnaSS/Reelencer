@@ -110,7 +110,7 @@ const LS_KEYS = {
 const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
 const PAYOUTS: PayoutType[] = ["Per task", "Per post", "Monthly"];
 const STATUSES: GigStatus[] = ["Open", "Paused", "Closed"];
-const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Project", "Custom"];
+const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Project", "Content Posting", "Custom"];
 
 function normalizeGigType(raw?: string) {
   const value = String(raw ?? "")
@@ -120,6 +120,7 @@ function normalizeGigType(raw?: string) {
   if (value === "part-time" || value === "part time") return "Email Creator";
   if (value === "full-time" || value === "full time" || value === "workspace") return "Workspace";
   if (value === "project") return "Project";
+  if (value === "content posting" || value === "content-posting") return "Content Posting";
   return raw ?? "Email Creator";
 }
 
@@ -129,6 +130,22 @@ function formatGigTypeLabel(raw?: string) {
   if (/^custom:\s*/i.test(value)) return `Cat: ${value.replace(/^custom:\s*/i, "").trim() || "Freelance"}`;
   if (/^category:\s*/i.test(value)) return `Cat: ${value.replace(/^category:\s*/i, "").trim() || "Freelance"}`;
   return value;
+}
+
+function isProjectGig(raw?: string) {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase() === "project";
+}
+
+function isContentPostingGig(raw?: string) {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase() === "content posting";
+}
+
+function isProjectStyleGig(raw?: string) {
+  return isProjectGig(raw) || isContentPostingGig(raw);
 }
 
 function parseCustomRequirementsText(text: string) {
@@ -151,7 +168,7 @@ function buildRequirementsPayload(input: {
   onboardingRequired: boolean;
   kycRequired: boolean;
 }) {
-  if (input.gigType === "Custom" || input.gigType === "Project") {
+  if (input.gigType === "Custom" || input.gigType === "Project" || input.gigType === "Content Posting") {
     const out: string[] = [];
     if (input.customBrief.trim()) out.push(`Brief::${input.customBrief.trim()}`);
     out.push(`Meta::onboarding_required=${input.onboardingRequired ? "true" : "false"}`);
@@ -514,6 +531,11 @@ export default function GigAdminConsole({
     if (selectedGigId === "All") return apps;
     return apps.filter((app) => app.gigId === selectedGigId);
   }, [apps, selectedGigId]);
+  const gigById = useMemo(() => {
+    const map = new Map<string, Gig>();
+    gigs.forEach((gig) => map.set(String(gig.id), gig));
+    return map;
+  }, [gigs]);
   const proposalApps = useMemo(
     () =>
       apps.filter(
@@ -536,7 +558,7 @@ export default function GigAdminConsole({
     if (!form.workload.trim()) return "Workload is required.";
     if (!form.payout.trim()) return "Payout is required.";
     if (form.gigType === "Custom" && !form.customGigType.trim()) return "Custom gig type label is required.";
-    if ((form.gigType === "Custom" || form.gigType === "Project") && !form.customBrief.trim()) return "A project brief is required for this gig type.";
+    if ((form.gigType === "Custom" || form.gigType === "Project" || form.gigType === "Content Posting") && !form.customBrief.trim()) return "A project brief is required for this gig type.";
     return null;
   };
 
@@ -596,6 +618,8 @@ export default function GigAdminConsole({
         ? `Category: ${form.customGigType.trim() || "Freelance"}`
         : form.gigType === "Project"
           ? "Project"
+          : form.gigType === "Content Posting"
+            ? "Content Posting"
           : normalizeGigType(form.gigType);
 
     const payload: Gig = {
@@ -665,7 +689,7 @@ export default function GigAdminConsole({
   const startEdit = (gig: Gig) => {
     setEditingGig(gig);
     const normalizedType = normalizeGigType(gig.gigType);
-    const isProject = normalizedType.toLowerCase() === "project";
+    const isProject = isProjectStyleGig(normalizedType);
     const isCustom = /^(custom|category):/i.test(normalizedType);
     const customLabel = isCustom ? normalizedType.replace(/^(custom|category):\s*/i, "").trim() : "";
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
@@ -678,7 +702,7 @@ export default function GigAdminConsole({
       workload: gig.workload,
       payout: gig.payout,
       payoutType: gig.payoutType,
-      gigType: isCustom ? "Custom" : isProject ? "Project" : normalizedType,
+      gigType: isCustom ? "Custom" : isProject ? normalizedType : normalizedType,
       customGigType: customLabel,
       customBrief: customFields.customBrief,
       customRequirements: customFields.customRequirements,
@@ -713,6 +737,8 @@ export default function GigAdminConsole({
         ? `Category: ${form.customGigType.trim() || "Freelance"}`
         : form.gigType === "Project"
           ? "Project"
+          : form.gigType === "Content Posting"
+            ? "Content Posting"
           : normalizeGigType(form.gigType);
 
     const updates: Partial<Gig> = {
@@ -1166,9 +1192,13 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {(form.gigType === "Custom" || form.gigType === "Project") && (
+              {(form.gigType === "Custom" || form.gigType === "Project" || form.gigType === "Content Posting") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
-                  {form.gigType === "Project" ? "Project brief (shown in proposal desk)" : "Custom brief (shown in proposal desk)"}
+                  {form.gigType === "Project"
+                    ? "Project brief (shown in proposal desk)"
+                    : form.gigType === "Content Posting"
+                      ? "Content posting brief (shown in proposal desk)"
+                      : "Custom brief (shown in proposal desk)"}
                   <textarea
                     className="mt-2 h-24 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                     value={form.customBrief}
@@ -1176,12 +1206,14 @@ export default function GigAdminConsole({
                     placeholder={
                       form.gigType === "Project"
                         ? "Describe the project scope, client expectation, deliverables, and review process."
+                        : form.gigType === "Content Posting"
+                          ? "Describe posting cadence, content workflow, account expectations, and how daily execution starts after approval."
                         : "Describe the custom project scope, expectations, and decision criteria."
                     }
                   />
                 </label>
               )}
-              {(form.gigType === "Custom" || form.gigType === "Project") && (
+              {(form.gigType === "Custom" || form.gigType === "Project" || form.gigType === "Content Posting") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Detailed requirements (one per line)
                   <textarea
@@ -1192,7 +1224,7 @@ export default function GigAdminConsole({
                   />
                 </label>
               )}
-              {(form.gigType === "Custom" || form.gigType === "Project") && (
+              {(form.gigType === "Custom" || form.gigType === "Project" || form.gigType === "Content Posting") && (
                 <label className="text-xs font-semibold text-slate-600 md:col-span-2">
                   Brief media upload (images/videos)
                   <input
@@ -1542,6 +1574,8 @@ export default function GigAdminConsole({
               {filteredApps.map((app) => (
                 <div key={app.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
                   {(() => {
+                    const relatedGig = gigById.get(String(app.gigId));
+                    const isProjectProposal = isProjectStyleGig(relatedGig?.gigType);
                     const draft = proposalReviewDraft[app.id] ?? {
                       adminNote: app.proposal?.adminNote ?? "",
                       adminExplanation: app.proposal?.adminExplanation ?? "",
@@ -1568,10 +1602,10 @@ export default function GigAdminConsole({
                       <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposal</div>
                       {app.proposal.pitch && (
                         <div className="mt-2 text-xs text-slate-600">
-                          <span className="font-semibold text-slate-700">Pitch:</span> {app.proposal.pitch}
+                          <span className="font-semibold text-slate-700">{isProjectProposal ? "Cover letter:" : "Pitch:"}</span> {app.proposal.pitch}
                         </div>
                       )}
-                      {app.proposal.approach && (
+                      {app.proposal.approach && !isProjectProposal && (
                         <div className="mt-2 text-xs text-slate-600">
                           <span className="font-semibold text-slate-700">Approach:</span> {app.proposal.approach}
                         </div>
@@ -1579,12 +1613,12 @@ export default function GigAdminConsole({
                       <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
                         {app.proposal.timeline && (
                           <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
-                            Timeline: {app.proposal.timeline}
+                            {isProjectProposal ? "Estimated hours" : "Timeline"}: {app.proposal.timeline}
                           </span>
                         )}
                         {app.proposal.budget && (
                           <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
-                            Budget note: {app.proposal.budget}
+                            {isProjectProposal ? "Hourly price" : "Budget note"}: {app.proposal.budget}
                           </span>
                         )}
                         {app.proposal.submittedAt && (
@@ -1593,7 +1627,7 @@ export default function GigAdminConsole({
                           </span>
                         )}
                       </div>
-                      {app.proposal.portfolio && (
+                      {app.proposal.portfolio && !isProjectProposal && (
                         <div className="mt-2 text-xs text-slate-600">
                           <span className="font-semibold text-slate-700">Portfolio:</span> {app.proposal.portfolio}
                         </div>

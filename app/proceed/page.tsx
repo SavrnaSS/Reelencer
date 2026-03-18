@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Role = "Admin" | "Worker";
@@ -83,6 +83,7 @@ function isCustomGigType(gig: Pick<Gig, "gigType" | "title">) {
   if (!raw) return false;
   if (raw === "email creator" || raw === "part-time" || raw === "part time") return false;
   if (raw === "project") return false;
+  if (raw === "content posting") return false;
   if (raw === "workspace" || raw === "full-time" || raw === "full time" || raw === "fulltime") return false;
   return true;
 }
@@ -91,6 +92,12 @@ function isProjectGigType(gig: Pick<Gig, "gigType">) {
   return String(gig.gigType ?? "")
     .trim()
     .toLowerCase() === "project";
+}
+
+function isContentPostingGigType(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "content posting";
 }
 
 function isEmailCreatorGig(gig: Pick<Gig, "gigType">) {
@@ -158,6 +165,44 @@ function cleanInboxBody(body: string) {
 
   const pick = (cleanLines[0] || filtered[0] || lines[0] || text).trim();
   return pick.length > 400 ? pick.slice(0, 400) : pick;
+}
+
+function formatRelativeTimestamp(value?: string) {
+  if (!value) return null;
+  const target = new Date(value).getTime();
+  if (Number.isNaN(target)) return null;
+
+  const diffMs = target - Date.now();
+  const absMs = Math.abs(diffMs);
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["year", 1000 * 60 * 60 * 24 * 365],
+    ["month", 1000 * 60 * 60 * 24 * 30],
+    ["week", 1000 * 60 * 60 * 24 * 7],
+    ["day", 1000 * 60 * 60 * 24],
+    ["hour", 1000 * 60 * 60],
+    ["minute", 1000 * 60],
+  ];
+
+  for (const [unit, size] of units) {
+    if (absMs >= size || unit === "minute") {
+      return rtf.format(Math.round(diffMs / size), unit);
+    }
+  }
+
+  return "just now";
+}
+
+function formatCompactRelativeTimestamp(value?: string) {
+  const relative = formatRelativeTimestamp(value);
+  if (!relative) return null;
+  return relative
+    .replace(/\bminutes?\b/i, "min")
+    .replace(/\bhours?\b/i, "hr")
+    .replace(/\bdays?\b/i, "day")
+    .replace(/\bweeks?\b/i, "wk")
+    .replace(/\bmonths?\b/i, "mo")
+    .replace(/\byears?\b/i, "yr");
 }
 
 function ProjectLineIcon({
@@ -313,7 +358,7 @@ function FormattedBrief({
   );
 }
 
-const LS_KEYS = { AUTH: "igops:auth", GIGS: "igops:gigs" } as const;
+const LS_KEYS = { AUTH: "igops:auth", SAVED_GIGS: "igops:saved-gigs" } as const;
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -327,12 +372,23 @@ function readLS<T>(key: string, fallback: T): T {
   }
 }
 
+function writeLS<T>(key: string, value: T) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore local storage write failures
+  }
+}
+
 const emptyRows = () =>
   new Array(5).fill(null).map(() => ({ handle: "", email: "", password: "", phone: "" }));
 
 function ProceedPageInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const gigId = searchParams.get("gigId");
+  const gigTypeHint = searchParams.get("gigType");
 
   const [session, setSession] = useState<AuthSession | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
@@ -364,13 +420,11 @@ function ProceedPageInner() {
   const [proposalPortfolio, setProposalPortfolio] = useState("");
   const [proposalSaving, setProposalSaving] = useState(false);
   const [groupJoinConfirming, setGroupJoinConfirming] = useState(false);
+  const [savedGig, setSavedGig] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const pollingRef = React.useRef(false);
-  const cachedGig = useMemo(() => {
-    if (!gigId) return null;
-    const cached = readLS<Gig[]>(LS_KEYS.GIGS, []);
-    return Array.isArray(cached) ? cached.find((item) => String(item?.id) === String(gigId)) ?? null : null;
-  }, [gigId]);
+  const proposalDeskId = "project-proposal-desk";
 
   useEffect(() => {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -388,6 +442,20 @@ function ProceedPageInner() {
     setSession(s);
     setSessionReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!gigId || !sessionReady) return;
+    const key = session?.workerId || session?.role || "guest";
+    const savedMap = readLS<Record<string, string[]>>(LS_KEYS.SAVED_GIGS, {});
+    const savedItems = Array.isArray(savedMap[key]) ? savedMap[key] : [];
+    setSavedGig(savedItems.includes(String(gigId)));
+  }, [gigId, session?.role, session?.workerId, sessionReady]);
+
+  useEffect(() => {
+    if (!actionMessage) return;
+    const id = window.setTimeout(() => setActionMessage(null), 2500);
+    return () => window.clearTimeout(id);
+  }, [actionMessage]);
 
   useEffect(() => {
     let alive = true;
@@ -459,6 +527,23 @@ function ProceedPageInner() {
     []
   );
 
+  const refreshApplicationState = React.useCallback(
+    async (targetGigId: string, targetWorkerId: string) => {
+      const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(targetWorkerId)}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const appPayload = appRes.ok ? await appRes.json() : [];
+      const matchApp = Array.isArray(appPayload)
+        ? appPayload.find((item: any) => String(item?.gigId) === String(targetGigId))
+        : null;
+      setApplication(matchApp ?? null);
+      setApplicationStatus(matchApp?.status ? String(matchApp.status) : null);
+      return matchApp ?? null;
+    },
+    []
+  );
+
   useEffect(() => {
     if (!gigId) {
       setError("Missing gigId.");
@@ -473,6 +558,8 @@ function ProceedPageInner() {
     (async () => {
       setLoading(true);
       setError(null);
+      setApplication(null);
+      setApplicationStatus(null);
 
       // Load gig
       try {
@@ -488,10 +575,6 @@ function ProceedPageInner() {
           setLoading(false);
           return;
         }
-        if (match && (isCustomGigType(match) || isProjectGigType(match))) {
-          setLoading(false);
-          return;
-        }
 
         const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(currentWorkerId)}`, {
           method: "GET",
@@ -504,6 +587,10 @@ function ProceedPageInner() {
         setApplication(matchApp ?? null);
         const status = matchApp?.status ? String(matchApp.status) : null;
         setApplicationStatus(status);
+        if (isCustomGigType(match) || isProjectGigType(match) || isContentPostingGigType(match)) {
+          setLoading(false);
+          return;
+        }
         if (!status) {
           setLoading(false);
           return;
@@ -513,7 +600,7 @@ function ProceedPageInner() {
           return;
         }
         const reviewStatus = String(matchApp?.proposal?.reviewStatus ?? "").trim();
-        const isApproved = reviewStatus === "Accepted" || status === "Accepted";
+        const isApproved = isEmailCreatorGig(match) || reviewStatus === "Accepted" || status === "Accepted";
         if (!isApproved) {
           setLoading(false);
           return;
@@ -537,10 +624,45 @@ function ProceedPageInner() {
     };
   }, [ensureAssignment, gigId, session?.workerId]);
 
+  useEffect(() => {
+    if (!gigId || !session?.workerId || session.role !== "Worker") return;
+
+    let alive = true;
+
+    const run = async () => {
+      try {
+        const matchApp = await refreshApplicationState(gigId, session.workerId);
+        if (!alive || !matchApp) return;
+        setSuccess((prev) =>
+          prev && prev.toLowerCase().includes("proposal submitted successfully") ? null : prev
+        );
+      } catch {
+        // keep last known application state
+      }
+    };
+
+    run();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") run();
+    };
+
+    const id = window.setInterval(run, 15000);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [gigId, refreshApplicationState, session?.role, session?.workerId]);
+
   const isCustomFlow = useMemo(() => (gig ? isCustomGigType(gig) : false), [gig]);
   const isProjectFlow = useMemo(() => (gig ? isProjectGigType(gig) : false), [gig]);
+  const isContentPostingFlow = useMemo(() => (gig ? isContentPostingGigType(gig) : false), [gig]);
   const isWorkspaceFlow = useMemo(() => (gig ? isWorkspaceGig(gig) : false), [gig]);
   const isEmailCreatorFlow = useMemo(() => (gig ? isEmailCreatorGig(gig) : false), [gig]);
+  const isProjectStyleFlow = isProjectFlow || isContentPostingFlow;
   const proposalReviewStatus = useMemo(() => {
     if (!applicationStatus) return null;
     const explicit = application?.proposal?.reviewStatus;
@@ -554,7 +676,7 @@ function ProceedPageInner() {
     () => !!applicationStatus && applicationStatus !== "Withdrawn",
     [applicationStatus]
   );
-  const canAccessOperations = isProposalApproved || !!assignment;
+  const canAccessOperations = isProposalApproved || !!assignment || (isEmailCreatorFlow && hasApplication);
   const hasAdminUpdate = useMemo(
     () =>
       !!(
@@ -574,7 +696,24 @@ function ProceedPageInner() {
     if (inviteMatch?.[2]) return `https://${inviteMatch[2]}`;
     return null;
   }, [application?.proposal?.whatsappLink]);
+  const sellerActionLabel = adminWhatsappLink ? "Contact Seller" : "Open Proposal Desk";
   const groupJoinConfirmed = !!application?.proposal?.groupJoinedConfirmed;
+  const projectReviewBadgeTone =
+    proposalReviewStatus === "Accepted"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : proposalReviewStatus === "Rejected"
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : "border-[#d9e2d8] bg-[#f6faf5] text-[#476255]";
+  const projectReviewLabel =
+    proposalReviewStatus === "Accepted"
+      ? "Recruiter Approved"
+      : proposalReviewStatus === "Rejected"
+        ? "Revision Requested"
+        : hasAdminUpdate
+          ? "Recruiter Update"
+          : "Proposal Submitted";
+  const isMarketplaceFlow = isProjectStyleFlow || isEmailCreatorFlow;
+  const shouldShowProjectStatusPanel = isProjectStyleFlow && hasApplication && proposalReviewStatus !== "Rejected";
   const customType = useMemo(() => customTypeLabel(gig?.gigType), [gig?.gigType]);
   const customBrief = useMemo(() => {
     const list = gig?.requirements ?? [];
@@ -637,6 +776,68 @@ function ProceedPageInner() {
   }, [projectMeta.kyc_required]);
   const shouldBlockForKyc = session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
 
+  const handleProjectShare = React.useCallback(async () => {
+    const title = gig?.title || "Reelencer project";
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        setActionMessage("Project link shared.");
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setActionMessage("Project link copied.");
+        return;
+      }
+      setActionMessage("Share is not available on this device.");
+    } catch {
+      setActionMessage("Share was cancelled.");
+    }
+  }, [gig?.title]);
+
+  const handleProjectSave = React.useCallback(() => {
+    if (!gigId) return;
+    const key = session?.workerId || session?.role || "guest";
+    const savedMap = readLS<Record<string, string[]>>(LS_KEYS.SAVED_GIGS, {});
+    const current = new Set(Array.isArray(savedMap[key]) ? savedMap[key] : []);
+    if (current.has(String(gigId))) {
+      current.delete(String(gigId));
+      setSavedGig(false);
+      setActionMessage("Project removed from saved.");
+    } else {
+      current.add(String(gigId));
+      setSavedGig(true);
+      setActionMessage("Project saved.");
+    }
+    writeLS(LS_KEYS.SAVED_GIGS, { ...savedMap, [key]: Array.from(current) });
+  }, [gigId, session?.role, session?.workerId]);
+
+  const handleProjectReport = React.useCallback(() => {
+    const subject = encodeURIComponent(`Report project ${gig?.id || gigId || ""}`);
+    const body = encodeURIComponent(
+      [
+        `Project: ${gig?.title || "Unknown"}`,
+        `Gig ID: ${gig?.id || gigId || "Unknown"}`,
+        `Worker: ${session?.workerId || "Guest"}`,
+        `URL: ${typeof window !== "undefined" ? window.location.href : "Unavailable"}`,
+        "",
+        "Issue summary:",
+      ].join("\n")
+    );
+    window.location.href = `mailto:support@reelencer.com?subject=${subject}&body=${body}`;
+  }, [gig?.id, gig?.title, gigId, session?.workerId]);
+
+  useEffect(() => {
+    if (!gigId || !gig || (!isProjectStyleFlow && !isEmailCreatorFlow)) return;
+    const expectedType = isProjectFlow ? "project" : isContentPostingFlow ? "content-posting" : "email-creator";
+    if ((gigTypeHint ?? "").trim().toLowerCase() === expectedType) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("gigId", gigId);
+    params.set("gigType", expectedType);
+    router.replace(`/proceed?${params.toString()}`, { scroll: false });
+  }, [gig, gigId, gigTypeHint, isContentPostingFlow, isEmailCreatorFlow, isProjectFlow, isProjectStyleFlow, router, searchParams]);
+
   // Auto-sync poller
   useEffect(() => {
     if (!assignment?.id || !autoSync) return;
@@ -688,6 +889,66 @@ function ProceedPageInner() {
       : [];
     return list.map((e) => e.trim().toLowerCase()).filter(Boolean);
   }, [assignment?.assignedEmails, assignment?.assignedEmail]);
+
+  useEffect(() => {
+    if (!assignment?.id) {
+      setRows(emptyRows());
+      return;
+    }
+
+    let alive = true;
+
+    const hydrateRows = async () => {
+      try {
+        const res = await fetch(`/api/gig-credentials?assignmentId=${encodeURIComponent(assignment.id)}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        const payload = res.ok ? await res.json() : [];
+        if (!alive) return;
+
+        if (Array.isArray(payload) && payload.length > 0) {
+          const nextRows = emptyRows().map((row, idx) => {
+            const saved = payload[idx];
+            return saved
+              ? {
+                  handle: String(saved.handle ?? ""),
+                  email: String(saved.email ?? assignedList[idx] ?? ""),
+                  password: String(saved.password ?? ""),
+                  phone: String(saved.phone ?? ""),
+                }
+              : {
+                  ...row,
+                  email: assignedList[idx] ?? "",
+                };
+          });
+          setRows(nextRows);
+          return;
+        }
+
+        setRows((prev) =>
+          prev.map((row, idx) => ({
+            ...row,
+            email: row.email || assignedList[idx] || "",
+          }))
+        );
+      } catch {
+        if (!alive) return;
+        setRows((prev) =>
+          prev.map((row, idx) => ({
+            ...row,
+            email: row.email || assignedList[idx] || "",
+          }))
+        );
+      }
+    };
+
+    hydrateRows();
+
+    return () => {
+      alive = false;
+    };
+  }, [assignment?.id, assignedList]);
 
   const filteredInbox = useMemo(() => {
     if (assignedList.length === 0) return inbox;
@@ -823,8 +1084,18 @@ function ProceedPageInner() {
 
   const submitCustomProposal = async () => {
     if (!gigId || !session?.workerId) return;
-    if (!proposalPitch.trim() || !proposalApproach.trim() || !proposalTimeline.trim()) {
-      setError("Please complete pitch, approach, and timeline before submission.");
+    const resolvedPitch = proposalPitch.trim();
+    const resolvedApproach = isProjectStyleFlow ? proposalPitch.trim() : proposalApproach.trim();
+    const resolvedTimeline = proposalTimeline.trim();
+    const resolvedBudget = proposalBudget.trim();
+    const projectFormIncomplete = isProjectStyleFlow && (!resolvedBudget || !resolvedTimeline || !resolvedPitch);
+    const customFormIncomplete = !isProjectStyleFlow && (!resolvedPitch || !resolvedApproach || !resolvedTimeline);
+    if (projectFormIncomplete || customFormIncomplete) {
+      setError(
+        isProjectStyleFlow
+          ? "Please complete hourly price, estimated hours, and cover letter before submission."
+          : "Please complete pitch, approach, and timeline before submission."
+      );
       return;
     }
     setProposalSaving(true);
@@ -840,10 +1111,10 @@ function ProceedPageInner() {
           workerName: session.workerId,
           status: "Pending",
           proposal: {
-            pitch: proposalPitch.trim(),
-            approach: proposalApproach.trim(),
-            timeline: proposalTimeline.trim(),
-            budget: proposalBudget.trim(),
+            pitch: resolvedPitch,
+            approach: resolvedApproach,
+            timeline: resolvedTimeline,
+            budget: resolvedBudget,
             portfolio: proposalPortfolio.trim(),
             submittedAt: new Date().toISOString(),
             reviewStatus: "Pending",
@@ -871,6 +1142,7 @@ function ProceedPageInner() {
     setError(null);
     setSuccess(null);
     try {
+      const isInstantAccess = isEmailCreatorFlow;
       const res = await fetch("/api/gig-applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -878,9 +1150,9 @@ function ProceedPageInner() {
           gigId,
           workerId: session.workerId,
           workerName: session.workerId,
-          status: "Pending",
+          status: isInstantAccess ? "Accepted" : "Pending",
           proposal: {
-            reviewStatus: "Pending",
+            reviewStatus: isInstantAccess ? "Accepted" : "Pending",
             submittedAt: new Date().toISOString(),
           },
         }),
@@ -891,8 +1163,14 @@ function ProceedPageInner() {
       }
       const payload = await res.json();
       setApplication(payload ?? null);
-      setApplicationStatus(String(payload?.status ?? "Pending"));
-      setSuccess("Proposal submitted successfully. Track status updates from this project panel.");
+      const resolvedStatus = String(payload?.status ?? (isInstantAccess ? "Accepted" : "Pending"));
+      setApplicationStatus(resolvedStatus);
+      if (isInstantAccess) {
+        await ensureAssignment(gigId, session.workerId);
+        setSuccess("Access activated. Your assigned work panel is ready.");
+      } else {
+        setSuccess("Proposal submitted successfully. Track status updates from this project panel.");
+      }
     } catch (e: any) {
       setError(e?.message || "Unable to submit proposal right now.");
     } finally {
@@ -942,71 +1220,102 @@ function ProceedPageInner() {
   };
 
   if (!sessionReady || loading || !kycLoaded) {
-    const showProjectSkeleton = !!(gig ?? cachedGig) && isProjectGigType((gig ?? cachedGig) as Gig);
+    const showMarketplaceSkeleton =
+      ["project", "content-posting", "email-creator"].includes((gigTypeHint ?? "").trim().toLowerCase()) ||
+      (!!gig && (isProjectGigType(gig) || isContentPostingGigType(gig) || isEmailCreatorGig(gig)));
     return (
-      <div className={`relative min-h-screen overflow-x-hidden ${showProjectSkeleton ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
-        {!showProjectSkeleton && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
-        <div className={`border-b ${showProjectSkeleton ? "border-[#eceef2] bg-white" : "border-[#d4dccf] bg-[#f8faf7]"}`}>
-          <div className={`relative mx-auto flex w-full items-center justify-between px-5 py-6 ${showProjectSkeleton ? "max-w-[1380px]" : "max-w-5xl"}`}>
+      <div className={`relative min-h-screen overflow-x-hidden ${showMarketplaceSkeleton ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
+        {!showMarketplaceSkeleton && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
+        <div className={`border-b ${showMarketplaceSkeleton ? "border-[#eceef2] bg-white" : "border-[#d4dccf] bg-[#f8faf7]"}`}>
+          <div className={`relative mx-auto flex w-full items-center justify-between px-5 py-6 ${showMarketplaceSkeleton ? "max-w-[1380px]" : "max-w-5xl"}`}>
             <div>
-              <div className="text-lg font-semibold tracking-wide">{showProjectSkeleton ? "Project" : "Submission"}</div>
+              <div className="text-lg font-semibold tracking-wide">{showMarketplaceSkeleton ? "Project" : "Submission"}</div>
               <div className="text-xs text-slate-500">
-                {showProjectSkeleton ? "Preparing project marketplace view..." : "Preparing your project workspace..."}
+                {showMarketplaceSkeleton ? "Preparing project marketplace view..." : "Preparing your project workspace..."}
               </div>
             </div>
           </div>
         </div>
-        {showProjectSkeleton ? (
+        {showMarketplaceSkeleton ? (
           <main className="relative mx-auto w-full max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
-            <div className="mb-4 flex animate-pulse flex-col gap-3 border-b border-[#eceef2] pb-4 sm:mb-5 sm:pb-5">
-              <div className="h-5 w-48 rounded-full bg-[#eef1f4]" />
-              <div className="flex items-center gap-2">
-                <div className="h-9 w-9 rounded-full bg-[#eef1f4]" />
-                <div className="h-9 w-9 rounded-full bg-[#eef1f4]" />
-                <div className="h-4 w-16 rounded-full bg-[#eef1f4]" />
-                <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
+            <div className="mb-4 animate-pulse border-b border-[#eceef2] pb-4 sm:mb-5 sm:pb-5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
+                  <div className="h-4 w-3 rounded-full bg-[#eef1f4]" />
+                  <div className="h-4 w-16 rounded-full bg-[#eef1f4]" />
+                  <div className="h-4 w-3 rounded-full bg-[#eef1f4]" />
+                  <div className="h-8 w-52 rounded-full bg-[#f2f4f7]" />
+                </div>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="h-10 w-10 rounded-full bg-[#eef1f4] sm:h-11 sm:w-11" />
+                  <div className="h-10 w-10 rounded-full bg-[#eef1f4] sm:h-11 sm:w-11" />
+                  <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
+                  <div className="h-4 w-12 rounded-full bg-[#eef1f4]" />
+                  <div className="h-8 w-8 rounded-full bg-[#f6efe0]" />
+                </div>
               </div>
             </div>
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="space-y-4 sm:space-y-5">
                 <div className="animate-pulse rounded-[1.45rem] border border-[#f1dfd7] bg-[linear-gradient(135deg,#fff8f4,rgba(255,245,239,0.98))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
-                  <div className="h-10 w-4/5 rounded-2xl bg-white/80 sm:h-14" />
+                  <div className="h-10 w-[86%] rounded-2xl bg-white/85 sm:h-14 lg:w-[78%]" />
+                  <div className="mt-3 h-10 w-[72%] rounded-2xl bg-white/75 sm:h-14 lg:w-[70%]" />
                   <div className="mt-5 flex flex-wrap gap-3">
+                    <div className="h-5 w-20 rounded-full bg-white/80" />
                     <div className="h-5 w-24 rounded-full bg-white/80" />
-                    <div className="h-5 w-32 rounded-full bg-white/80" />
-                    <div className="h-5 w-28 rounded-full bg-white/80" />
+                    <div className="h-5 w-24 rounded-full bg-white/80" />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
-                  {Array.from({ length: 6 }).map((_, idx) => (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, idx) => (
                     <div key={idx} className="flex animate-pulse items-start gap-3 sm:gap-4">
                       <div className="h-11 w-11 rounded-full bg-[#f3f4f6] sm:h-14 sm:w-14" />
                       <div className="flex-1">
-                        <div className="h-4 w-28 rounded-full bg-[#eef1f4]" />
-                        <div className="mt-2 h-4 w-20 rounded-full bg-[#eef1f4]" />
+                        <div className="h-4 w-24 rounded-full bg-[#eef1f4]" />
+                        <div className="mt-2 h-5 w-20 rounded-full bg-[#eef1f4]" />
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="animate-pulse space-y-4">
-                  <div className="h-9 w-60 rounded-full bg-[#eef1f4]" />
-                  <div className="h-6 w-full rounded-full bg-[#f1f3f6]" />
-                  <div className="h-6 w-[88%] rounded-full bg-[#f1f3f6]" />
-                  <div className="h-6 w-[82%] rounded-full bg-[#f1f3f6]" />
-                </div>
-                <div className="animate-pulse rounded-[1.45rem] border border-[#eceef2] bg-white p-4 shadow-sm sm:rounded-[1.7rem] sm:p-6">
-                  <div className="h-8 w-44 rounded-full bg-[#eef1f4]" />
-                  <div className="mt-4 h-24 rounded-2xl bg-[#f7f8fa]" />
-                  <div className="mt-3 h-28 rounded-2xl bg-[#f7f8fa]" />
-                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                    <div className="h-12 rounded-2xl bg-[#f7f8fa]" />
-                    <div className="h-12 rounded-2xl bg-[#f7f8fa]" />
+                  <div className="h-8 w-52 rounded-full bg-[#eef1f4]" />
+                  <div className="rounded-[1.55rem] border border-[#e7ebef] bg-white p-4 shadow-[0_14px_40px_rgba(37,39,45,0.05)] sm:p-6">
+                    <div className="rounded-[1.3rem] border border-[#e8edf0] bg-[#fafbfd] px-4 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="h-5 w-40 rounded-full bg-[#eef1f4]" />
+                          <div className="mt-3 h-4 w-[78%] rounded-full bg-[#f1f3f6]" />
+                        </div>
+                        <div className="h-8 w-20 rounded-full bg-[#e7f6eb]" />
+                      </div>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      <div className="h-14 rounded-[1.2rem] border border-[#eef1f4] bg-white" />
+                      <div className="h-14 rounded-[1.2rem] border border-[#eef1f4] bg-white" />
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-center">
+                      <div className="h-16 w-full rounded-[1.2rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#ffffff,#f8fbf8)] lg:w-[320px]" />
+                      <div className="h-11 w-40 rounded-full bg-[#f5f7fa]" />
+                      <div className="h-11 w-36 rounded-full bg-[#e8f8ed]" />
+                    </div>
+                    <div className="mt-4 rounded-[1.35rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#fbfdfb,#f6faf5)] p-4 sm:p-5">
+                      <div className="h-4 w-40 rounded-full bg-[#e7eee8]" />
+                      <div className="mt-4 space-y-3">
+                        {Array.from({ length: 4 }).map((_, idx) => (
+                          <div key={idx} className="flex items-center justify-between rounded-2xl border border-[#d8e4db] bg-white px-4 py-4 shadow-sm">
+                            <div className="h-4 w-36 rounded-full bg-[#eef1f4]" />
+                            <div className="h-8 w-20 rounded-full bg-[#eef7f0]" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-              <aside className="space-y-4 sm:space-y-6">
+              <aside className="space-y-4 sm:space-y-6 lg:sticky lg:top-6 lg:self-start">
                 <div className="animate-pulse rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
-                  <div className="h-12 w-36 rounded-full bg-[#eef1f4]" />
+                  <div className="h-14 w-40 rounded-full bg-[#eef1f4]" />
                   <div className="mt-3 h-5 w-24 rounded-full bg-[#eef1f4]" />
                   <div className="mt-6 h-12 rounded-xl bg-[#e5f2e5]" />
                 </div>
@@ -1017,7 +1326,29 @@ function ProceedPageInner() {
                     <div className="flex-1">
                       <div className="h-5 w-28 rounded-full bg-[#eef1f4]" />
                       <div className="mt-2 h-4 w-24 rounded-full bg-[#eef1f4]" />
+                      <div className="mt-2 h-4 w-20 rounded-full bg-[#eef1f4]" />
                     </div>
+                  </div>
+                  <div className="mt-5 border-t border-[#eceef2] pt-5" />
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                    {Array.from({ length: 3 }).map((_, idx) => (
+                      <div key={idx}>
+                        <div className="h-4 w-16 rounded-full bg-[#eef1f4]" />
+                        <div className="mt-2 h-4 w-14 rounded-full bg-[#eef1f4]" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="animate-pulse rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <div className="h-14 w-14 rounded-2xl bg-[#eef1f4]" />
+                      <div>
+                        <div className="h-4 w-28 rounded-full bg-[#eef1f4]" />
+                        <div className="mt-2 h-4 w-32 rounded-full bg-[#eef1f4]" />
+                      </div>
+                    </div>
+                    <div className="h-6 w-6 rounded-full bg-[#eef1f4]" />
                   </div>
                 </div>
               </aside>
@@ -1139,9 +1470,9 @@ function ProceedPageInner() {
   }
 
   return (
-    <div className={`relative min-h-screen overflow-x-hidden ${isProjectFlow ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
-      {!isProjectFlow && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
-      {!isProjectFlow && (
+    <div className={`relative min-h-screen overflow-x-hidden ${isMarketplaceFlow ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
+      {!isMarketplaceFlow && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
+      {!isMarketplaceFlow && (
         <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
           <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
             <div className="flex items-center gap-3">
@@ -1161,45 +1492,86 @@ function ProceedPageInner() {
         </div>
       )}
 
-      <main className={`relative mx-auto w-full ${isProjectFlow ? "max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8" : "max-w-5xl space-y-6 px-5 py-8"}`}>
-        {isProjectFlow && (
-          <div className="mb-4 flex flex-col gap-2.5 border-b border-[#eceef2] pb-4 sm:mb-5 sm:gap-4 sm:pb-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-y-2 text-[0.95rem] sm:text-sm">
-              <Link
-                href="/"
-                className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
-              >
-                Home
-              </Link>
-              <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
-              <Link
-                href="/browse"
-                className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
-              >
-                Projects
-              </Link>
-              <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
-              <span className="min-w-0 rounded-full bg-[#f6f7fa] px-2 py-1 text-[#7b808a] sm:px-2.5">
-                <span className="block max-w-[140px] truncate sm:max-w-[420px]">{gig.title}</span>
-              </span>
+      <main className={`relative mx-auto w-full ${isMarketplaceFlow ? "max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8" : "max-w-5xl space-y-6 px-5 py-8"}`}>
+        {isMarketplaceFlow && (
+          <>
+            <div className="mb-4 flex flex-col gap-2.5 border-b border-[#eceef2] pb-4 sm:mb-5 sm:gap-4 sm:pb-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-y-2 text-[0.95rem] sm:text-sm">
+                <Link
+                  href="/"
+                  className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
+                >
+                  Home
+                </Link>
+                <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
+                <Link
+                  href="/browse"
+                  className="rounded-full px-1.5 py-1 font-medium text-[#2f3747] transition hover:bg-[#f4f6f9] hover:text-[#121826] focus:outline-none focus:ring-2 focus:ring-[#d9dee6] sm:px-2"
+                >
+                  Projects
+                </Link>
+                <span className="px-1 text-[#a0a5ae] sm:px-1.5">/</span>
+                <span className="min-w-0 rounded-full bg-[#f6f7fa] px-2 py-1 text-[#7b808a] sm:px-2.5">
+                  <span className="block max-w-[140px] truncate sm:max-w-[420px]">{gig.title}</span>
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-semibold text-[#2f3747] sm:gap-3 sm:text-sm">
+                <button
+                  type="button"
+                  onClick={handleProjectShare}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm transition hover:border-[#d8dde6] hover:bg-[#f8fafc] sm:h-11 sm:w-11"
+                  aria-label="Share project"
+                  title="Share project"
+                >
+                  <ProjectLineIcon kind="share" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProjectSave}
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-full border bg-white shadow-sm transition sm:h-11 sm:w-11 ${
+                    savedGig
+                      ? "border-[#d9e6dc] bg-[#f3faf4] text-[#2f6a4d]"
+                      : "border-[#e6e8ed] text-[#626874] hover:border-[#d8dde6] hover:bg-[#f8fafc]"
+                  }`}
+                  aria-label={savedGig ? "Unsave project" : "Save project"}
+                  title={savedGig ? "Unsave project" : "Save project"}
+                >
+                  <ProjectLineIcon kind="heart" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProjectShare}
+                  className="rounded-full px-2 py-1 text-[#2f3747] transition hover:bg-[#f4f6f9]"
+                >
+                  Share
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProjectSave}
+                  className={`rounded-full px-2 py-1 transition hover:bg-[#f4f6f9] ${savedGig ? "text-[#2f6a4d]" : "text-[#2f3747]"}`}
+                >
+                  {savedGig ? "Saved" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProjectReport}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#d2a018] transition hover:bg-[#fff8e7] sm:h-10 sm:w-10"
+                  aria-label="Report project"
+                  title="Report project"
+                >
+                  <ProjectLineIcon kind="warning" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
+                </button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-[0.95rem] font-semibold text-[#2f3747] sm:gap-3 sm:text-sm">
-              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
-                <ProjectLineIcon kind="share" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
-              </button>
-              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e6e8ed] bg-white text-[#626874] shadow-sm sm:h-11 sm:w-11">
-                <ProjectLineIcon kind="heart" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
-              </button>
-              <button type="button" className="rounded-full px-2 py-1 text-[#2f3747] transition hover:bg-[#f4f6f9]">Share</button>
-              <button type="button" className="rounded-full px-2 py-1 text-[#2f3747] transition hover:bg-[#f4f6f9]">Save</button>
-              <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#d2a018] transition hover:bg-[#fff8e7] sm:h-10 sm:w-10">
-                <ProjectLineIcon kind="warning" className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
-              </button>
-            </div>
-          </div>
+            {actionMessage && (
+              <div className="mb-4 rounded-2xl border border-[#d9e2d8] bg-[#f6faf5] px-4 py-2.5 text-sm font-medium text-[#476255]">
+                {actionMessage}
+              </div>
+            )}
+          </>
         )}
 
-        {!isProjectFlow && (
+        {!isMarketplaceFlow && (
         <div className="rounded-[1.4rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:rounded-3xl sm:p-6">
           <div className="text-xs text-slate-500">Gig</div>
           <h1 className="mt-2 text-balance text-[1.95rem] font-semibold leading-[1.06] tracking-tight text-[#162038] sm:text-5xl">
@@ -1380,13 +1752,415 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {isProjectFlow && (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+        {isEmailCreatorFlow && (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
             <div className="space-y-4 sm:space-y-5">
               <section className="relative overflow-hidden rounded-[1.45rem] border border-[#f6e0d8] bg-[linear-gradient(135deg,#fff7f3,rgba(255,245,240,0.99))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
                 <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_1px_1px,rgba(201,157,136,0.16)_1px,transparent_0)] [background-size:18px_18px]" />
                 <div className="relative">
-                  <h2 className="max-w-4xl text-[1.55rem] font-semibold leading-tight tracking-tight text-[#24262d] sm:text-[3.2rem]">
+                  <h2 className="max-w-4xl text-[1.55rem] font-semibold leading-tight tracking-tight text-[#24262d] sm:text-[3.2rem] lg:max-w-[90%] xl:max-w-4xl">
+                    {gig.title}
+                  </h2>
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[0.95rem] font-medium text-[#4b4f59] sm:mt-6 sm:gap-x-6 sm:gap-y-3 sm:text-sm">
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="location" className="h-[18px] w-[18px]" />
+                      {gig.location}
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="calendar" className="h-[18px] w-[18px]" />
+                      {gig.postedAt || "Recently posted"}
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <ProjectLineIcon kind="views" className="h-[18px] w-[18px]" />
+                      {hasApplication ? "Access active" : "Ready after KYC"}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { icon: "location", label: "Access model", value: "Direct after KYC" },
+                  { icon: "duration", label: "Workload", value: gig.workload },
+                  { icon: "level", label: "Assignment pack", value: "5 dashboard emails" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-start gap-3 sm:gap-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f6f1e8] text-[#3e6357] sm:h-14 sm:w-14">
+                      <ProjectLineIcon kind={item.icon as "location" | "duration" | "level"} className="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[0.9rem] font-semibold leading-5 text-[#2c3038] sm:text-[0.95rem] sm:leading-6">{item.label}</div>
+                      <div className="mt-0.5 text-[0.95rem] text-[#4a4f58] sm:mt-1 sm:text-[1.05rem]">{item.value}</div>
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <section id={proposalDeskId} className="pt-1">
+                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">
+                  {hasApplication ? "Execution Workspace" : "Activation Overview"}
+                </div>
+                <div className="mt-4 rounded-[1.55rem] border border-[#e7ebef] bg-[linear-gradient(180deg,#ffffff,#fcfcfb)] p-4 shadow-[0_14px_40px_rgba(37,39,45,0.06)] sm:rounded-[1.8rem] sm:p-6">
+                  {!hasApplication ? (
+                    <div className="space-y-4">
+                      <div className="rounded-[1.3rem] border border-[#e8edf0] bg-[linear-gradient(180deg,#fbfcfd,#f8fafb)] px-4 py-4 sm:px-5">
+                        <div className="text-[1.02rem] font-semibold text-[#2c3038]">Activate work access</div>
+                        <div className="mt-1 text-sm leading-7 text-[#4d5563]">
+                          KYC-cleared workers can activate this email-creator assignment immediately. No recruiter approval round is required for this gig type.
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-[1.2rem] border border-[#e8edf0] bg-white px-4 py-3.5 shadow-sm">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Delivery mode</div>
+                          <div className="mt-2 text-base font-semibold text-[#274537]">Assigned dashboard pack</div>
+                          <div className="mt-1 text-sm text-[#617166]">You will receive five working emails and live inbox access after activation.</div>
+                        </div>
+                        <div className="rounded-[1.2rem] border border-[#e8edf0] bg-white px-4 py-3.5 shadow-sm">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Execution rule</div>
+                          <div className="mt-2 text-base font-semibold text-[#274537]">One email per account</div>
+                          <div className="mt-1 text-sm text-[#617166]">Use each assigned email once and follow the inbox verification flow from this workspace.</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={submitStandardProposal}
+                        disabled={proposalSaving}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#77c07d] px-5 py-4 text-[1.05rem] font-semibold text-white transition hover:bg-[#67b56e] disabled:opacity-50 sm:w-auto sm:min-w-[240px]"
+                      >
+                        {proposalSaving ? "Activating access..." : "Activate work access"} <ProjectLineIcon kind="external" className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[1.45rem] border border-[#e8edf0] bg-[linear-gradient(180deg,#fbfcfd,#f8fafb)] px-4 py-4 sm:px-5">
+                        <div>
+                          <div className="text-[1.02rem] font-semibold text-[#2c3038]">Work access active</div>
+                          <div className="mt-1 text-sm leading-7 text-[#4d5563]">
+                            {customBrief || "Your email-creator workspace is live. Assigned emails, verification inbox, and creator utilities are ready below."}
+                          </div>
+                        </div>
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                          Active
+                        </span>
+                      </div>
+                      <div className="rounded-[1.3rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#fbfdfb,#f6faf5)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-5">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">Assigned dashboard emails</div>
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          {assignment?.assignedEmails?.length ? (
+                            assignment.assignedEmails.map((email) => (
+                              <button
+                                key={email}
+                                className={`inline-flex min-h-[52px] w-full items-center justify-center rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
+                                  copiedEmail === email
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : "border-[#d8e4db] bg-white text-[#355548] hover:border-[#c5d7cb]"
+                                }`}
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(email);
+                                    setCopiedEmail(email);
+                                    window.setTimeout(() => setCopiedEmail((prev) => (prev === email ? null : prev)), 1200);
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                                type="button"
+                              >
+                                <span className="truncate">{copiedEmail === email ? "Copied" : email}</span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3 text-sm text-[#617166] sm:col-span-2">
+                              {assignment?.assignedEmail ?? "Assigning email pack..."}
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-sm text-[#587062]">Use each email once and follow the verification messages inside the inbox sync panel.</div>
+                          <Link
+                            href="/work-email-creator"
+                            className="inline-flex items-center justify-center rounded-full border border-[#d6e2da] bg-white px-4 py-2.5 text-sm font-semibold text-[#355548] transition hover:border-[#c6d7cc]"
+                          >
+                            Open Work Email Creator
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[1.35rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#fbfdfb,#f6faf5)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">Inbox sync</div>
+                            <div className="mt-1 text-sm font-semibold text-[#2c3038]">
+                              {filteredInbox.length > 0 ? `${filteredInbox.length} messages available` : "No messages yet"}
+                              {unreadCount > 0 && (
+                                <span className="ml-2 rounded-full border border-[#d8e4db] bg-white px-2 py-0.5 text-[11px] text-[#2f6655]">
+                                  {unreadCount} unread
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-[#6b757f]">
+                            {assignedList.length > 0 && (
+                              <select
+                                className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 text-xs font-semibold text-[#355548] outline-none"
+                                value={emailFilter}
+                                onChange={(e) => setEmailFilter(e.target.value)}
+                              >
+                                <option value="all">All assigned</option>
+                                {assignedList.map((email) => (
+                                  <option key={email} value={email}>
+                                    {email}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <button
+                              className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 font-semibold text-[#355548] hover:border-[#c5d7cb] disabled:opacity-50"
+                              disabled={unreadCount === 0}
+                              onClick={markAllRead}
+                              type="button"
+                            >
+                              Mark read
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-4 md:grid-cols-[280px_minmax(0,1fr)]">
+                          <div className="rounded-2xl border border-[#d8e4db] bg-white p-2 shadow-sm">
+                            <div className="max-h-[320px] overflow-auto">
+                              {filteredInbox
+                                .slice()
+                                .sort((a, b) => new Date(b.createdAt ?? b.created_at ?? 0).getTime() - new Date(a.createdAt ?? a.created_at ?? 0).getTime())
+                                .slice(0, 10)
+                                .map((msg) => {
+                                  const created = msg.createdAt ?? msg.created_at ?? null;
+                                  const subject = msg.subject ?? "Verification";
+                                  const body = msg.body ?? "";
+                                  const active = selectedMsg?.id === msg.id;
+                                  return (
+                                    <button
+                                      key={msg.id}
+                                      type="button"
+                                      className={`mb-2 w-full rounded-2xl border px-3 py-3 text-left transition ${
+                                        active ? "border-[#bfd5c7] bg-[#f6faf5]" : "border-transparent bg-white hover:border-[#e1e7e4] hover:bg-[#fafcfb]"
+                                      }`}
+                                      onClick={() => {
+                                        setSelectedMsg(msg);
+                                        markRead(msg);
+                                      }}
+                                    >
+                                      <div className="truncate text-sm font-semibold text-[#2c3038]">{subject}</div>
+                                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#66707d]">{cleanInboxBody(body) || "Open to view message content."}</div>
+                                      {created && <div className="mt-2 text-[10px] text-[#85909c]">{new Date(created).toLocaleString()}</div>}
+                                    </button>
+                                  );
+                                })}
+                              {filteredInbox.length === 0 && (
+                                <div className="rounded-2xl border border-dashed border-[#d8e4db] bg-[#fcfdfc] px-4 py-8 text-center text-sm text-[#6b757f]">
+                                  No verification messages have arrived yet.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border border-[#d8e4db] bg-white p-4 shadow-sm">
+                            {selectedMsg ? (
+                              <>
+                                <div className="text-sm font-semibold text-[#2c3038]">{selectedMsg.subject ?? "Verification"}</div>
+                                <div className="mt-1 text-xs text-[#85909c]">
+                                  {new Date(selectedMsg.createdAt ?? selectedMsg.created_at ?? Date.now()).toLocaleString()}
+                                </div>
+                                <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-[#4d5563]">
+                                  {String(selectedMsg.body ?? "").trim() || "No message body available."}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex h-full min-h-[220px] items-center justify-center rounded-2xl border border-dashed border-[#d8e4db] bg-[#fcfdfc] px-4 text-center text-sm text-[#6b757f]">
+                                Select a message to inspect verification details.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[1.35rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#fbfdfb,#f6faf5)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-5">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">Credential handoff</div>
+                            <div className="mt-1 text-sm font-semibold text-[#2c3038]">Submit 5 account credentials</div>
+                            <div className="mt-1 text-sm text-[#617166]">Admin will review and verify the created accounts after compliance checks.</div>
+                          </div>
+                          <span className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 text-xs font-semibold text-[#355548]">
+                            Required: 5
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid gap-3">
+                          {rows.map((row, idx) => (
+                            <div key={idx} className="grid gap-3 rounded-2xl border border-[#d8e4db] bg-white p-4 shadow-sm md:grid-cols-4">
+                              <input
+                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                placeholder={`@handle ${idx + 1}`}
+                                value={row.handle}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, handle: value } : r)));
+                                }}
+                              />
+                              <input
+                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                placeholder="Email used"
+                                value={row.email}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, email: value } : r)));
+                                }}
+                              />
+                              <input
+                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                placeholder="Password"
+                                value={row.password}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, password: value } : r)));
+                                }}
+                              />
+                              <input
+                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                placeholder="Phone (optional)"
+                                value={row.phone}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, phone: value } : r)));
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+
+                        {assignmentStatus === "Submitted" && !success && (
+                          <div className="mt-4 rounded-xl border border-[#bcd6c9] bg-[#edf5ef] px-3 py-2 text-xs font-semibold text-[#2f6655]">
+                            In verification: Admin is reviewing your submitted credentials.
+                          </div>
+                        )}
+
+                        <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-xs text-[#6b7770]">All fields are encrypted in transit. Do not reuse credentials.</div>
+                          <button
+                            className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50"
+                            onClick={submitCredentials}
+                            disabled={saving || invalidRows}
+                          >
+                            {saving ? "Submitting..." : "Submit for verification"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {error && (
+                    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+                  )}
+                  {success && (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
+                  )}
+                </div>
+              </section>
+
+              {!hasApplication && standardRequirementItems.length > 0 && (
+                <section className="space-y-3">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Execution Rules</div>
+                  <div className="grid gap-3">
+                    {standardRequirementItems.map((req, idx) => (
+                      <div key={`${req}-${idx}`} className="rounded-2xl border border-[#eceef2] bg-white px-4 py-3 text-[1rem] leading-7 text-[#4d5563] shadow-sm">
+                        <span className="font-semibold text-[#2c3038]">{idx + 1}.</span> {String(req).replace(/^brief::/i, "")}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <aside className="space-y-4 sm:space-y-6 lg:sticky lg:top-6 lg:self-start">
+              <section className="rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                <div className="text-[2.45rem] font-semibold tracking-tight text-[#24262d] sm:text-[3rem]">{gig.payout}</div>
+                <div className="mt-1 text-[1rem] text-[#4d5563] sm:text-[1.1rem]">{gig.payoutType} rate</div>
+                <button
+                  className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#77c07d] px-5 py-3.5 text-[1rem] font-semibold text-white transition hover:bg-[#67b56e] disabled:opacity-50 sm:mt-7 sm:py-4 sm:text-[1.05rem]"
+                  onClick={() => {
+                    if (hasApplication) {
+                      document.getElementById(proposalDeskId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      return;
+                    }
+                    submitStandardProposal();
+                  }}
+                  disabled={proposalSaving}
+                >
+                  {proposalSaving ? "Activating..." : hasApplication ? "Open workspace" : "Activate work access"}
+                </button>
+              </section>
+
+              <section className="rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                <div className="text-[1.7rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">About Seller</div>
+                <div className="mt-5 flex items-center gap-4">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f7faf8] text-2xl font-bold text-[#1f4f43]">
+                    {gig.company.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="text-[1.4rem] font-semibold text-[#24262d]">{gig.company}</div>
+                    <div className="text-sm text-[#4d5563]">{gig.platform} email creator workspace</div>
+                    <div className="mt-1 text-sm font-medium text-[#5d6672]">
+                      {hasApplication ? "Access live" : "Verified listing"}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 border-t border-[#eceef2] pt-5" />
+                <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Location</div>
+                    <div className="mt-1 text-[#4d5563]">{gig.location}</div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Platform</div>
+                    <div className="mt-1 text-[#4d5563]">{gig.platform}</div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-[#2c3038]">Categories</div>
+                    <div className="mt-1 text-[#4d5563]">Email Creator</div>
+                  </div>
+                </div>
+              </section>
+
+              <Link
+                href="/work-email-creator"
+                className="flex w-full items-center justify-between gap-4 rounded-[1.3rem] border border-[#d9e1dc] bg-[#f7faf8] px-4 py-4 text-[#24303b] shadow-sm transition hover:border-[#c6d0ca] hover:bg-[#f3f7f4] sm:rounded-[1.55rem] sm:px-5 sm:py-5"
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#e1e7e2] bg-white text-[#7a869d] shadow-sm sm:h-16 sm:w-16">
+                    <ProjectLineIcon kind="external" className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-[#6d7b8f] sm:text-[0.8rem]">
+                      Creator utility
+                    </div>
+                    <div className="mt-1 text-[0.92rem] text-[#5b6672] sm:text-[0.98rem]">
+                      Generate additional dashboard emails when needed
+                    </div>
+                    <div className="mt-1 truncate text-[1.08rem] font-semibold tracking-tight text-[#1f2740] sm:text-[1.16rem]">
+                      Open Work Email Creator
+                    </div>
+                  </div>
+                </div>
+                <ProjectLineIcon kind="external" className="h-6 w-6 shrink-0 text-[#7a869d] sm:h-7 sm:w-7" />
+              </Link>
+            </aside>
+          </div>
+        )}
+
+        {isProjectStyleFlow && (
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="space-y-4 sm:space-y-5">
+              <section className="relative overflow-hidden rounded-[1.45rem] border border-[#f6e0d8] bg-[linear-gradient(135deg,#fff7f3,rgba(255,245,240,0.99))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
+                <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_1px_1px,rgba(201,157,136,0.16)_1px,transparent_0)] [background-size:18px_18px]" />
+                <div className="relative">
+                  <h2 className="max-w-4xl text-[1.55rem] font-semibold leading-tight tracking-tight text-[#24262d] sm:text-[3.2rem] lg:max-w-[90%] xl:max-w-4xl">
                     {gig.title}
                   </h2>
                   <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2.5 text-[0.95rem] font-medium text-[#4b4f59] sm:mt-6 sm:gap-x-6 sm:gap-y-3 sm:text-sm">
@@ -1406,14 +2180,11 @@ function ProceedPageInner() {
                 </div>
               </section>
 
-              <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+              <section className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
                 {[
-                  { icon: "location", label: "Project location type", value: gig.location },
-                  { icon: "money", label: "Project Type", value: gig.payoutType.toLowerCase() },
+                  { icon: "location", label: isContentPostingFlow ? "Posting model" : "Project type", value: gig.location },
                   { icon: "duration", label: "Duration", value: gig.workload },
                   { icon: "level", label: "Level", value: projectMeta.expertise || "Open level" },
-                  { icon: "language", label: "Language", value: projectMeta.languages || "Flexible" },
-                  { icon: "chart", label: "English Level", value: projectMeta.expertise || "Professional" },
                 ].map((item) => (
                   <div key={item.label} className="flex items-start gap-3 sm:gap-4">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#f6f1e8] text-[#3e6357] sm:h-14 sm:w-14">
@@ -1427,109 +2198,272 @@ function ProceedPageInner() {
                 ))}
               </section>
 
-              <section className="pt-1">
-                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Project Description</div>
-                {customBrief ? (
-                  <div className="mt-4 space-y-4">
-                    <FormattedBrief
-                      text={customBrief}
-                      sectionClassName="space-y-5"
-                      headingClassName="text-xl font-semibold text-[#24262d]"
-                      bodyClassName="text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9"
-                    />
-                  </div>
-                ) : (
-                  <p className="mt-4 text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9">
-                    Review the scope, align on deliverables, and submit a proposal with your execution approach and expected timeline.
-                  </p>
-                )}
-              </section>
-
-              <section className="space-y-4">
-                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Proposal Desk</div>
-                <div className="rounded-[1.45rem] border border-[#eceef2] bg-white p-4 shadow-sm sm:rounded-[1.7rem] sm:p-6">
-                  {hasApplication && proposalReviewStatus !== "Rejected" ? (
-                    <div className="space-y-3">
-                      <div className="rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-[#4d5563]">
-                        Your proposal is already submitted. Recruiter updates will appear here once the review advances.
+              {shouldShowProjectStatusPanel ? (
+                <section className="pt-1">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Proposal Status</div>
+                  <div className="mt-4 rounded-[1.55rem] border border-[#e7ebef] bg-[linear-gradient(180deg,#ffffff,#fcfcfb)] p-4 shadow-[0_14px_40px_rgba(37,39,45,0.06)] sm:rounded-[1.8rem] sm:p-6">
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[1.45rem] border border-[#e8edf0] bg-[linear-gradient(180deg,#fbfcfd,#f8fafb)] px-4 py-4 sm:px-5">
+                        <div>
+                          <div className="text-[1.02rem] font-semibold text-[#2c3038]">{projectReviewLabel}</div>
+                          <div className="mt-1 text-sm leading-7 text-[#4d5563]">
+                            {proposalReviewStatus === "Accepted"
+                              ? "Your proposal cleared review. Follow the recruiter instructions below."
+                              : hasAdminUpdate
+                                ? "Recruiter guidance has been published for this proposal."
+                                : "Your proposal is submitted. Recruiter updates will appear here once the review advances."}
+                          </div>
+                        </div>
+                        <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${projectReviewBadgeTone}`}>
+                          {proposalReviewStatus ?? "Pending"}
+                        </span>
                       </div>
-                      {application?.proposal?.adminExplanation && (
-                        <div className="rounded-2xl border border-[#e7ebef] bg-white px-4 py-3 text-sm text-[#4d5563]">
-                          <span className="font-semibold text-[#2c3038]">Guidance:</span> {application.proposal.adminExplanation}
+                      <div className="grid gap-3">
+                        {application?.proposal?.adminNote?.trim() && (
+                          <div className="rounded-[1.25rem] border border-[#e8edf0] bg-white px-4 py-3.5 text-sm leading-7 text-[#4d5563] shadow-sm">
+                            <span className="font-semibold text-[#2c3038]">Recruiter note:</span> {application.proposal.adminNote}
+                          </div>
+                        )}
+                        {application?.proposal?.adminExplanation?.trim() && (
+                          <div className="rounded-[1.25rem] border border-[#e8edf0] bg-white px-4 py-3.5 text-sm leading-7 text-[#4d5563] shadow-sm">
+                            <span className="font-semibold text-[#2c3038]">Next steps:</span> {application.proposal.adminExplanation}
+                          </div>
+                        )}
+                        {application?.proposal?.onboardingSteps?.trim() && (
+                          <div className="rounded-[1.25rem] border border-[#e8edf0] bg-white px-4 py-3.5 text-sm leading-7 text-[#4d5563] shadow-sm">
+                            <span className="font-semibold text-[#2c3038]">Onboarding:</span> {application.proposal.onboardingSteps}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+                        {adminWhatsappLink ? (
+                          <a
+                            href={adminWhatsappLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex w-full items-center justify-between gap-4 rounded-[1.25rem] border border-[#d6e2da] bg-[linear-gradient(180deg,#ffffff,#f6faf7)] px-4 py-3.5 text-left shadow-[0_10px_24px_rgba(44,84,62,0.08)] transition hover:border-[#c6d7cc] hover:bg-[#f7faf8] sm:px-5 lg:w-auto lg:min-w-[340px]"
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-[#d9e4db] bg-[#eef6f0] text-[#2f6a4d]">
+                                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                                  <path d="M20 12a8 8 0 1 1-14.9-4" />
+                                  <path d="M8.7 16.3 6 18l.8-3.1" />
+                                  <path d="M9.5 8.8c.3-.5.6-.5.9-.5h.7c.2 0 .5 0 .7.5l.5 1.3c.1.3.1.6-.1.8l-.5.7a.8.8 0 0 0 0 .9c.4.6 1 1.2 1.6 1.6.3.2.6.2.9 0l.7-.5c.3-.2.5-.2.8-.1l1.3.5c.4.2.5.4.5.7v.7c0 .3 0 .6-.5.9-.6.4-1.4.6-2.1.4-1.8-.5-3.5-1.5-4.8-2.9-1.4-1.3-2.4-3-2.9-4.8-.2-.7 0-1.5.4-2.1Z" />
+                                </svg>
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">
+                                  WhatsApp onboarding
+                                </div>
+                                <div className="mt-1 text-[1rem] font-semibold text-[#24342c]">
+                                  Open recruiter group link
+                                </div>
+                              </div>
+                            </div>
+                            <ProjectLineIcon kind="external" className="h-5 w-5 shrink-0 text-[#738476]" />
+                          </a>
+                        ) : null}
+                        <span className="rounded-full border border-[#e7ebef] bg-white px-3 py-2 text-xs text-[#5d6672]">
+                          Submitted {formatCompactRelativeTimestamp(application?.proposal?.submittedAt ?? application?.appliedAt) ?? "recently"}
+                        </span>
+                        {application?.proposal?.reviewedAt && (
+                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                            Updated {formatCompactRelativeTimestamp(application.proposal.reviewedAt) ?? "recently"}
+                          </span>
+                        )}
+                      </div>
+                      {proposalReviewStatus === "Accepted" && (
+                        <div className="overflow-hidden rounded-[1.35rem] border border-[#cfe2d5] bg-[linear-gradient(135deg,#f8fdf8,rgba(240,249,242,0.98))] shadow-[0_12px_30px_rgba(41,88,60,0.08)]">
+                          <div className="border-b border-[#d9e8dd] bg-[radial-gradient(circle_at_top_left,rgba(113,183,132,0.16),transparent_46%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(246,251,247,0.98))] px-4 py-4 sm:px-5">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">Next round activated</div>
+                                <div className="mt-1 text-[1.12rem] font-semibold text-[#264638] sm:text-[1.2rem]">
+                                  {isContentPostingFlow ? "Posting workspace handoff is now approved" : "Execution access is now approved"}
+                                </div>
+                                <div className="mt-1 text-sm leading-7 text-[#587062]">
+                                  {isContentPostingFlow
+                                    ? "Recruiter approval has cleared your proposal for the daily social posting workspace handoff."
+                                    : "Recruiter approval has cleared your proposal for the onboarding and execution stage."}
+                                </div>
+                              </div>
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                                Approval cleared
+                              </span>
+                            </div>
+                          </div>
+                          <div className="grid gap-3 px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-3">
+                            <div className="rounded-[1.15rem] border border-[#d7e5da] bg-white px-4 py-3 shadow-sm">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Recruiter decision</div>
+                              <div className="mt-2 text-base font-semibold text-[#274537]">Approved</div>
+                              <div className="mt-1 text-sm text-[#617166]">
+                                {application?.proposal?.reviewedAt
+                                  ? `Updated ${formatCompactRelativeTimestamp(application.proposal.reviewedAt) ?? "recently"}`
+                                  : "Decision published"}
+                              </div>
+                            </div>
+                            <div className="rounded-[1.15rem] border border-[#d7e5da] bg-white px-4 py-3 shadow-sm">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Coordination channel</div>
+                              <div className="mt-2 text-base font-semibold text-[#274537]">{adminWhatsappLink ? "WhatsApp live" : "Awaiting link"}</div>
+                              <div className="mt-1 text-sm text-[#617166]">
+                                {adminWhatsappLink ? "Recruiter group link is ready for onboarding." : "Recruiter will share the live onboarding channel here."}
+                              </div>
+                            </div>
+                            <div className="rounded-[1.15rem] border border-[#d7e5da] bg-white px-4 py-3 shadow-sm">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Join confirmation</div>
+                              <div className="mt-2 text-base font-semibold text-[#274537]">{groupJoinConfirmed ? "Confirmed" : "Action pending"}</div>
+                              <div className="mt-1 text-sm text-[#617166]">
+                                {groupJoinConfirmed
+                                  ? `Joined ${formatCompactRelativeTimestamp(application?.proposal?.groupJoinedConfirmedAt) ?? "recently"}`
+                                  : "Confirm after joining the recruiter group to finish onboarding."}
+                              </div>
+                            </div>
+                          </div>
+                          {isContentPostingFlow && groupJoinConfirmed && (
+                            <div className="border-t border-[#d9e8dd] bg-white px-4 py-4 sm:px-5">
+                              <div className="flex flex-col gap-3 rounded-[1.2rem] border border-[#d7e5da] bg-[linear-gradient(180deg,#ffffff,#f7fbf8)] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Workspace assigned</div>
+                                  <div className="mt-1 text-base font-semibold text-[#274537]">Daily social posting queue is ready</div>
+                                  <div className="mt-1 text-sm text-[#617166]">
+                                    Your content posting proposal has cleared onboarding. Open the workspace to receive daily posting tasks, account briefs, and execution checklists.
+                                  </div>
+                                </div>
+                                <Link
+                                  href="/workspace"
+                                  className="inline-flex items-center justify-center rounded-full bg-[#245543] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f4a3a]"
+                                >
+                                  Open workspace
+                                </Link>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex flex-col gap-3 border-t border-[#d9e8dd] px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="text-sm text-[#587062]">
+                              {application?.proposal?.onboardingSteps?.trim() ||
+                                (isContentPostingFlow
+                                  ? "Complete recruiter coordination, confirm group participation, and move into the daily posting workspace handoff."
+                                  : "Follow recruiter instructions, complete coordination setup, and prepare for execution handoff.")}
+                            </div>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              {adminWhatsappLink && (
+                                <a
+                                  href={adminWhatsappLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center justify-center rounded-full bg-[#245543] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1f4a3a]"
+                                >
+                                  Open recruiter group
+                                </a>
+                              )}
+                              {!groupJoinConfirmed && adminWhatsappLink && (
+                                <button
+                                  type="button"
+                                  onClick={confirmGroupJoined}
+                                  disabled={groupJoinConfirming}
+                                  className="inline-flex items-center justify-center rounded-full border border-[#cfe2d5] bg-white px-4 py-2.5 text-sm font-semibold text-[#355548] transition hover:border-[#bdd5c4] hover:bg-[#fbfdfb] disabled:opacity-60"
+                                >
+                                  {groupJoinConfirming ? "Confirming..." : "Confirm joined"}
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       )}
+                      {adminWhatsappLink && (
+                        <div className="rounded-[1.3rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#ffffff,#f8fbf8)] p-4 shadow-sm sm:px-5 sm:py-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-[1.05rem] font-semibold text-[#355548]">Group join confirmation</div>
+                              <div className="mt-1 text-sm text-[#5d6672]">
+                                Confirm after you join the recruiter WhatsApp group so onboarding can move forward.
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={confirmGroupJoined}
+                              disabled={groupJoinConfirming || groupJoinConfirmed}
+                              className={`inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-semibold transition ${
+                                groupJoinConfirmed
+                                  ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border border-[#d7e4d9] bg-[#f3f7f4] text-[#4d6472] hover:border-[#c8d7cb] hover:bg-white disabled:opacity-60"
+                              }`}
+                            >
+                              {groupJoinConfirmed ? "Confirmed" : groupJoinConfirming ? "Confirming..." : "Confirm joined"}
+                            </button>
+                          </div>
+                          {application?.proposal?.groupJoinedConfirmedAt && (
+                            <div className="mt-3 text-xs font-medium text-[#6b7770]">
+                              Confirmed {formatCompactRelativeTimestamp(application.proposal.groupJoinedConfirmedAt) ?? "recently"}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="rounded-[1.35rem] border border-[#dbe5dc] bg-[linear-gradient(180deg,#fbfdfb,#f6faf5)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] sm:p-5">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#738476]">Onboarding workflow</div>
+                        <div className="mt-4 space-y-3">
+                          <div className="flex items-center justify-between rounded-2xl border border-[#d8e4db] bg-white px-4 py-3 shadow-sm">
+                            <span className="text-sm font-medium text-[#355548]">Proposal submitted</span>
+                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Done</span>
+                          </div>
+                          <div className="flex items-center justify-between rounded-2xl border border-[#d8e4db] bg-white px-4 py-3 shadow-sm">
+                            <span className="text-sm font-medium text-[#355548]">WhatsApp invite issued</span>
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${adminWhatsappLink ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                              {adminWhatsappLink ? "Ready" : "Pending"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between rounded-2xl border border-[#d8e4db] bg-white px-4 py-3 shadow-sm">
+                            <span className="text-sm font-medium text-[#355548]">Group join confirmation</span>
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${groupJoinConfirmed ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                              {groupJoinConfirmed ? "Confirmed" : "Awaiting"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between rounded-2xl border border-[#d8e4db] bg-white px-4 py-3 shadow-sm">
+                            <span className="text-sm font-medium text-[#355548]">Final recruiter decision</span>
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                proposalReviewStatus === "Accepted"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : proposalReviewStatus === "Rejected"
+                                    ? "bg-rose-50 text-rose-700"
+                                    : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {proposalReviewStatus === "Accepted"
+                                ? "Approved"
+                                : proposalReviewStatus === "Rejected"
+                                  ? "Revision"
+                                  : "In review"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {error && (
+                      <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+                    )}
+                    {success && (
+                      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
+                    )}
+                  </div>
+                </section>
+              ) : (
+                <section className="pt-1">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">{isContentPostingFlow ? "Content Posting Brief" : "Project Description"}</div>
+                  {customBrief ? (
+                    <div className="mt-4 space-y-4">
+                      <FormattedBrief
+                        text={customBrief}
+                        sectionClassName="space-y-5"
+                        headingClassName="text-xl font-semibold text-[#24262d]"
+                        bodyClassName="text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9"
+                      />
                     </div>
                   ) : (
-                    <>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
-                        Proposal summary
-                        <textarea
-                          className="mt-2 h-24 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
-                          placeholder="Summarize your project approach, expected result, and why you are a strong fit."
-                          value={proposalPitch}
-                          onChange={(e) => setProposalPitch(e.target.value)}
-                        />
-                      </label>
-                      <label className="mt-3 block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
-                        Delivery plan
-                        <textarea
-                          className="mt-2 h-28 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
-                          placeholder="Break down your milestones, communication rhythm, review checkpoints, and quality controls."
-                          value={proposalApproach}
-                          onChange={(e) => setProposalApproach(e.target.value)}
-                        />
-                      </label>
-                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
-                          Timeline
-                          <input
-                            className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
-                            placeholder="e.g., 7 days with updates every 48 hours"
-                            value={proposalTimeline}
-                            onChange={(e) => setProposalTimeline(e.target.value)}
-                          />
-                        </label>
-                        <label className="text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
-                          Portfolio / links
-                          <input
-                            className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
-                            placeholder="Past work, Notion, drive folder, website, or GitHub"
-                            value={proposalPortfolio}
-                            onChange={(e) => setProposalPortfolio(e.target.value)}
-                          />
-                        </label>
-                      </div>
-                      <label className="mt-3 block text-xs font-semibold uppercase tracking-[0.14em] text-[#737987]">
-                        Budget note
-                        <input
-                          className="mt-2 w-full rounded-2xl border border-[#e7ebef] bg-[#fafbfc] px-4 py-3 text-sm text-slate-900"
-                          placeholder="Milestone split, assumptions, or commercial notes"
-                          value={proposalBudget}
-                          onChange={(e) => setProposalBudget(e.target.value)}
-                        />
-                      </label>
-                    </>
+                    <p className="mt-4 text-[1rem] leading-8 text-[#5f6672] sm:text-[1.08rem] sm:leading-9">
+                      Review the scope, align on deliverables, and submit a proposal with your execution approach and expected timeline.
+                    </p>
                   )}
-
-                  {error && (
-                    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
-                  )}
-                  {success && (
-                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
-                  )}
-                </div>
-              </section>
-
-              {customRequirementItems.length > 0 && (
-                <section className="space-y-3">
-                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Project Requirements</div>
-                  <div className="grid gap-3">
-                    {customRequirementItems.map((req, idx) => (
-                      <div key={`${req}-${idx}`} className="rounded-2xl border border-[#eceef2] bg-white px-4 py-3 text-[1rem] leading-7 text-[#4d5563] shadow-sm">
-                        <span className="font-semibold text-[#2c3038]">{idx + 1}.</span> {req}
-                      </div>
-                    ))}
-                  </div>
                 </section>
               )}
 
@@ -1540,11 +2474,11 @@ function ProceedPageInner() {
                     {customMediaItems.map((url, idx) => (
                       <div key={`${url}-${idx}`} className="overflow-hidden rounded-2xl border border-[#eceef2] bg-white shadow-sm">
                         {isImageUrl(url) ? (
-                          <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                          <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
                             <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
                           </div>
                         ) : isVideoUrl(url) ? (
-                          <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                          <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
                             <video src={url} controls className="h-full w-full bg-slate-100 object-cover" preload="metadata" />
                           </div>
                         ) : (
@@ -1559,22 +2493,88 @@ function ProceedPageInner() {
                   </div>
                 </section>
               )}
+
+              <section id={proposalDeskId} className={`space-y-4 scroll-mt-6 ${shouldShowProjectStatusPanel ? "hidden" : ""}`}>
+                <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Send Your Proposal</div>
+                <div className="rounded-[1.45rem] border border-[#eceef2] bg-white p-4 shadow-sm sm:rounded-[1.7rem] sm:p-6">
+                  {!shouldShowProjectStatusPanel && (
+                    <>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <label className="text-sm font-semibold text-[#2c3038]">
+                          Your Hourly Price
+                          <input
+                            inputMode="decimal"
+                            className="mt-3 w-full rounded-2xl border border-[#e7ebef] bg-white px-5 py-4 text-[1.05rem] text-slate-900"
+                            placeholder="Price"
+                            value={proposalBudget}
+                            onChange={(e) => setProposalBudget(e.target.value)}
+                          />
+                        </label>
+                        <label className="text-sm font-semibold text-[#2c3038]">
+                          Estimated Hours
+                          <input
+                            inputMode="numeric"
+                            className="mt-3 w-full rounded-2xl border border-[#e7ebef] bg-white px-5 py-4 text-[1.05rem] text-slate-900"
+                            placeholder="4"
+                            value={proposalTimeline}
+                            onChange={(e) => setProposalTimeline(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <label className="mt-5 block text-sm font-semibold text-[#2c3038]">
+                        Cover Letter
+                        <textarea
+                          className="mt-3 h-56 w-full rounded-2xl border border-[#e7ebef] bg-white px-5 py-4 text-[1.02rem] leading-8 text-slate-900"
+                          placeholder="Share why you are the right fit, how you would execute the work, and what outcome the client can expect."
+                          value={proposalPitch}
+                          onChange={(e) => setProposalPitch(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={submitCustomProposal}
+                        disabled={proposalSaving}
+                        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#77c07d] px-5 py-4 text-[1.05rem] font-semibold text-white transition hover:bg-[#67b56e] disabled:opacity-50 sm:w-auto sm:min-w-[220px]"
+                      >
+                        {proposalSaving ? "Submitting..." : "Submit a Proposal"} <ProjectLineIcon kind="external" className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+
+                  {error && (
+                    <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+                  )}
+                  {success && (
+                    <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
+                  )}
+                </div>
+              </section>
+
+              {customRequirementItems.length > 0 && !shouldShowProjectStatusPanel && (
+                <section className="space-y-3">
+                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">{isContentPostingFlow ? "Posting Requirements" : "Project Requirements"}</div>
+                  <div className="grid gap-3">
+                    {customRequirementItems.map((req, idx) => (
+                      <div key={`${req}-${idx}`} className="rounded-2xl border border-[#eceef2] bg-white px-4 py-3 text-[1rem] leading-7 text-[#4d5563] shadow-sm">
+                        <span className="font-semibold text-[#2c3038]">{idx + 1}.</span> {req}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
             </div>
 
-            <aside className="space-y-4 sm:space-y-6 xl:sticky xl:top-6 xl:self-start">
+            <aside className="space-y-4 sm:space-y-6 lg:sticky lg:top-6 lg:self-start">
               <section className="rounded-[1.45rem] border border-[#e8ebf0] bg-white p-5 shadow-sm sm:rounded-[1.7rem] sm:p-6">
                 <div className="text-[2.45rem] font-semibold tracking-tight text-[#24262d] sm:text-[3rem]">{gig.payout}</div>
                 <div className="mt-1 text-[1rem] text-[#4d5563] sm:text-[1.1rem]">{gig.payoutType} rate</div>
                 <button
                   className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-[#77c07d] px-5 py-3.5 text-[1rem] font-semibold text-white transition hover:bg-[#67b56e] disabled:opacity-50 sm:mt-7 sm:py-4 sm:text-[1.05rem]"
-                  onClick={submitCustomProposal}
-                  disabled={proposalSaving || (hasApplication && proposalReviewStatus !== "Rejected")}
+                  onClick={() => document.getElementById(proposalDeskId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  disabled={hasApplication && proposalReviewStatus !== "Rejected"}
                 >
-                  {proposalSaving
-                    ? "Submitting..."
-                    : hasApplication && proposalReviewStatus !== "Rejected"
-                      ? "Proposal submitted"
-                      : "Submit a proposal"}
+                  {hasApplication && proposalReviewStatus !== "Rejected" ? "Proposal submitted" : "Go to proposal form"}
                 </button>
               </section>
 
@@ -1586,8 +2586,10 @@ function ProceedPageInner() {
                   </div>
                   <div>
                     <div className="text-[1.4rem] font-semibold text-[#24262d]">{gig.company}</div>
-                    <div className="text-sm text-[#4d5563]">Open Project - 1</div>
-                    <div className="mt-1 text-sm font-medium text-[#8b6d17]">★ 3.5 <span className="text-[#8a8f98]">2 Reviews</span></div>
+                    <div className="text-sm text-[#4d5563]">{gig.platform} hiring project</div>
+                    <div className="mt-1 text-sm font-medium text-[#5d6672]">
+                      {application?.proposal?.reviewedAt ? `Updated ${new Date(application.proposal.reviewedAt).toLocaleDateString()}` : "Verified listing"}
+                    </div>
                   </div>
                 </div>
                 <div className="mt-5 border-t border-[#eceef2] pt-5" />
@@ -1597,24 +2599,57 @@ function ProceedPageInner() {
                     <div className="mt-1 text-[#4d5563]">{gig.location}</div>
                   </div>
                   <div>
-                    <div className="font-semibold text-[#2c3038]">Employees</div>
-                    <div className="mt-1 text-[#4d5563]">70-90</div>
+                    <div className="font-semibold text-[#2c3038]">Platform</div>
+                    <div className="mt-1 text-[#4d5563]">{gig.platform}</div>
                   </div>
                   <div>
                     <div className="font-semibold text-[#2c3038]">Categories</div>
-                    <div className="mt-1 text-[#4d5563]">Project</div>
+                    <div className="mt-1 text-[#4d5563]">{isContentPostingFlow ? "Content Posting" : "Project"}</div>
                   </div>
                 </div>
               </section>
 
-              <button type="button" className="inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#77c07d] bg-white px-5 py-3.5 text-[1rem] font-semibold text-[#77c07d] transition hover:bg-[#f7fcf7] sm:py-4 sm:text-[1.05rem]">
-                Contact Me <ProjectLineIcon kind="external" className="h-4 w-4" />
-              </button>
+              {adminWhatsappLink ? (
+                <a
+                  href={adminWhatsappLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#77c07d] bg-white px-5 py-3.5 text-[1rem] font-semibold text-[#77c07d] transition hover:bg-[#f7fcf7] sm:py-4 sm:text-[1.05rem]"
+                >
+                  {sellerActionLabel} <ProjectLineIcon kind="external" className="h-4 w-4" />
+                </a>
+              ) : (
+                <a
+                  href="mailto:support@reelencer.com?subject=Project%20Query"
+                  className="flex w-full items-center justify-between gap-4 rounded-[1.3rem] border border-[#d9e1dc] bg-[#f7faf8] px-4 py-4 text-[#24303b] shadow-sm transition hover:border-[#c6d0ca] hover:bg-[#f3f7f4] sm:rounded-[1.55rem] sm:px-5 sm:py-5"
+                >
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#e1e7e2] bg-white text-[#7a869d] shadow-sm sm:h-16 sm:w-16">
+                      <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                        <path d="M4 7h16v10H4z" />
+                        <path d="m5 8 7 6 7-6" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[0.72rem] font-semibold uppercase tracking-[0.22em] text-[#6d7b8f] sm:text-[0.8rem]">
+                        Contact Support
+                      </div>
+                      <div className="mt-1 text-[0.92rem] text-[#5b6672] sm:text-[0.98rem]">
+                        For project questions or account help
+                      </div>
+                      <div className="mt-1 truncate text-[1.08rem] font-semibold tracking-tight text-[#1f2740] sm:text-[1.16rem]">
+                        support@reelencer.com
+                      </div>
+                    </div>
+                  </div>
+                  <ProjectLineIcon kind="external" className="h-6 w-6 shrink-0 text-[#7a869d] sm:h-7 sm:w-7" />
+                </a>
+              )}
             </aside>
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && !hasApplication && (
+        {!isCustomFlow && !isProjectStyleFlow && !isEmailCreatorFlow && !hasApplication && (
           <div className="rounded-[1.4rem] border border-[#c4d5cb] bg-[radial-gradient(circle_at_top_left,rgba(86,146,118,0.16),transparent_42%),linear-gradient(180deg,#f3f8f3,#edf4ee)] p-3 shadow-[0_26px_55px_rgba(24,64,49,0.14)] backdrop-blur sm:rounded-3xl sm:p-6">
             <div className="grid gap-3 sm:gap-5 lg:grid-cols-[1.85fr_0.95fr]">
               <article className="rounded-[1.2rem] border border-[#d5e2da] bg-white p-4 sm:rounded-2xl sm:p-6">
@@ -1697,14 +2732,14 @@ function ProceedPageInner() {
                   onClick={submitStandardProposal}
                   disabled={proposalSaving}
                 >
-                  {proposalSaving ? "Sending proposal..." : "Send proposal"}
+                  {proposalSaving ? (isEmailCreatorFlow ? "Activating access..." : "Sending proposal...") : isEmailCreatorFlow ? "Activate work access" : "Send proposal"}
                 </button>
               </aside>
             </div>
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && hasApplication && !canAccessOperations && onboardingRequired && (
+        {!isCustomFlow && !isProjectStyleFlow && !isEmailCreatorFlow && hasApplication && !canAccessOperations && onboardingRequired && (
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1824,7 +2859,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && hasApplication && !canAccessOperations && !onboardingRequired && (
+        {!isCustomFlow && !isProjectStyleFlow && !isEmailCreatorFlow && hasApplication && !canAccessOperations && !onboardingRequired && (
           <div className="rounded-3xl border border-[#c9d8cf] bg-[radial-gradient(circle_at_top_right,rgba(136,184,160,0.12),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(247,251,245,0.96))] p-4 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1869,7 +2904,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && hasApplication && proposalReviewStatus === "Accepted" && kycRequiredForGig && (
+        {!isCustomFlow && !isProjectStyleFlow && !isEmailCreatorFlow && hasApplication && proposalReviewStatus === "Accepted" && kycRequiredForGig && (
           <div className="rounded-3xl border border-[#b9d7c6] bg-[radial-gradient(circle_at_top_right,rgba(138,225,95,0.22),transparent_44%),linear-gradient(180deg,#f8fdf7,#edf7f0)] p-4 shadow-xl shadow-[#c8d5c7]/55 sm:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1898,7 +2933,7 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
+        {!isCustomFlow && !isProjectStyleFlow && hasApplication && isWorkspaceFlow && canAccessOperations && (
           <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
             <div className="text-sm font-semibold text-[#1c3e33]">Offer accepted: Workspace access active</div>
             <div className="mt-2 text-sm text-[#4d665c]">
@@ -1913,12 +2948,16 @@ function ProceedPageInner() {
           </div>
         )}
 
-        {!isCustomFlow && !isProjectFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
+        {!isCustomFlow && !isProjectStyleFlow && !isEmailCreatorFlow && hasApplication && !isWorkspaceFlow && canAccessOperations && (
         <>
         <div className="rounded-3xl border border-[#cfdbc8] bg-white/90 p-6 shadow-xl shadow-[#c8d5c7]/55 backdrop-blur">
-          <div className="text-sm font-semibold text-slate-900">Offer accepted: Assigned dashboard emails (5)</div>
+          <div className="text-sm font-semibold text-slate-900">
+            {isEmailCreatorFlow ? "Work access active: Assigned dashboard emails (5)" : "Offer accepted: Assigned dashboard emails (5)"}
+          </div>
           <div className="mt-2 text-sm text-slate-600">
-            Your pre-approval is complete. Use these five emails to create the five Twitter accounts. Each email must be used once.
+            {isEmailCreatorFlow
+              ? "Your access is active. Use these five emails to create the five Twitter accounts. Each email must be used once."
+              : "Your pre-approval is complete. Use these five emails to create the five Twitter accounts. Each email must be used once."}
           </div>
           <div className="mt-2 text-xs">
             <Link href="/work-email-creator" className="font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">

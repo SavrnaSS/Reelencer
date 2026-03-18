@@ -559,10 +559,10 @@ function Button({
     variant === "primary"
       ? "border border-[#8fd764] bg-[#9adf6f] text-[#123128] hover:bg-[#8ed65f]"
       : variant === "secondary"
-      ? "border border-[#cfd8ca] bg-[#f7faf5] text-[#23453a] hover:bg-[#eef4ea]"
+      ? "border border-[#d4dccf] bg-[#f8faf7] text-[#23453a] hover:bg-[#edf4e8]"
       : variant === "danger"
       ? "bg-rose-600 text-white hover:bg-rose-700"
-      : "text-[#476257] hover:bg-[#eaf1e6]";
+      : "border border-[#d4dccf] bg-[#f8faf7] text-[#476257] hover:bg-[#edf4e8]";
   return (
     <button type={type} title={title} onClick={onClick} disabled={disabled} className={cx(base, styles, className)}>
       {children}
@@ -583,13 +583,13 @@ function Chip({
     tone === "info"
       ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
       : tone === "success"
-      ? "border-[#b9df9c] bg-[#edf8e6] text-[#2f6655]"
+      ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
       : tone === "warn"
       ? "border-[#d7dfb2] bg-[#f4f7e8] text-[#5c6530]"
       : tone === "danger"
       ? "border-rose-200 bg-rose-50 text-rose-800"
-      : "border-[#d3dbce] bg-[#f2f6ef] text-[#4f6359]";
-  return <span className={cx("inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-extrabold", cls, className)}>{children}</span>;
+      : "border-[#d3dbce] bg-white text-[#4f6359]";
+  return <span className={cx("inline-flex max-w-full items-center truncate whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-extrabold", cls, className)}>{children}</span>;
 }
 
 function Card({
@@ -606,7 +606,7 @@ function Card({
   compact?: boolean;
 }) {
   return (
-    <section className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] shadow-[0_10px_26px_rgba(25,57,47,0.08)]">
+    <section className="rounded-2xl border border-[#d4dccf] bg-white shadow-[0_10px_26px_rgba(25,57,47,0.08)]">
       {(title || right) && (
         <div className={cx("flex items-start justify-between gap-3 border-b border-slate-200", compact ? "px-4 py-2" : "px-4 py-3")}>
           <div className="min-w-0">
@@ -2024,13 +2024,20 @@ export default function MarketplaceWorkerPage() {
   }
 
   return (
-    <div className="ops-dashboard-skin min-h-screen overflow-x-hidden bg-slate-50">
+    <div className="ops-dashboard-skin min-h-screen overflow-x-hidden bg-[#eef4ea]">
       {/* Mobile navigation */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
           <div className="absolute inset-0 bg-slate-900/30" onClick={() => setMobileNavOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-[88vw] max-w-[320px] bg-white shadow-xl">
-            <SidebarWorker activeSection={activeSection} setActiveSection={setActiveSection} onClose={() => setMobileNavOpen(false)} />
+          <div className="absolute left-0 top-0 h-full w-[88vw] max-w-[320px] bg-[#f8faf7] shadow-xl">
+            <SidebarWorker
+              activeSection={activeSection}
+              setActiveSection={setActiveSection}
+              onClose={() => setMobileNavOpen(false)}
+              workerName={me?.name ?? effectiveWorkerId}
+              workerLevel={levelLabel}
+              approvedEarnings={formatINR(perf.earningsApproved)}
+            />
           </div>
         </div>
       )}
@@ -2039,7 +2046,7 @@ export default function MarketplaceWorkerPage() {
       {detailsOpenMobile && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Work item details">
           <div className="absolute inset-0 bg-slate-900/30" onClick={() => setDetailsOpenMobile(false)} />
-          <div className="absolute right-0 top-0 h-full w-[92vw] max-w-[560px] bg-white shadow-xl">
+          <div className="absolute right-0 top-0 h-full w-[92vw] max-w-[560px] bg-[#f8faf7] shadow-xl">
             <DetailsPanelWorker
               item={selected}
               account={selectedAccount}
@@ -2053,47 +2060,44 @@ export default function MarketplaceWorkerPage() {
         </div>
       )}
 
-      <div className="flex min-h-screen w-full overflow-x-hidden">
+      <div className="flex min-h-screen w-full overflow-x-hidden bg-[#eef4ea]">
         {/* Desktop sidebar */}
-        <aside className="hidden w-[292px] bg-[#e8efe4] lg:block lg:p-3">
-          <SidebarWorker activeSection={activeSection} setActiveSection={setActiveSection} />
+        <aside className="hidden w-[320px] shrink-0 bg-[#eef4ea] lg:block xl:w-[340px]">
+          <div className="sticky top-0 h-screen px-4 py-4 xl:px-5">
+            <SidebarWorker
+              activeSection={activeSection}
+              setActiveSection={setActiveSection}
+              workerName={me?.name ?? effectiveWorkerId}
+              workerLevel={levelLabel}
+              approvedEarnings={formatINR(perf.earningsApproved)}
+            />
+          </div>
         </aside>
 
         {/* Main */}
         <div className="min-w-0 flex-1">
           {/* Header */}
           <header className="sticky top-0 z-40 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
-            <div className="mx-auto max-w-7xl px-3 py-2 sm:px-6">
-              <div className="flex min-w-0 items-center justify-between gap-2 sm:gap-3">
-                <div className="flex min-w-0 items-center gap-3">
+            <div className="mx-auto max-w-[1400px] px-3 py-3 sm:px-6 lg:px-8">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 xl:flex-nowrap">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
                   <button
-                    className="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[#d4dccf] bg-[#f8faf7] hover:bg-[#edf4e8] lg:hidden"
                     onClick={() => setMobileNavOpen(true)}
                     aria-label="Open navigation"
                   >
                     <Icon name="hamburger" className="text-slate-700" />
                   </button>
 
-                  <div className="grid h-10 w-10 place-items-center rounded-md bg-[#0078d4] text-white font-black">IG</div>
-
                   <div className="min-w-0">
-                    <div className="text-sm font-extrabold text-slate-900 truncate">
-                      {activeSection === "Operations"
-                        ? "Worker Operations"
-                        : activeSection === "Accounts"
-                        ? "Assigned Accounts"
-                        : activeSection === "Performance"
-                        ? "Performance Metrics"
-                        : activeSection === "UPI"
-                        ? "UPI Payout Configuration"
-                        : "Payouts"}
+                    <div className="text-sm font-extrabold text-slate-900 sm:text-base truncate">
+                      Workspace
                     </div>
-                    <div className="hidden sm:block text-xs text-slate-600 truncate">Logged in as Worker</div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <div className="hidden md:flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
+                <div className="flex max-w-full flex-wrap items-center justify-end gap-2 sm:gap-3 lg:flex-nowrap">
+                  <div className="hidden min-w-0 flex-1 items-center gap-2 rounded-2xl border border-[#d4dccf] bg-white px-3 py-2 text-slate-700 md:flex lg:max-w-[320px] xl:max-w-[420px]">
                     <Icon name="search" />
                     <input
                       value={q}
@@ -2110,21 +2114,31 @@ export default function MarketplaceWorkerPage() {
                           : "Search…"
                       }
                       aria-label="Search"
-                      className="w-[360px] bg-transparent text-sm outline-none placeholder:text-slate-400"
+                      className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
                     />
                   </div>
 
-                  <Button variant="secondary" onClick={loadFromApi} title="Reload from API" className="px-2.5 py-2 sm:px-4 sm:py-2.5">
+                  <Button variant="secondary" onClick={loadFromApi} title="Reload from API" className="rounded-2xl px-2.5 py-2 text-[#324338] sm:px-4 sm:py-2.5">
                     <Icon name="refresh" />
                     <span className="hidden sm:inline">{loading ? "Loading…" : "Sync"}</span>
                   </Button>
 
-                  <Button variant="ghost" className="border border-slate-200 bg-white px-2.5 py-2 sm:px-4 sm:py-2.5" title="Alerts">
+                  <Button variant="ghost" className="rounded-2xl px-2.5 py-2 text-slate-700 sm:px-4 sm:py-2.5" title="Alerts">
                     <Icon name="bell" />
                     <span className="hidden sm:inline">Alerts</span>
                   </Button>
 
-                  <Button variant="secondary" onClick={logout} title="Logout" className="px-2.5 py-2 sm:px-4 sm:py-2.5">
+                  <div className="hidden min-w-0 max-w-[220px] items-center gap-3 rounded-2xl border border-[#d4dccf] bg-white px-3 py-2 lg:flex xl:max-w-[250px]">
+                    <div className="grid h-10 w-10 place-items-center rounded-full bg-[#edf5ef] text-sm font-black text-[#2f6655]">
+                      {(me?.name ?? effectiveWorkerId ?? "W").slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-extrabold text-slate-900">{me?.name ?? effectiveWorkerId}</div>
+                      <div className="truncate text-xs text-slate-500">{levelLabel} worker</div>
+                    </div>
+                  </div>
+
+                  <Button variant="secondary" onClick={logout} title="Logout" className="rounded-2xl px-2.5 py-2 text-[#324338] sm:px-4 sm:py-2.5">
                     <Icon name="lock" />
                     <span className="hidden sm:inline">Logout</span>
                   </Button>
@@ -2132,8 +2146,8 @@ export default function MarketplaceWorkerPage() {
               </div>
 
               {/* Mobile search */}
-              <div className="mt-2 md:hidden">
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
+              <div className="mt-3 md:hidden">
+                <div className="flex items-center gap-2 rounded-2xl border border-[#d4dccf] bg-white px-3 py-2 text-slate-700">
                   <Icon name="search" />
                   <input
                     value={q}
@@ -2156,12 +2170,12 @@ export default function MarketplaceWorkerPage() {
               </div>
 
               {/* Command bar */}
-              <div className="mt-2 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Chip tone="info">Worker: {me?.name ?? effectiveWorkerId}</Chip>
-                  <Chip tone="neutral">Assigned accounts: {assignedAccountsCount}</Chip>
-                  {!upi.verified ? <Chip tone="warn">UPI not verified</Chip> : <Chip tone="success">UPI verified</Chip>}
-                  {loadError ? <Chip tone="warn">{loadError}</Chip> : <Chip tone="neutral">Live data</Chip>}
+              <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Chip tone="info" className="max-w-[240px] sm:max-w-[320px]">Worker: {me?.name ?? effectiveWorkerId}</Chip>
+                  <Chip tone="neutral">Accounts: {assignedAccountsCount}</Chip>
+                  {!upi.verified ? <Chip tone="warn">UPI pending</Chip> : <Chip tone="success">UPI verified</Chip>}
+                  {loadError ? <Chip tone="warn" className="max-w-[280px] sm:max-w-[360px]">{loadError}</Chip> : <Chip tone="neutral">Live sync</Chip>}
                 </div>
 
                 {activeSection === "Operations" && (
@@ -2169,7 +2183,7 @@ export default function MarketplaceWorkerPage() {
                     <select
                       value={priorityFilter}
                       onChange={(e) => setPriorityFilter(e.target.value as any)}
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 outline-none"
+                      className="rounded-2xl border border-[#d4dccf] bg-white px-3 py-2 text-sm font-extrabold text-slate-900 outline-none"
                       aria-label="Priority filter"
                     >
                       <option value="All">Priority: All</option>
@@ -2178,7 +2192,7 @@ export default function MarketplaceWorkerPage() {
                       <option value="P2">P2</option>
                     </select>
 
-                    <label className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-extrabold text-slate-900">
+                    <label className="inline-flex items-center gap-2 rounded-2xl border border-[#d4dccf] bg-white px-3 py-2 text-sm font-extrabold text-slate-900">
                       <input type="checkbox" checked={strictOnly} onChange={() => setStrictOnly((v) => !v)} className="h-4 w-4 accent-[#0078d4]" />
                       Strict only
                     </label>
@@ -2192,7 +2206,7 @@ export default function MarketplaceWorkerPage() {
 
               {/* KPI strip */}
               {activeSection === "Operations" && (
-                <div className="mt-2">
+                <div className="mt-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Chip tone="neutral">Open: {kpis.open}</Chip>
                     <Chip tone="info">In progress: {kpis.inProg}</Chip>
@@ -2208,11 +2222,11 @@ export default function MarketplaceWorkerPage() {
           </header>
 
           {/* Body */}
-          <main className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-6">
+          <main className="mx-auto max-w-[1400px] px-3 py-5 sm:px-6 sm:py-6 lg:px-8">
             {/* OPERATIONS */}
             {activeSection === "Operations" && (
               <>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <KPI title="Open" value={String(kpis.open)} hint="Awaiting start" tone="neutral" />
                   <KPI title="In progress" value={String(kpis.inProg)} hint="Active items" tone="info" />
                   <KPI title="Submitted" value={String(kpis.submitted)} hint="Admin review pending" tone="warn" />
@@ -2734,42 +2748,64 @@ export default function MarketplaceWorkerPage() {
 }
 
 /** ===================== Sidebar (Worker) ===================== */
-function SidebarWorker({
+function SidebarNavItem({
+  id,
+  label,
+  icon,
   activeSection,
   setActiveSection,
   onClose,
 }: {
+  id: Section;
+  label: string;
+  icon: string;
   activeSection: Section;
   setActiveSection: (v: Section) => void;
   onClose?: () => void;
 }) {
-  const Item = ({ id, label, icon }: { id: Section; label: string; icon: string }) => (
+  return (
     <button
       onClick={() => {
         setActiveSection(id);
         onClose?.();
       }}
       className={cx(
-        "flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 text-sm font-extrabold transition",
-        activeSection === id ? "bg-[#a7e678]/45 text-[#1f4f43]" : "text-[#3d5b4f] hover:bg-[#dfe9da]"
+        "flex w-full items-center justify-between gap-3 rounded-2xl px-3.5 py-3 text-sm font-extrabold transition",
+        activeSection === id ? "bg-[#1f4f43] text-white shadow-sm" : "text-[#31433a] hover:bg-[#edf4e8]"
       )}
     >
       <span className="flex items-center gap-2">
-        <Icon name={icon} className={cx(activeSection === id ? "text-[#1f4f43]" : "text-[#698276]")} />
+        <Icon name={icon} className={cx(activeSection === id ? "text-white" : "text-[#5f7468]")} />
         {label}
       </span>
-      <Icon name="chevRight" className="text-[#8aa094]" />
+      <Icon name="chevRight" className={cx(activeSection === id ? "text-white/70" : "text-[#8fa195]")} />
     </button>
   );
+}
 
+function SidebarWorker({
+  activeSection,
+  setActiveSection,
+  onClose,
+  workerName,
+  workerLevel,
+  approvedEarnings,
+}: {
+  activeSection: Section;
+  setActiveSection: (v: Section) => void;
+  onClose?: () => void;
+  workerName?: string;
+  workerLevel?: string;
+  approvedEarnings?: string;
+}) {
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] shadow-[0_16px_36px_rgba(22,58,46,0.08)]">
-      <div className="flex items-center justify-between gap-2 border-b border-[#d4dccf] px-4 py-4">
+    <div className="flex h-full flex-col rounded-[28px] border border-[#d4dccf] bg-[#f8faf7] shadow-[0_18px_40px_rgba(22,58,46,0.08)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[#d4dccf] px-5 py-5">
         <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1f4f43] text-white font-black">IG</div>
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1f4f43] text-white font-black">R</div>
           <div className="leading-tight">
-            <div className="text-sm font-extrabold text-slate-900">Worker Console</div>
-            <div className="text-xs text-slate-600">Operations console</div>
+            <div className="text-sm font-extrabold text-slate-900">Reelencer</div>
+            <div className="text-xs text-slate-500">Worker dashboard</div>
           </div>
         </div>
 
@@ -2784,18 +2820,42 @@ function SidebarWorker({
         )}
       </div>
 
-      <nav className="space-y-1 px-4 py-4">
-        <Item id="Operations" label="Operations" icon="tasks" />
-        <Item id="Accounts" label="Assigned accounts" icon="performance" />
-        <Item id="Performance" label="Performance" icon="performance" />
-        <Item id="UPI" label="UPI configuration" icon="settings" />
-        <Item id="Payouts" label="Payouts" icon="wallet" />
+      <div className="px-5 pt-5">
+        <div className="overflow-hidden rounded-[24px] border border-[#d4dccf] bg-[#f4f8f1] p-3.5 shadow-[0_16px_36px_rgba(22,58,46,0.08)] sm:p-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-white text-lg font-black text-[#33564a] shadow-[0_10px_24px_rgba(22,58,46,0.08)]">
+              {(workerName ?? "W").slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="max-w-full truncate text-[0.98rem] font-extrabold leading-tight text-slate-900">
+                {workerName ?? "Worker"}
+              </div>
+              <div className="mt-1 max-w-full truncate text-[0.9rem] leading-5 text-[#4e675d]">
+                {workerLevel ?? "Level"} worker
+              </div>
+              <div className="mt-3 inline-flex max-w-full rounded-full border border-[#bcd6c9] bg-white px-3 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.14em] text-[#5f7468]">
+                Approved earnings
+              </div>
+              <div className="mt-2 max-w-full truncate text-[1.28rem] font-bold leading-none text-[#4a8a60]">
+                {approvedEarnings ?? "₹0"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <nav className="space-y-2 px-5 py-5">
+        <SidebarNavItem id="Operations" label="Dashboard" icon="tasks" activeSection={activeSection} setActiveSection={setActiveSection} onClose={onClose} />
+        <SidebarNavItem id="Accounts" label="My Accounts" icon="performance" activeSection={activeSection} setActiveSection={setActiveSection} onClose={onClose} />
+        <SidebarNavItem id="Performance" label="Insights" icon="performance" activeSection={activeSection} setActiveSection={setActiveSection} onClose={onClose} />
+        <SidebarNavItem id="UPI" label="Payment Setup" icon="settings" activeSection={activeSection} setActiveSection={setActiveSection} onClose={onClose} />
+        <SidebarNavItem id="Payouts" label="Payouts" icon="wallet" activeSection={activeSection} setActiveSection={setActiveSection} onClose={onClose} />
       </nav>
 
-      <div className="mt-auto px-4 py-4">
-        <div className="rounded-xl border border-[#d3dbce] bg-[#edf4e8] p-3 text-sm text-[#4f6359]">
-          <div className="text-xs font-extrabold text-slate-600">Worker rule</div>
-          <div className="mt-1">Submit accurate proof. Admin decides approval/rejection.</div>
+      <div className="mt-auto px-5 py-5">
+        <div className="rounded-[22px] border border-[#d4dccf] bg-[#f4f8f1] p-4 text-sm text-[#4f6359]">
+          <div className="text-xs font-extrabold uppercase tracking-[0.18em] text-slate-500">Submission rule</div>
+          <div className="mt-2 leading-6">Submit accurate proof and keep assigned account workflows clean. Final approval stays with admin.</div>
         </div>
       </div>
     </div>
@@ -2805,15 +2865,31 @@ function SidebarWorker({
 /** ===================== KPIs ===================== */
 function KPI({ title, value, hint, tone }: { title: string; value: string; hint: string; tone: "neutral" | "info" | "warn" | "danger" }) {
   const pillTone = tone === "info" ? "info" : tone === "warn" ? "warn" : tone === "danger" ? "danger" : "neutral";
+  const badgeTone =
+    tone === "info"
+      ? "bg-[#eef5f0] text-[#355548]"
+      : tone === "warn"
+        ? "bg-[#f7f3e7] text-[#6d5b25]"
+        : tone === "danger"
+          ? "bg-rose-50 text-rose-700"
+          : "bg-[#f3efe6] text-[#4d5d55]";
+  const badgeLabel =
+    title === "In progress"
+      ? "In Progress"
+      : title === "Approved earnings"
+        ? "Approved"
+        : title;
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-[26px] border border-[#d4dccf] bg-white p-5 shadow-[0_12px_30px_rgba(22,58,46,0.08)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xs font-extrabold text-slate-600">{title}</div>
-          <div className="mt-2 text-2xl font-extrabold text-slate-900">{value}</div>
-          <div className="mt-1 text-sm text-slate-600">{hint}</div>
+          <div className="text-sm font-bold text-slate-500">{title}</div>
+          <div className="mt-3 text-[2rem] font-extrabold leading-none text-slate-900">{value}</div>
+          <div className="mt-2 text-sm text-slate-500">{hint}</div>
         </div>
-        <Chip tone={pillTone}>{title}</Chip>
+        <div className={cx("inline-flex max-w-[108px] items-center justify-center rounded-full px-3 py-2 text-[11px] font-extrabold uppercase tracking-[0.12em] text-center leading-tight", badgeTone)}>
+          <span className="line-clamp-2 break-words">{badgeLabel}</span>
+        </div>
       </div>
     </div>
   );

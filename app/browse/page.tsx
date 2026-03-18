@@ -71,8 +71,22 @@ function isProjectGig(gig: Pick<Gig, "gigType">) {
     .toLowerCase() === "project";
 }
 
+function isContentPostingGig(gig: Pick<Gig, "gigType">) {
+  return String(gig.gigType ?? "")
+    .trim()
+    .toLowerCase() === "content posting";
+}
+
+function buildProceedHref(gig: Pick<Gig, "id" | "gigType">) {
+  const params = new URLSearchParams({ gigId: String(gig.id) });
+  if (isProjectGig(gig)) params.set("gigType", "project");
+  if (isContentPostingGig(gig)) params.set("gigType", "content-posting");
+  if (isEmailCreatorGig(gig)) params.set("gigType", "email-creator");
+  return `/proceed?${params.toString()}`;
+}
+
 function isCustomGig(gig: Pick<Gig, "gigType" | "title">) {
-  return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig) && !isProjectGig(gig);
+  return !isWorkspaceGig(gig) && !isEmailCreatorGig(gig) && !isProjectGig(gig) && !isContentPostingGig(gig);
 }
 
 function formatGigTypeLabel(raw?: string) {
@@ -174,6 +188,7 @@ const LS_KEYS = {
   AUTH: "igops:auth",
   GIGS: "igops:gigs",
   GIG_APPS: "igops:gig-apps",
+  KYC_STATUS: "igops:kyc-status",
 } as const;
 
 const STATUS_OPTIONS: GigStatus[] = ["Open", "Paused", "Closed"];
@@ -187,17 +202,6 @@ function isSeedGig(gig: Gig) {
 
 function normalizeGigList(value: unknown) {
   return toArray<Gig>(value, []).filter((gig) => gig && typeof gig.id === "string" && !isSeedGig(gig));
-}
-
-function mergeGigLists(primary: Gig[], fallback: Gig[]) {
-  const map = new Map<string, Gig>();
-  for (const gig of fallback) {
-    map.set(gig.id, gig);
-  }
-  for (const gig of primary) {
-    map.set(gig.id, gig);
-  }
-  return Array.from(map.values());
 }
 
 function isGigActive(gig: Pick<Gig, "status">) {
@@ -292,7 +296,9 @@ export default function BrowsePage() {
   const [menuClosing, setMenuClosing] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [displayName, setDisplayName] = useState<string>("User");
-  const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">("none");
+  const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">(() =>
+    readLS<"none" | "pending" | "approved" | "rejected">(LS_KEYS.KYC_STATUS, "none")
+  );
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const isGuest = !role;
   const dashboardHref = role === "Admin" ? "/admin" : "/workspace";
@@ -304,7 +310,7 @@ export default function BrowsePage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [payoutType, setPayoutType] = useState<PayoutType | "All">("All");
   const [statusFilter, setStatusFilter] = useState<GigStatus | "All">("All");
-  const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Email Creator" | "Workspace" | "Project" | "Custom">("All");
+  const [gigTypeFilter, setGigTypeFilter] = useState<"All" | "Email Creator" | "Workspace" | "Project" | "Content Posting" | "Custom">("All");
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const hasApprovedKyc = role === "Worker" && kycStatus === "approved";
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
@@ -349,16 +355,20 @@ export default function BrowsePage() {
       const token = sess.session?.access_token;
       if (!token) {
         setKycStatus("none");
+        writeLS(LS_KEYS.KYC_STATUS, "none");
         return;
       }
       const res = await fetch("/api/kyc", { headers: { Authorization: `Bearer ${token}`, ...DEV_ADMIN_HEADERS } });
       const payload = res.ok ? await res.json() : null;
-      setKycStatus(payload?.status ?? "none");
+      const nextStatus = payload?.status ?? "none";
+      setKycStatus(nextStatus);
+      writeLS(LS_KEYS.KYC_STATUS, nextStatus);
       if (payload?.status === "approved" && payload?.workerId && role === "Worker") {
         setWorkerId(String(payload.workerId));
       }
     } catch {
       setKycStatus("none");
+      writeLS(LS_KEYS.KYC_STATUS, "none");
     }
   }, [role]);
 
@@ -438,6 +448,7 @@ export default function BrowsePage() {
     }
     try {
       window.localStorage.removeItem(LS_KEYS.AUTH);
+      window.localStorage.removeItem(LS_KEYS.KYC_STATUS);
     } catch {}
     window.location.replace(loginHref);
   };
@@ -460,13 +471,10 @@ export default function BrowsePage() {
         const data = await res.json();
         if (!alive) return;
         const liveGigs = normalizeGigList(data);
-        const mergedGigs = mergeGigLists(liveGigs, cachedGigs);
-        setGigs(mergedGigs);
-        gigsLoaded = mergedGigs.length > 0;
+        setGigs(liveGigs);
+        gigsLoaded = true;
         setLoading(false);
-        if (mergedGigs.length > 0) {
-          writeLS(LS_KEYS.GIGS, mergedGigs);
-        }
+        writeLS(LS_KEYS.GIGS, liveGigs);
       } catch {
         if (alive) setLoading(false);
       }
@@ -527,6 +535,7 @@ export default function BrowsePage() {
         if (gigTypeFilter === "Workspace" && !isWorkspaceGig(gig)) return false;
         if (gigTypeFilter === "Email Creator" && !isEmailCreatorGig(gig)) return false;
         if (gigTypeFilter === "Project" && !isProjectGig(gig)) return false;
+        if (gigTypeFilter === "Content Posting" && !isContentPostingGig(gig)) return false;
         if (gigTypeFilter === "Custom" && !isCustomGig(gig)) return false;
       }
       if (payoutType !== "All" && gig.payoutType !== payoutType) return false;
@@ -560,7 +569,7 @@ export default function BrowsePage() {
       return;
     }
     if (gig.status !== "Open") return;
-    window.location.href = `/proceed?gigId=${encodeURIComponent(gig.id)}`;
+    window.location.href = buildProceedHref(gig);
   };
 
   const resetFilters = () => {
@@ -720,7 +729,7 @@ export default function BrowsePage() {
             <div className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
               Marketplace Console
             </div>
-            <h1 className="mt-5 max-w-4xl font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.94] font-bold tracking-[-0.045em] text-slate-900 sm:mt-6 sm:text-[3.15rem] lg:text-[3.85rem]">
+            <h1 className="mt-5 max-w-4xl pl-[0.04em] font-[Georgia,Times_New_Roman,serif] text-[2.45rem] leading-[0.96] font-bold tracking-[-0.03em] text-slate-900 sm:mt-6 sm:text-[3.15rem] lg:text-[3.85rem]">
               Browse Verified
               <br />
               Gigs, Clear
@@ -826,7 +835,7 @@ export default function BrowsePage() {
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                 <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  {(["All", "Email Creator", "Workspace", "Project", "Custom"] as const).map((t) => (
+                  {(["All", "Email Creator", "Workspace", "Project", "Content Posting", "Custom"] as const).map((t) => (
                     <button
                       key={t}
                       className={`rounded-full border px-3 py-1 text-xs ${
@@ -868,8 +877,66 @@ export default function BrowsePage() {
             </div>
 
             {loading && (
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600 shadow-sm">
-                Loading marketplace...
+              <div className="grid gap-3 sm:gap-4">
+                {Array.from({ length: 3 }).map((_, idx) => (
+                  <div
+                    key={`gig-skeleton-${idx}`}
+                    className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 lg:grid lg:grid-cols-[1.38fr_0.62fr] lg:gap-6 lg:p-5 xl:grid-cols-[1.48fr_0.52fr]"
+                  >
+                    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                      <div className="absolute inset-y-0 -left-1/3 w-1/3 animate-[shimmer_1.8s_ease-in-out_infinite] bg-[linear-gradient(90deg,transparent,rgba(237,245,239,0.9),transparent)]" />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="h-4 w-24 rounded-full bg-slate-100" />
+                        <div className="h-4 w-20 rounded-full bg-slate-100" />
+                        <div className="h-7 w-24 rounded-full bg-[#edf5ef]" />
+                      </div>
+                      <div className="mt-4 h-8 w-[82%] rounded-xl bg-slate-100 sm:h-10" />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="h-9 w-24 rounded-full bg-slate-100" />
+                        <div className="h-9 w-20 rounded-full bg-slate-100" />
+                        <div className="h-9 w-24 rounded-full bg-slate-100" />
+                        <div className="h-9 w-20 rounded-full bg-slate-100" />
+                      </div>
+                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-slate-200 bg-[#f9fbf8] p-4">
+                          <div className="h-4 w-20 rounded-full bg-slate-100" />
+                          <div className="mt-4 h-8 w-36 rounded-xl bg-slate-100" />
+                          <div className="mt-3 h-4 w-24 rounded-full bg-slate-100" />
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-[#f9fbf8] p-4">
+                          <div className="h-4 w-16 rounded-full bg-slate-100" />
+                          <div className="mt-4 h-8 w-28 rounded-xl bg-slate-100" />
+                          <div className="mt-3 h-4 w-20 rounded-full bg-slate-100" />
+                        </div>
+                        <div className="rounded-2xl border border-slate-200 bg-[#f9fbf8] p-4">
+                          <div className="h-4 w-24 rounded-full bg-slate-100" />
+                          <div className="mt-4 h-8 w-28 rounded-xl bg-slate-100" />
+                          <div className="mt-3 h-4 w-20 rounded-full bg-slate-100" />
+                        </div>
+                      </div>
+                      <div className="mt-5">
+                        <div className="h-4 w-32 rounded-full bg-slate-100" />
+                        <div className="mt-3 h-11 w-56 rounded-full bg-slate-100" />
+                      </div>
+                    </div>
+                    <div className="mt-5 lg:mt-0">
+                      <div className="rounded-[1.6rem] border border-slate-200 bg-[#fbfcfa] p-4">
+                        <div className="h-4 w-24 rounded-full bg-slate-100" />
+                        <div className="mt-5 h-24 rounded-2xl bg-slate-100" />
+                      </div>
+                      <div className="mt-4 rounded-[1.6rem] border border-slate-200 bg-[#fbfcfa] p-4">
+                        <div className="h-4 w-24 rounded-full bg-slate-100" />
+                        <div className="mt-4 space-y-3">
+                          <div className="h-9 w-40 rounded-full bg-slate-100" />
+                          <div className="h-9 w-32 rounded-full bg-slate-100" />
+                          <div className="h-9 w-36 rounded-full bg-slate-100" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -1111,7 +1178,7 @@ export default function BrowsePage() {
                           {canProceed && (
                             <Link
                               className="col-span-2 rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-center text-xs font-semibold text-[#2f6655] sm:px-4 sm:py-2 md:col-span-1"
-                              href={isFullTime ? "/workspace" : `/proceed?gigId=${encodeURIComponent(gig.id)}`}
+                              href={isFullTime ? "/workspace" : buildProceedHref(gig)}
                             >
                               {isFullTime ? "Go to workspace" : isFreelanceCustom ? "Open proposal flow" : "Proceed"}
                             </Link>
@@ -1119,7 +1186,7 @@ export default function BrowsePage() {
                           {!canProceed && !!app && (
                             <Link
                               className="col-span-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-center text-xs font-semibold text-slate-700 sm:px-4 sm:py-2 md:col-span-1"
-                              href={`/proceed?gigId=${encodeURIComponent(gig.id)}`}
+                              href={buildProceedHref(gig)}
                             >
                               View status
                             </Link>
@@ -1288,7 +1355,7 @@ export default function BrowsePage() {
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Gig type</div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                    {(["All", "Email Creator", "Workspace", "Project", "Custom"] as const).map((t) => (
+                    {(["All", "Email Creator", "Workspace", "Project", "Content Posting", "Custom"] as const).map((t) => (
                       <button
                         key={t}
                         className={`rounded-full border px-3 py-1.5 ${
