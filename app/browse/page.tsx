@@ -154,6 +154,31 @@ function formatINR(value: number) {
   }
 }
 
+function normalizeApplicationStatus(status?: string): ApplicationStatus | undefined {
+  const raw = String(status ?? "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return undefined;
+  if (raw === "applied") return "Applied";
+  if (raw === "pending" || raw === "in review" || raw === "in-review") return "Pending";
+  if (raw === "accepted" || raw === "approved") return "Accepted";
+  if (raw === "rejected" || raw === "declined") return "Rejected";
+  if (raw === "withdrawn") return "Withdrawn";
+  return undefined;
+}
+
+function normalizeAssignmentStatus(status?: string) {
+  const raw = String(status ?? "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return undefined;
+  if (raw === "assigned" || raw === "accepted" || raw === "approved") return "Assigned";
+  if (raw === "submitted" || raw === "in verification" || raw === "in-verification") return "Submitted";
+  if (raw === "pending" || raw === "in review" || raw === "in-review") return "Pending";
+  if (raw === "rejected" || raw === "declined") return "Rejected";
+  return status;
+}
+
 function formatBriefParagraphs(text: string) {
   const lines = normalizeBriefText(text);
   const blocks: Array<{ type: "p" | "li"; text: string }> = [];
@@ -395,7 +420,7 @@ export default function BrowsePage() {
       setKycStatus(nextStatus);
       writeLS(LS_KEYS.KYC_STATUS, nextStatus);
       if (payload?.status === "approved" && payload?.workerId && role === "Worker") {
-        setWorkerId(String(payload.workerId));
+        setWorkerId((prev) => prev ?? String(payload.workerId));
       }
     } catch {
       setKycStatus("none");
@@ -606,13 +631,21 @@ export default function BrowsePage() {
 
   const appByGig = useMemo(() => {
     const map = new Map<string, GigApplication>();
-    apps.forEach((app) => map.set(app.gigId, app));
+    apps.forEach((app) => {
+      const key = String(app.gigId ?? "").trim();
+      if (!key || map.has(key)) return;
+      map.set(key, app);
+    });
     return map;
   }, [apps]);
 
   const assignmentByGig = useMemo(() => {
     const map = new Map<string, GigAssignment>();
-    assignments.forEach((a) => map.set(String(a.gigId ?? a.gig_id), a));
+    assignments.forEach((a) => {
+      const key = String(a.gigId ?? a.gig_id ?? "").trim();
+      if (!key || map.has(key)) return;
+      map.set(key, a);
+    });
     return map;
   }, [assignments]);
 
@@ -1031,6 +1064,9 @@ export default function BrowsePage() {
               {visibleGigs.map((gig, index) => {
                 const app = appByGig.get(gig.id);
                 const assignment = assignmentByGig.get(gig.id);
+                const normalizedAppStatus = normalizeApplicationStatus(app?.status);
+                const normalizedProposalStatus = normalizeApplicationStatus(app?.proposal?.reviewStatus);
+                const normalizedAssignmentStatus = normalizeAssignmentStatus(assignment?.status);
                 const isFullTime = isWorkspaceGig(gig);
                 const isFreelanceCustom = isCustomGig(gig);
                 const requiresKyc = isKycRequired(gig);
@@ -1045,24 +1081,24 @@ export default function BrowsePage() {
                       ? "/workspace"
                       : loginHref;
                 const proposalReviewStatus =
-                  app?.proposal?.reviewStatus ??
-                  (app?.status === "Accepted"
+                  normalizedProposalStatus ??
+                  (normalizedAppStatus === "Accepted"
                     ? "Accepted"
-                    : app?.status === "Rejected"
+                    : normalizedAppStatus === "Rejected"
                       ? "Rejected"
-                      : app?.status
+                      : normalizedAppStatus
                         ? "Pending"
                         : undefined);
-                const derivedStatus = proposalReviewStatus ?? app?.status ?? assignment?.status ?? undefined;
+                const derivedStatus = proposalReviewStatus ?? normalizedAppStatus ?? normalizedAssignmentStatus ?? undefined;
                 const canApply = gig.status === "Open" && !!workerId && !kycLocked;
                 const needsSignIn = !workerId;
                 const canProceed =
                   !!workerId &&
                   !kycLocked &&
                   (proposalReviewStatus === "Accepted" ||
-                    app?.status === "Accepted" ||
-                    assignment?.status === "Submitted" ||
-                    assignment?.status === "Assigned");
+                    normalizedAppStatus === "Accepted" ||
+                    normalizedAssignmentStatus === "Submitted" ||
+                    normalizedAssignmentStatus === "Assigned");
                 const statusTone =
                   derivedStatus === "Accepted"
                     ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
@@ -1269,7 +1305,7 @@ export default function BrowsePage() {
                       </div>
                     </div>
 
-                    {assignment?.status === "Submitted" && (
+                    {normalizedAssignmentStatus === "Submitted" && (
                       <div className="mt-4 rounded-2xl border border-[#bcd6c9] bg-[#edf5ef] px-4 py-3 text-xs font-semibold text-[#2f6655]">
                         In verification: Admin is reviewing your submitted credentials.
                       </div>
