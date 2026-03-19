@@ -1,17 +1,44 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
+};
+
+async function resolveWorkerAliases(workerId: string) {
+  const sb = supabaseAdmin();
+  const aliases = new Set<string>([workerId].filter(Boolean));
+
+  const byCode = await sb.from("profiles").select("id,worker_code").eq("worker_code", workerId).maybeSingle();
+  if (byCode.data?.id) aliases.add(String(byCode.data.id));
+  if ((byCode.data as any)?.worker_code) aliases.add(String((byCode.data as any).worker_code));
+
+  const byId = await sb.from("profiles").select("id,worker_code").eq("id", workerId).maybeSingle();
+  if (byId.data?.id) aliases.add(String(byId.data.id));
+  if ((byId.data as any)?.worker_code) aliases.add(String((byId.data as any).worker_code));
+
+  const workerRow = await sb.from("workers").select("id,user_id").or(`id.eq.${workerId},user_id.eq.${workerId}`).maybeSingle();
+  if (workerRow.data?.id) aliases.add(String(workerRow.data.id));
+  if ((workerRow.data as any)?.user_id) aliases.add(String((workerRow.data as any).user_id));
+
+  return Array.from(aliases).filter(Boolean);
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const workerId = url.searchParams.get("workerId");
-  if (!workerId) return NextResponse.json({ error: "workerId required" }, { status: 400 });
+  if (!workerId) return NextResponse.json({ error: "workerId required" }, { status: 400, headers: NO_STORE_HEADERS });
+
+  const workerAliases = await resolveWorkerAliases(workerId);
 
   const { data, error } = await supabaseAdmin()
-      .from("work_items")
+    .from("work_items")
     .select("status,reward_inr,started_at,completed_at,due_at,sla_minutes")
-    .eq("worker_id", workerId);
+    .or(workerAliases.map((id) => `worker_id.eq.${id}`).join(","));
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
 
   const items = data ?? [];
   const approved = items.filter((x) => x.status === "Approved");
@@ -44,5 +71,5 @@ export async function GET(req: Request) {
     },
     money: { earnings, pending },
     sla: { met: slaMet, breached: slaBreaches },
-  });
+  }, { headers: NO_STORE_HEADERS });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -101,6 +101,7 @@ export default function PayoutsPage() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [role, setRole] = useState<Role | null>(null);
   const [workerId, setWorkerId] = useState<string | null>(null);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
@@ -108,13 +109,90 @@ export default function PayoutsPage() {
   const [upi, setUpi] = useState<UpiConfig | null>(null);
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
   const [requesting, setRequesting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const loadInFlightRef = useRef(false);
 
   useEffect(() => {
     const session = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
     setRole(session?.role ?? null);
     setWorkerId(session?.workerId ?? null);
     setSessionLoaded(true);
+    void supabase.auth.getUser().then(({ data }) => {
+      setAuthUserId(data.user?.id ?? null);
+    });
   }, []);
+
+  const loadPayoutData = useCallback(async (mode: "initial" | "refresh" = "initial") => {
+    if (loadInFlightRef.current && mode !== "initial") return;
+    if (!workerId) {
+      setLoading(false);
+      return;
+    }
+
+    loadInFlightRef.current = true;
+    if (mode === "initial") setLoading(true);
+    else setRefreshing(true);
+    setError(null);
+
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const [metricsResult, batchesResult, upiResult] = await Promise.allSettled([
+        fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
+        fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
+        token
+          ? fetch("/api/upi", { method: "GET", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+          : Promise.resolve(null),
+      ]);
+
+      const issues: string[] = [];
+
+      if (metricsResult.status === "fulfilled") {
+        if (metricsResult.value.ok) {
+          const metricsJson = await metricsResult.value.json();
+          setMetrics(metricsJson ?? null);
+        } else {
+          issues.push("earnings metrics");
+        }
+      } else {
+        issues.push("earnings metrics");
+      }
+
+      if (batchesResult.status === "fulfilled") {
+        if (batchesResult.value.ok) {
+          const batchesJson = await batchesResult.value.json();
+          setBatches(Array.isArray(batchesJson) ? batchesJson : []);
+        } else {
+          issues.push("payout batches");
+        }
+      } else {
+        issues.push("payout batches");
+      }
+
+      if (upiResult.status === "fulfilled" && upiResult.value) {
+        if (upiResult.value.ok) {
+          const upiJson = await upiResult.value.json();
+          setUpi(upiJson ?? null);
+        } else {
+          issues.push("UPI status");
+        }
+      } else if (upiResult.status === "rejected") {
+        issues.push("UPI status");
+      }
+
+      setLastUpdatedAt(new Date().toLocaleTimeString());
+      if (issues.length > 0) {
+        setError(`Some payout data could not be refreshed: ${issues.join(", ")}.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load payout data.");
+    } finally {
+      loadInFlightRef.current = false;
+      if (mode === "initial") setLoading(false);
+      else setRefreshing(false);
+    }
+  }, [workerId]);
 
   useEffect(() => {
     if (!sessionLoaded) return;
@@ -126,57 +204,85 @@ export default function PayoutsPage() {
       window.location.replace("/admin");
       return;
     }
-    if (!workerId) {
-      setLoading(false);
-      return;
-    }
+    void loadPayoutData("initial");
+  }, [loadPayoutData, role, sessionLoaded]);
 
-    let alive = true;
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        const [metricsRes, batchesRes, upiRes] = await Promise.all([
-          fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET" }),
-          fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { method: "GET" }),
-          token
-            ? fetch("/api/upi", { method: "GET", headers: { Authorization: `Bearer ${token}` } })
-            : Promise.resolve(null),
-        ]);
+  const realtimeWorkerIds = useMemo(
+    () => Array.from(new Set([workerId, authUserId].filter(Boolean) as string[])),
+    [authUserId, workerId]
+  );
 
-        if (!alive) return;
-        if (!metricsRes.ok || !batchesRes.ok) {
-          throw new Error("Unable to load payout data right now.");
-        }
+  useEffect(() => {
+    if (!sessionLoaded || role !== "Worker" || realtimeWorkerIds.length === 0) return;
 
-        const metricsJson = await metricsRes.json();
-        const batchesJson = await batchesRes.json();
-        const upiJson = upiRes && upiRes.ok ? await upiRes.json() : null;
-
-        if (!alive) return;
-        setMetrics(metricsJson ?? null);
-        setBatches(Array.isArray(batchesJson) ? batchesJson : []);
-        setUpi(upiJson ?? null);
-      } catch (err) {
-        if (!alive) return;
-        setError(err instanceof Error ? err.message : "Unable to load payout data.");
-      } finally {
-        if (alive) setLoading(false);
-      }
+    let refreshTimer: number | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        void loadPayoutData("refresh");
+      }, 500);
     };
 
-    void run();
+    const channels = realtimeWorkerIds.flatMap((id) => [
+      supabase.channel(`payout-batches-${id}`).on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "payout_batches", filter: `worker_id=eq.${id}` },
+        scheduleRefresh
+      ),
+      supabase.channel(`payout-items-${id}`).on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "payout_items", filter: `worker_id=eq.${id}` },
+        scheduleRefresh
+      ),
+      supabase.channel(`work-items-${id}`).on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "work_items", filter: `worker_id=eq.${id}` },
+        scheduleRefresh
+      ),
+      supabase.channel(`upi-configs-${id}`).on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "upi_configs", filter: `worker_id=eq.${id}` },
+        scheduleRefresh
+      ),
+    ]);
+
+    channels.forEach((channel) => channel.subscribe());
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void loadPayoutData("refresh");
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadPayoutData("refresh");
+    }, 30000);
+
     return () => {
-      alive = false;
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibility);
+      channels.forEach((channel) => {
+        void supabase.removeChannel(channel);
+      });
     };
-  }, [role, sessionLoaded, workerId]);
+  }, [loadPayoutData, realtimeWorkerIds, role, sessionLoaded]);
 
   const approvedEarnings = metrics?.money?.earnings ?? 0;
   const pendingPayouts = metrics?.money?.pending ?? 0;
   const paidBatches = useMemo(() => batches.filter((batch) => batch.status === "Paid").length, [batches]);
   const processingBatch = useMemo(() => batches.find((batch) => batch.status === "Processing" || batch.status === "Draft") ?? null, [batches]);
+  const totalPaidAmount = useMemo(
+    () => batches.filter((batch) => batch.status === "Paid").reduce((sum, batch) => sum + batchTotal(batch), 0),
+    [batches]
+  );
+  const requestBlockedReason = !upi?.verified
+    ? "Verify UPI in workspace before requesting payout."
+    : processingBatch
+      ? "A payout batch is already active."
+      : approvedEarnings <= 0
+        ? "No approved earnings are available yet."
+        : null;
 
   const requestPayout = async () => {
     if (!workerId) return;
@@ -191,11 +297,7 @@ export default function PayoutsPage() {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error || "Unable to request payout.");
       setNotice({ tone: "success", text: "Payout request submitted. Admin review will continue in the next payout cycle." });
-      const refresh = await fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { method: "GET" });
-      if (refresh.ok) {
-        const data = await refresh.json();
-        setBatches(Array.isArray(data) ? data : []);
-      }
+      await loadPayoutData("refresh");
     } catch (err) {
       setNotice({ tone: "danger", text: err instanceof Error ? err.message : "Unable to request payout." });
     } finally {
@@ -242,19 +344,33 @@ export default function PayoutsPage() {
         </div>
 
         <div className="relative mx-auto w-full max-w-7xl px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
-          {error && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">{error}</div>}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="text-sm text-[#5c7368]">
+              {workerId ? `Worker ID: ${workerId}` : "Worker profile is still being resolved."}
+              {lastUpdatedAt && <span className="ml-2 text-[#7b8f84]">Last synced at {lastUpdatedAt}</span>}
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadPayoutData("refresh")}
+              disabled={refreshing || !workerId}
+              className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-4 py-2 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1] disabled:opacity-50"
+            >
+              {refreshing ? "Refreshing..." : "Refresh ledger"}
+            </button>
+          </div>
+          {error && <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">{error}</div>}
           {notice && (
-            <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${notice.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+            <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${notice.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
               {notice.text}
             </div>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
               { label: "Approved earnings", value: formatINR(approvedEarnings), detail: "Live from approved work" },
               { label: "Pending payouts", value: formatINR(pendingPayouts), detail: "Submitted awaiting admin" },
               { label: "Payout batches", value: String(batches.length), detail: "Your payout cycles" },
-              { label: "Paid batches", value: String(paidBatches), detail: "Completed successfully" },
+              { label: "Paid batches", value: String(paidBatches), detail: paidBatches > 0 ? `${formatINR(totalPaidAmount)} released` : "Completed successfully" },
             ].map((item) => (
               <div key={item.label} className="rounded-[1.2rem] border border-[#cfdbc8] bg-white/90 px-4 py-3 shadow-lg shadow-[#d6dfd2]/35 backdrop-blur sm:rounded-[1.4rem] sm:px-5 sm:py-5">
                 <span className="inline-flex rounded-full border border-[#d9e4de] bg-[#f3f8f2] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#597568]">
@@ -306,6 +422,20 @@ export default function PayoutsPage() {
                         <div className="rounded-xl border border-[#e1e8e0] bg-white px-3 py-2">Items: {batch.items.length}</div>
                         <div className="rounded-xl border border-[#e1e8e0] bg-white px-3 py-2">Created: {fmtDate(batch.createdAt)}</div>
                       </div>
+                      {batch.items.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-[#e1e8e0] bg-white px-3 py-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Included items</div>
+                          <div className="mt-2 grid gap-2">
+                            {batch.items.slice(0, 4).map((item) => (
+                              <div key={item.id} className="flex items-center justify-between gap-3 text-sm text-[#385449]">
+                                <span className="truncate">{item.handle || item.workItemId}</span>
+                                <span className="shrink-0 font-semibold">{formatINR(item.amountINR)}</span>
+                              </div>
+                            ))}
+                            {batch.items.length > 4 && <div className="text-xs text-[#70857a]">+{batch.items.length - 4} more items</div>}
+                          </div>
+                        </div>
+                      )}
                       {batch.notes?.length > 0 && (
                         <div className="mt-3 rounded-xl border border-[#e1e8e0] bg-white px-3 py-2 text-xs text-[#6b8175]">
                           {batch.notes.join(" • ")}
@@ -336,12 +466,19 @@ export default function PayoutsPage() {
                       {processingBatch ? "A payout cycle is already active for your account." : "You can request a payout for approved items when eligible."}
                     </div>
                   </div>
+                  <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">Eligible amount</div>
+                    <div className="mt-2 text-base font-semibold text-[#274537]">{formatINR(approvedEarnings)}</div>
+                    <div className="mt-1 text-sm text-[#617166]">
+                      Approved work not yet released into a paid batch is available for the next request cycle.
+                    </div>
+                  </div>
                 </div>
                 <div className="mt-5 flex flex-wrap gap-3">
                   <button
                     type="button"
                     onClick={requestPayout}
-                    disabled={requesting || !workerId || !upi?.verified}
+                    disabled={requesting || !workerId || !!requestBlockedReason}
                     className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2d6b5a] disabled:opacity-50"
                   >
                     {requesting ? "Requesting..." : "Request payout"}
@@ -350,6 +487,7 @@ export default function PayoutsPage() {
                     Configure UPI in workspace
                   </Link>
                 </div>
+                {requestBlockedReason && <div className="mt-3 text-sm font-medium text-[#6a7f73]">{requestBlockedReason}</div>}
               </div>
 
               <div className="rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">

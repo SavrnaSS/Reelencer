@@ -7,8 +7,12 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
-// ✅ default: last 2 hours (you can override with ?hours=6 etc.)
-const DEFAULT_HOURS = 2;
+// Default to a longer window so verification emails remain visible across a normal work session.
+const DEFAULT_HOURS = 24;
+
+function uniqueLower(values: string[]) {
+  return Array.from(new Set(values.map((value) => String(value).trim().toLowerCase()).filter(Boolean)));
+}
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -37,9 +41,9 @@ export async function GET(req: Request) {
       .single();
     if (!assignErr && assignment) {
       if (Array.isArray((assignment as any).assigned_emails)) {
-        assignedEmails = (assignment as any).assigned_emails.map((e: any) => String(e).toLowerCase());
+        assignedEmails = uniqueLower((assignment as any).assigned_emails.map((e: any) => String(e)));
       } else if ((assignment as any).assigned_email) {
-        assignedEmails = [String((assignment as any).assigned_email).toLowerCase()];
+        assignedEmails = uniqueLower([String((assignment as any).assigned_email)]);
       }
     }
   } catch {
@@ -65,7 +69,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const payload = (data ?? []).map((row: any) => ({
+  const gigInboxRows = (data ?? []).map((row: any) => ({
     id: String(row.id),
     assignmentId: String(row.assignment_id),
     toEmail: row.to_email,
@@ -74,7 +78,70 @@ export async function GET(req: Request) {
     otpCode: row.otp_code,
     createdAt: row.created_at,
     readAt: row.read_at ?? undefined,
+    source: "gig",
   }));
+
+  let workInboxRows: any[] = [];
+  if (assignedEmails.length > 0) {
+    try {
+      const { data: accounts, error: accountsError } = await sb
+        .from("work_email_accounts")
+        .select("id, email, status")
+        .in("email", assignedEmails)
+        .neq("status", "deleted");
+
+      if (accountsError) {
+        const msg = String(accountsError.message || "").toLowerCase();
+        const missingSchema = msg.includes("relation") || msg.includes("does not exist") || msg.includes("undefined table");
+        if (!missingSchema) {
+          return NextResponse.json(
+            { error: accountsError.message },
+            { status: 500, headers: NO_STORE_HEADERS }
+          );
+        }
+      } else {
+        const accountIds = (accounts ?? []).map((row: any) => String(row.id)).filter(Boolean);
+        if (accountIds.length > 0) {
+          const { data: workInbox, error: workInboxError } = await sb
+            .from("work_email_inbox")
+            .select("id, account_id, to_email, subject, body, otp_code, created_at, read_at")
+            .in("account_id", accountIds)
+            .gte("created_at", cutoffIso)
+            .order("created_at", { ascending: false });
+
+          if (workInboxError) {
+            const msg = String(workInboxError.message || "").toLowerCase();
+            const missingSchema = msg.includes("relation") || msg.includes("does not exist") || msg.includes("undefined table");
+            if (!missingSchema) {
+              return NextResponse.json(
+                { error: workInboxError.message },
+                { status: 500, headers: NO_STORE_HEADERS }
+              );
+            }
+          } else {
+            workInboxRows = (workInbox ?? []).map((row: any) => ({
+              id: String(row.id),
+              assignmentId,
+              accountId: String(row.account_id),
+              toEmail: row.to_email,
+              subject: row.subject,
+              body: row.body,
+              otpCode: row.otp_code,
+              createdAt: row.created_at,
+              readAt: row.read_at ?? undefined,
+              source: "work",
+            }));
+          }
+        }
+      }
+    } catch {
+      // ignore optional work-email fallback failures
+    }
+  }
+
+  const payload = [...gigInboxRows, ...workInboxRows].sort(
+    (a, b) => new Date(String(b.createdAt ?? 0)).getTime() - new Date(String(a.createdAt ?? 0)).getTime()
+  );
 
   return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }
@@ -98,6 +165,39 @@ export async function DELETE(req: Request) {
       { error: error.message },
       { status: 500, headers: NO_STORE_HEADERS }
     );
+  }
+
+  try {
+    const { data: assignment } = await sb
+      .from("gig_assignments")
+      .select("assigned_emails, assigned_email")
+      .eq("id", assignmentId)
+      .maybeSingle();
+
+    const assignedEmails = assignment
+      ? uniqueLower(
+          Array.isArray((assignment as any).assigned_emails) && (assignment as any).assigned_emails.length > 0
+            ? (assignment as any).assigned_emails
+            : (assignment as any).assigned_email
+              ? [String((assignment as any).assigned_email)]
+              : []
+        )
+      : [];
+
+    if (assignedEmails.length > 0) {
+      const { data: accounts, error: accountErr } = await sb
+        .from("work_email_accounts")
+        .select("id")
+        .in("email", assignedEmails)
+        .neq("status", "deleted");
+
+      if (!accountErr && accounts && accounts.length > 0) {
+        const accountIds = accounts.map((row: any) => String(row.id)).filter(Boolean);
+        await sb.from("work_email_inbox").delete().in("account_id", accountIds);
+      }
+    }
+  } catch {
+    // ignore optional work-email cleanup failures
   }
 
   return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });

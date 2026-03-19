@@ -348,7 +348,7 @@ export default function BrowsePage() {
   const [role, setRole] = useState<Role | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
-  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
   const [displayName, setDisplayName] = useState<string>("User");
   const [workerMetrics, setWorkerMetrics] = useState<WorkerMetrics | null>(null);
   const [kycStatus, setKycStatus] = useState<"none" | "pending" | "approved" | "rejected">(() =>
@@ -375,10 +375,11 @@ export default function BrowsePage() {
     const el = menuButtonRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const popupWidth = 320;
-    const margin = 12;
-    const left = Math.max(margin, Math.min(rect.right - popupWidth, window.innerWidth - popupWidth - margin));
-    setMenuAnchor({ top: rect.bottom + 8, left });
+    const margin = 16;
+    const preferredWidth = window.innerWidth >= 768 ? 448 : 320;
+    const width = Math.min(preferredWidth, window.innerWidth - margin * 2);
+    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
+    setMenuAnchor({ top: rect.bottom + 8, left, width });
   }, []);
 
   const closeMenu = React.useCallback(() => {
@@ -680,7 +681,7 @@ export default function BrowsePage() {
           ✕
         </button>
       </div>
-      <div className={desktop ? "px-4 pb-4 pt-4" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
+      <div className={desktop ? "max-h-[min(78vh,760px)] overflow-y-auto px-5 pb-5 pt-5" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
         <div className="rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] px-4 py-4 shadow-[0_16px_36px_rgba(22,58,46,0.08)]">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1f4f43] text-lg font-bold text-white">
@@ -709,14 +710,18 @@ export default function BrowsePage() {
           {!isGuest && role === "Worker" && (
             <div className="mt-4 rounded-2xl border border-[#d4dccf] bg-white px-4 py-3 shadow-sm">
               <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Approved earnings</div>
-              <div className="mt-2 flex items-end justify-between gap-3">
-                <div>
-                  <div className="text-[1.35rem] font-semibold leading-none text-slate-900">{formatINR(approvedEarnings)}</div>
-                  <div className="mt-1 text-[11px] text-slate-500">Synced from your workspace payout ledger</div>
+              <div className={`mt-2 flex gap-3 ${desktop ? "items-end justify-between" : "flex-col"}`}>
+                <div className="min-w-0 flex-1">
+                  <div className={`font-semibold leading-none text-slate-900 ${desktop ? "text-[1.5rem]" : "text-[1.35rem]"}`}>{formatINR(approvedEarnings)}</div>
+                  <div className={`mt-1 text-[11px] leading-5 text-slate-500 ${desktop ? "max-w-[14rem]" : "max-w-[18rem]"}`}>
+                    Synced from your workspace payout ledger
+                  </div>
                 </div>
                 <Link
                   href="/payouts"
-                  className="inline-flex rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-[11px] font-semibold text-[#2f6655] transition hover:bg-[#e2f0e7]"
+                  className={`inline-flex items-center justify-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-[11px] font-semibold text-[#2f6655] transition hover:bg-[#e2f0e7] ${
+                    desktop ? "shrink-0 self-end" : "w-full"
+                  }`}
                   onClick={closeMenu}
                 >
                   View payouts
@@ -738,7 +743,7 @@ export default function BrowsePage() {
           </div>
         ) : (
           <>
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className={`mt-4 grid gap-2 ${desktop ? "grid-cols-2" : "grid-cols-2"}`}>
               <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={dashboardHref} onClick={closeMenu}>{role === "Admin" ? "Admin" : "Workspace"}</Link>
               <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer" href={role === "Worker" ? "/payouts" : "/browse"} onClick={closeMenu}>{role === "Worker" ? "Payouts" : "Browse gigs"}</Link>
             </div>
@@ -815,10 +820,10 @@ export default function BrowsePage() {
                     </div>
                     <div
                       data-profile-menu-panel
-                      className={`fixed z-[9991] hidden w-80 rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
+                      className={`fixed z-[9991] hidden rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
                         menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
                       }`}
-                      style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left } : { top: 80, right: 24 }}
+                      style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left, width: menuAnchor.width, maxWidth: "calc(100vw - 2rem)" } : { top: 80, right: 24, width: "28rem", maxWidth: "calc(100vw - 2rem)" }}
                     >
                       {renderProfileMenu(true)}
                     </div>

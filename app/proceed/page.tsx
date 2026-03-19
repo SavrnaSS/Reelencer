@@ -431,6 +431,35 @@ function ProceedPageInner() {
   const pollingRef = React.useRef(false);
   const proposalDeskId = "project-proposal-desk";
 
+  const refreshInbox = React.useCallback(async () => {
+    if (!assignment?.id || pollingRef.current) return;
+    pollingRef.current = true;
+    setPolling(true);
+    try {
+      const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const inboxData = inboxRes.ok ? await inboxRes.json() : [];
+      setInbox(Array.isArray(inboxData) ? inboxData : []);
+      setLastSyncAt(new Date().toLocaleTimeString());
+    } finally {
+      pollingRef.current = false;
+      setPolling(false);
+    }
+  }, [assignment?.id]);
+
+  const forceRefreshInbox = React.useCallback(async () => {
+    if (!assignment?.id) return;
+    setRefreshing(true);
+    try {
+      await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`, { method: "DELETE" });
+      await refreshInbox();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [assignment?.id, refreshInbox]);
+
   useEffect(() => {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
     if (s?.workerId) {
@@ -631,12 +660,13 @@ function ProceedPageInner() {
 
   useEffect(() => {
     if (!gigId || !session?.workerId || session.role !== "Worker") return;
+    const workerId = session.workerId;
 
     let alive = true;
 
     const run = async () => {
       try {
-        const matchApp = await refreshApplicationState(gigId, session.workerId);
+        const matchApp = await refreshApplicationState(gigId, workerId);
         if (!alive || !matchApp) return;
         setSuccess((prev) =>
           prev && prev.toLowerCase().includes("proposal submitted successfully") ? null : prev
@@ -704,7 +734,7 @@ function ProceedPageInner() {
     [isContentPostingFlow, isCustomFlow, isProjectFlow, isWorkspaceFlow, normalizedGigTypeHint, normalizedGigTypeValue]
   );
   const isProjectStyleFlow = isProjectFlow || isContentPostingFlow;
-  const proposalReviewStatus = useMemo(() => {
+  const proposalReviewStatus = useMemo<ProposalPayload["reviewStatus"] | null>(() => {
     if (!applicationStatus) return null;
     const explicit = application?.proposal?.reviewStatus;
     if (explicit) return explicit;
@@ -886,29 +916,27 @@ function ProceedPageInner() {
     let alive = true;
 
     const run = async () => {
-      if (!alive || pollingRef.current) return;
-      pollingRef.current = true;
-
+      if (!alive) return;
       try {
-        const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`);
-        const inboxData = inboxRes.ok ? await inboxRes.json() : [];
-        if (alive) setInbox(Array.isArray(inboxData) ? inboxData : []);
-        if (alive) setLastSyncAt(new Date().toLocaleTimeString());
+        await refreshInbox();
       } catch {
         // ignore
-      } finally {
-        pollingRef.current = false;
       }
     };
 
     run();
     const id = window.setInterval(run, 5000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       alive = false;
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [assignment?.id, autoSync]);
+  }, [assignment?.id, autoSync, refreshInbox]);
 
   const assignmentStatus = assignment?.status ?? proposalReviewStatus ?? applicationStatus ?? "Not applied";
   const statusTone =
@@ -1939,6 +1967,13 @@ function ProceedPageInner() {
                                 </span>
                               )}
                             </div>
+                            <div className="mt-1 text-xs text-[#85909c]">
+                              {autoSync
+                                ? lastSyncAt
+                                  ? `Live refresh active • Last synced at ${lastSyncAt}`
+                                  : "Live refresh active • Waiting for first sync"
+                                : "Live refresh paused"}
+                            </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs text-[#6b757f]">
                             {assignedList.length > 0 && (
@@ -1955,6 +1990,16 @@ function ProceedPageInner() {
                                 ))}
                               </select>
                             )}
+                            <button
+                              className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 font-semibold text-[#355548] hover:border-[#c5d7cb] disabled:opacity-50"
+                              disabled={!assignment?.id || polling}
+                              onClick={() => {
+                                void refreshInbox();
+                              }}
+                              type="button"
+                            >
+                              {polling ? "Syncing..." : "Refresh"}
+                            </button>
                             <button
                               className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 font-semibold text-[#355548] hover:border-[#c5d7cb] disabled:opacity-50"
                               disabled={unreadCount === 0}
@@ -2465,16 +2510,10 @@ function ProceedPageInner() {
                               className={`rounded-full px-3 py-1 text-xs font-semibold ${
                                 proposalReviewStatus === "Accepted"
                                   ? "bg-emerald-50 text-emerald-700"
-                                  : proposalReviewStatus === "Rejected"
-                                    ? "bg-rose-50 text-rose-700"
-                                    : "bg-slate-100 text-slate-600"
+                                  : "bg-slate-100 text-slate-600"
                               }`}
                             >
-                              {proposalReviewStatus === "Accepted"
-                                ? "Approved"
-                                : proposalReviewStatus === "Rejected"
-                                  ? "Revision"
-                                  : "In review"}
+                              {proposalReviewStatus === "Accepted" ? "Approved" : "In review"}
                             </span>
                           </div>
                         </div>
@@ -3219,17 +3258,8 @@ function ProceedPageInner() {
                 <button
                   className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-400 disabled:opacity-60"
                   disabled={!assignment?.id || polling}
-                  onClick={async () => {
-                    if (!assignment?.id) return;
-                    setPolling(true);
-                    try {
-                      const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`);
-                      const inboxData = inboxRes.ok ? await inboxRes.json() : [];
-                      setInbox(Array.isArray(inboxData) ? inboxData : []);
-                      setLastSyncAt(new Date().toLocaleTimeString());
-                    } finally {
-                      setPolling(false);
-                    }
+                  onClick={() => {
+                    void refreshInbox();
                   }}
                 >
                   {polling ? "Syncing..." : "Refresh inbox"}
@@ -3238,19 +3268,8 @@ function ProceedPageInner() {
                 <button
                   className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 hover:border-amber-300 disabled:opacity-60"
                   disabled={!assignment?.id || refreshing}
-                  onClick={async () => {
-                    if (!assignment?.id) return;
-                    setRefreshing(true);
-                    try {
-                      await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`, { method: "DELETE" });
-
-                      const inboxRes = await fetch(`/api/gig-inbox?assignmentId=${encodeURIComponent(assignment.id)}`);
-                      const inboxData = inboxRes.ok ? await inboxRes.json() : [];
-                      setInbox(Array.isArray(inboxData) ? inboxData : []);
-                      setLastSyncAt(new Date().toLocaleTimeString());
-                    } finally {
-                      setRefreshing(false);
-                    }
+                  onClick={() => {
+                    void forceRefreshInbox();
                   }}
                 >
                   {refreshing ? "Refreshing..." : "Force refresh"}
