@@ -1,8 +1,10 @@
 "use client";
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { createPortal } from "react-dom";
 import { supabase } from "@/lib/supabaseClient";
 
 type Role = "Admin" | "Worker";
@@ -60,6 +62,12 @@ type GigApplication = {
   appliedAt: string;
   decidedAt?: string;
   proposal?: ProposalPayload;
+};
+
+type WorkerMetrics = {
+  money?: {
+    earnings?: number;
+  };
 };
 
 type CredentialRow = {
@@ -170,6 +178,23 @@ function cleanInboxBody(body: string) {
 
   const pick = (cleanLines[0] || filtered[0] || lines[0] || text).trim();
   return pick.length > 400 ? pick.slice(0, 400) : pick;
+}
+
+function BrandMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <Link href="/" className="flex items-center gap-3 text-slate-900">
+      <div className={`relative overflow-hidden ${compact ? "h-11 w-11" : "h-14 w-14"}`}>
+        <Image src="/logo-mark.svg" alt="Reelencer logo mark" fill sizes={compact ? "44px" : "56px"} className="object-contain" />
+      </div>
+      <div
+        className={`font-[Georgia,Times_New_Roman,serif] font-bold tracking-[-0.06em] text-slate-900 ${
+          compact ? "text-[1.2rem] sm:text-[1.55rem]" : "text-[2.05rem] sm:text-[2.2rem]"
+        }`}
+      >
+        Reelencer
+      </div>
+    </Link>
+  );
 }
 
 function formatRelativeTimestamp(value?: string) {
@@ -409,6 +434,11 @@ function ProceedPageInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [displayName, setDisplayName] = useState("User");
+  const [workerMetrics, setWorkerMetrics] = useState<WorkerMetrics | null>(null);
 
   const [inbox, setInbox] = useState<any[]>([]);
   const [polling, setPolling] = useState(false);
@@ -429,7 +459,28 @@ function ProceedPageInner() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const pollingRef = React.useRef(false);
+  const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
   const proposalDeskId = "project-proposal-desk";
+
+  const computeMenuAnchor = React.useCallback(() => {
+    const el = menuButtonRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 16;
+    const preferredWidth = window.innerWidth >= 768 ? 448 : 320;
+    const width = Math.min(preferredWidth, window.innerWidth - margin * 2);
+    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
+    setMenuAnchor({ top: rect.bottom + 8, left, width });
+  }, []);
+
+  const closeMenu = React.useCallback(() => {
+    if (!menuOpen) return;
+    setMenuClosing(true);
+    window.setTimeout(() => {
+      setMenuOpen(false);
+      setMenuClosing(false);
+    }, 160);
+  }, [menuOpen]);
 
   const refreshInbox = React.useCallback(async () => {
     if (!assignment?.id || pollingRef.current) return;
@@ -476,6 +527,77 @@ function ProceedPageInner() {
     setSession(s);
     setSessionReady(true);
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const user = data.session?.user;
+      const explicit = user?.user_metadata?.name?.trim() || user?.user_metadata?.full_name?.trim();
+      const fallback = session?.workerId || "User";
+      if (!alive) return;
+      setDisplayName(explicit || fallback);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [session?.workerId]);
+
+  useEffect(() => {
+    if (!session?.workerId || session.role !== "Worker") {
+      setWorkerMetrics(null);
+      return;
+    }
+    const workerId = session.workerId;
+    let alive = true;
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" });
+        if (!res.ok) throw new Error("Failed to load worker metrics");
+        const data = await res.json();
+        if (!alive) return;
+        setWorkerMetrics(data ?? null);
+      } catch {
+        if (!alive) return;
+        setWorkerMetrics(null);
+      }
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [session?.role, session?.workerId]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    computeMenuAnchor();
+    const onLayout = () => computeMenuAnchor();
+    window.addEventListener("resize", onLayout);
+    window.addEventListener("scroll", onLayout, true);
+    return () => {
+      window.removeEventListener("resize", onLayout);
+      window.removeEventListener("scroll", onLayout, true);
+    };
+  }, [computeMenuAnchor, menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-profile-menu]") && !target.closest("[data-profile-menu-panel]")) {
+        closeMenu();
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
+    window.addEventListener("click", onClick);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", onClick);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [closeMenu, menuOpen]);
 
   useEffect(() => {
     if (!gigId || !sessionReady) return;
@@ -846,6 +968,11 @@ function ProceedPageInner() {
     return !["false", "0", "no", "off"].includes(raw);
   }, [projectMeta.kyc_required]);
   const shouldBlockForKyc = session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
+  const marketplaceProfileLabel = useMemo(
+    () => String(session?.workerId ?? session?.role ?? "Account").trim() || "Account",
+    [session?.role, session?.workerId]
+  );
+  const marketplaceProfileInitial = marketplaceProfileLabel.charAt(0).toUpperCase() || "A";
 
   const handleProjectShare = React.useCallback(async () => {
     const title = gig?.title || "Reelencer project";
@@ -898,6 +1025,103 @@ function ProceedPageInner() {
     );
     window.location.href = `mailto:support@reelencer.com?subject=${subject}&body=${body}`;
   }, [gig?.id, gig?.title, gigId, session?.workerId]);
+
+  const signOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore
+    }
+    try {
+      window.localStorage.removeItem(LS_KEYS.AUTH);
+    } catch {
+      // ignore
+    }
+    window.location.replace("/login?next=/proceed");
+  };
+
+  const renderProfileMenu = (desktop = false) => (
+    <>
+      <div className="flex items-center justify-between border-b border-[#d4dccf] px-4 py-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[#2f6655]">Command Center</div>
+        <button
+          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#d1dacb] bg-[#f8faf7] text-xs font-semibold text-slate-700 transition hover:bg-[#ecf3e8]"
+          onClick={closeMenu}
+          aria-label="Close menu"
+        >
+          ✕
+        </button>
+      </div>
+      <div className={desktop ? "max-h-[min(78vh,760px)] overflow-y-auto px-5 pb-5 pt-5" : "h-[calc(100vh-60px)] overflow-y-auto px-4 pb-4 pt-4"}>
+        <div className="rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] px-4 py-4 shadow-[0_16px_36px_rgba(22,58,46,0.08)]">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1f4f43] text-lg font-bold text-white">
+              {displayName.slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <div className="text-base font-semibold text-slate-900">{displayName}</div>
+              <div className="text-xs text-slate-500">{session?.role ? `${session.role} • ID ${session.workerId ?? "Unavailable"}` : "Guest"}</div>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="inline-flex items-center rounded-full border border-[#d3dbce] bg-white px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">KYC: {kycStatus}</span>
+            <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${kycStatus === "approved" ? "border border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border border-[#d3dbce] bg-white text-slate-500"}`}>
+              {kycStatus === "approved" ? "Trusted" : "Verification required"}
+            </span>
+          </div>
+          <div className="mt-4 rounded-2xl border border-[#d4dccf] bg-white px-4 py-3 shadow-sm">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Approved earnings</div>
+            <div className={`mt-2 flex gap-3 ${desktop ? "items-end justify-between" : "flex-col"}`}>
+              <div className="min-w-0 flex-1">
+                <div className={`font-semibold leading-none text-slate-900 ${desktop ? "text-[1.5rem]" : "text-[1.35rem]"}`}>
+                  ₹{Math.round(Number(workerMetrics?.money?.earnings ?? 0))}
+                </div>
+                <div className={`mt-1 text-[11px] leading-5 text-slate-500 ${desktop ? "max-w-[14rem]" : "max-w-[18rem]"}`}>
+                  Synced from your workspace payout ledger
+                </div>
+              </div>
+              <Link
+                href="/payouts"
+                className={`inline-flex items-center justify-center rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-[11px] font-semibold text-[#2f6655] transition hover:bg-[#e2f0e7] ${
+                  desktop ? "shrink-0 self-end" : "w-full"
+                }`}
+                onClick={closeMenu}
+              >
+                View payouts
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50" href="/workspace" onClick={closeMenu}>Workspace</Link>
+          <Link className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50" href="/payouts" onClick={closeMenu}>Payouts</Link>
+        </div>
+        <div className="mt-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Quick links</div>
+        <div className="mt-2 space-y-1">
+          <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8]" href="/" onClick={closeMenu}>Home<span className="text-slate-400">›</span></Link>
+          <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8]" href="/workspace" onClick={closeMenu}>Go to workspace<span className="text-slate-400">›</span></Link>
+          <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8]" href="/payouts" onClick={closeMenu}>Payouts<span className="text-slate-400">›</span></Link>
+          <Link className="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#edf4e8]" href="/my-assignments" onClick={closeMenu}>My assignments<span className="text-slate-400">›</span></Link>
+        </div>
+        <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2">
+          <button className="w-full text-left text-sm font-semibold text-rose-700" onClick={signOut}>Sign out</button>
+        </div>
+        <Link
+          href="mailto:support@reelencer.com"
+          className="group mt-4 flex items-center gap-3 rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] px-3 py-3 text-left shadow-[0_16px_36px_rgba(22,58,46,0.08)] transition hover:bg-[#edf4e8]"
+          onClick={closeMenu}
+        >
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white text-[1.25rem]">✉️</span>
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-[0.72rem] font-semibold uppercase tracking-[0.13em] text-slate-500">Send us mail for any query</span>
+            <span className="block truncate text-[1.03rem] font-bold text-slate-900">support@reelencer.com</span>
+          </span>
+          <span className="text-xl text-slate-400 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
+        </Link>
+      </div>
+    </>
+  );
 
   useEffect(() => {
     if (!gigId || !gig || (!isProjectStyleFlow && !isEmailCreatorFlow)) return;
@@ -1541,6 +1765,62 @@ function ProceedPageInner() {
   return (
     <div className={`relative min-h-screen overflow-x-hidden ${isMarketplaceFlow ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
       {!isMarketplaceFlow && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
+      {isMarketplaceFlow && (
+        <header className="sticky top-0 z-30 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-3 py-3 sm:px-6 lg:px-8">
+            <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
+              <div className="hidden lg:block">
+                <BrandMark />
+              </div>
+              <div className="lg:hidden">
+                <BrandMark compact />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <div className="relative" data-profile-menu>
+                <button
+                  ref={menuButtonRef}
+                  className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
+                  onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1f4f43] text-xs font-bold text-white sm:h-9 sm:w-9 sm:text-sm">
+                    {displayName.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="max-w-[5rem] truncate text-xs text-slate-700 sm:hidden">{marketplaceProfileLabel}</span>
+                  <span className="hidden max-w-[12rem] truncate text-sm text-slate-700 sm:block">{displayName}</span>
+                  <span className="text-slate-400">▾</span>
+                </button>
+                {menuOpen &&
+                  typeof document !== "undefined" &&
+                  createPortal(
+                    <>
+                      <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/30 md:hidden">
+                        <div
+                          data-profile-menu-panel
+                          className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl transition-all duration-200 ease-out ${
+                            menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
+                          }`}
+                        >
+                          {renderProfileMenu(false)}
+                        </div>
+                      </div>
+                      <div
+                        data-profile-menu-panel
+                        className={`fixed z-[9991] hidden rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
+                          menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
+                        }`}
+                        style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left, width: menuAnchor.width, maxWidth: "calc(100vw - 2rem)" } : { top: 80, right: 24, width: "28rem", maxWidth: "calc(100vw - 2rem)" }}
+                      >
+                        {renderProfileMenu(true)}
+                      </div>
+                    </>,
+                    document.body
+                  )}
+              </div>
+            </div>
+          </div>
+        </header>
+      )}
       {!isMarketplaceFlow && (
         <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
           <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
