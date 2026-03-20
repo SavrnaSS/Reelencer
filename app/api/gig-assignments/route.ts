@@ -22,10 +22,17 @@ function buildApprovalWorkItemId(assignmentId: string) {
 
 const APPROVAL_WORK_ITEM_TYPE = "Reel posting";
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, workerCode: string) {
-  if (!workerCode.startsWith("WKR-")) return workerCode;
+  const normalized = String(workerCode ?? "").trim();
+  if (!normalized) return null;
+  if (isUuid(normalized)) return normalized;
+  if (!normalized.startsWith("WKR-")) return null;
   const { data } = await sb.from("profiles").select("id").eq("worker_code", workerCode).maybeSingle();
-  return data?.id ? String(data.id) : workerCode;
+  return data?.id ? String(data.id) : null;
 }
 
 async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string, status: string) {
@@ -133,6 +140,12 @@ async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assi
   }
 
   const workerPayoutId = await resolveWorkerPayoutId(sb, String(assignment.worker_code ?? ""));
+  if (!workerPayoutId) {
+    return {
+      error:
+        "This submission is tied to a preview or unresolved worker identity. Open it from the real worker account before releasing funds.",
+    };
+  }
   const { data: upiRow, error: upiError } = await sb
     .from("upi_configs")
     .select("upi_id,verified")
