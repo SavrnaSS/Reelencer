@@ -77,6 +77,8 @@ type CredentialRow = {
   phone: string;
 };
 
+const CREDENTIAL_SUCCESS_MESSAGE = "Credentials submitted. Admin review is now in progress.";
+
 function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -1173,6 +1175,36 @@ function ProceedPageInner() {
       : assignmentStatus === "Applied" || assignmentStatus === "Pending"
       ? "border-[#d4dfd7] bg-white text-[#4d665c]"
       : "border-[#d4dccf] bg-[#f4f8f1] text-[#5f746a]";
+  const credentialSubmissionLocked = assignmentStatus === "Submitted";
+  const showCredentialReviewState = credentialSubmissionLocked || success === CREDENTIAL_SUCCESS_MESSAGE;
+  const credentialSubmittedAt = assignment?.submittedAt ? new Date(assignment.submittedAt).toLocaleString() : null;
+  const credentialReviewBanner = showCredentialReviewState ? (
+    <div className="mt-4 rounded-[1.15rem] border border-emerald-200 bg-[linear-gradient(180deg,#f4fbf6,#edf7f0)] px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.92)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f8578]">Review status</div>
+          <div className="mt-1 text-[1rem] font-semibold text-[#214d3f]">Submitted for admin approval</div>
+          <div className="mt-1 text-sm leading-6 text-[#567062]">
+            Your account pack has been delivered for verification. Payment for this gig is released only after admin approves the submitted accounts.
+          </div>
+        </div>
+        <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700">
+          Awaiting approval
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2 text-sm text-[#355548] sm:grid-cols-2">
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Next step</div>
+          <div className="mt-1">Admin verifies handles, assigned emails, and login validity.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-3 py-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout release</div>
+          <div className="mt-1">Once approved, the gig amount moves into your approved earnings ledger.</div>
+        </div>
+      </div>
+      {credentialSubmittedAt && <div className="mt-3 text-xs text-[#6d7d73]">Submitted at {credentialSubmittedAt}</div>}
+    </div>
+  ) : null;
 
   const assignedList = useMemo(() => {
     const list = assignment?.assignedEmails?.length
@@ -1366,7 +1398,7 @@ function ProceedPageInner() {
         throw new Error(data?.error || "Unable to submit");
       }
 
-      setSuccess("Submitted for verification. Admin review is pending.");
+      setSuccess(CREDENTIAL_SUCCESS_MESSAGE);
       setAssignment((prev) => (prev ? { ...prev, status: "Submitted", submittedAt: new Date().toISOString() } : prev));
     } catch (e: any) {
       setError(e?.message || "Submission failed");
@@ -2402,20 +2434,16 @@ function ProceedPageInner() {
                           ))}
                         </div>
 
-                        {assignmentStatus === "Submitted" && !success && (
-                          <div className="mt-4 rounded-xl border border-[#bcd6c9] bg-[#edf5ef] px-3 py-2 text-xs font-semibold text-[#2f6655]">
-                            In verification: Admin is reviewing your submitted credentials.
-                          </div>
-                        )}
+                        {credentialReviewBanner}
 
                         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="text-xs text-[#6b7770]">All fields are encrypted in transit. Do not reuse credentials.</div>
                           <button
                             className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50"
                             onClick={submitCredentials}
-                            disabled={saving || invalidRows}
+                            disabled={saving || invalidRows || credentialSubmissionLocked}
                           >
-                            {saving ? "Submitting..." : "Submit for verification"}
+                            {saving ? "Submitting..." : credentialSubmissionLocked ? "Submitted for admin review" : "Submit for verification"}
                           </button>
                         </div>
                       </div>
@@ -2424,7 +2452,7 @@ function ProceedPageInner() {
                   {error && (
                     <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
                   )}
-                  {success && (
+                  {success && success !== CREDENTIAL_SUCCESS_MESSAGE && (
                     <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{success}</div>
                   )}
                 </div>
@@ -3619,26 +3647,22 @@ function ProceedPageInner() {
             </div>
           )}
 
-          {success && (
+          {success && success !== CREDENTIAL_SUCCESS_MESSAGE && (
             <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
               {success}
             </div>
           )}
 
-          {assignmentStatus === "Submitted" && !success && (
-            <div className="mt-4 rounded-xl border border-[#bcd6c9] bg-[#edf5ef] px-3 py-2 text-xs font-semibold text-[#2f6655]">
-              In verification: Admin is reviewing your submitted credentials.
-            </div>
-          )}
+          {credentialReviewBanner}
 
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-500">All fields are encrypted in transit. Do not reuse credentials.</div>
             <button
               className="rounded-full bg-[#1f4f43] px-5 py-2 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-50"
               onClick={submitCredentials}
-              disabled={saving || invalidRows}
+              disabled={saving || invalidRows || credentialSubmissionLocked}
             >
-              {saving ? "Submitting..." : "Submit for verification"}
+              {saving ? "Submitting..." : credentialSubmissionLocked ? "Submitted for admin review" : "Submit for verification"}
             </button>
           </div>
         </div>

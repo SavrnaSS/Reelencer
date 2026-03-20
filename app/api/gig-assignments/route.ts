@@ -7,6 +7,135 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
+function parsePayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function buildApprovalWorkItemId(assignmentId: string) {
+  const compact = String(assignmentId ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
+}
+
+async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string, status: string) {
+  const { data: assignment, error: assignmentError } = await sb
+    .from("gig_assignments")
+    .select("id,gig_id,worker_code")
+    .eq("id", assignmentId)
+    .maybeSingle();
+
+  if (assignmentError || !assignment) {
+    return assignmentError?.message || "Assignment not found for approval sync";
+  }
+
+  const { data: gig, error: gigError } = await sb
+    .from("gigs")
+    .select("id,title,payout,payout_type")
+    .eq("id", assignment.gig_id)
+    .maybeSingle();
+
+  if (gigError || !gig) {
+    return gigError?.message || "Gig not found for approval sync";
+  }
+
+  const publicId = buildApprovalWorkItemId(assignmentId);
+  const rewardInr = parsePayoutAmount((gig as any).payout);
+  const title = `${String((gig as any).title ?? "Gig").trim() || "Gig"} credential pack`;
+  const now = new Date().toISOString();
+  const resolvedStatus =
+    status === "Accepted"
+      ? "Approved"
+      : status === "Rejected"
+        ? "Hard rejected"
+        : "Needs fix";
+  const completedAt = resolvedStatus === "Approved" || resolvedStatus === "Hard rejected" ? now : null;
+
+  const existing = await sb.from("work_items").select("id").eq("public_id", publicId).maybeSingle();
+  if (existing.data?.id) {
+    let update = await sb
+      .from("work_items")
+      .update({
+        title,
+        worker_id: assignment.worker_code,
+        account_id: assignment.id,
+        status: resolvedStatus,
+        reward_inr: rewardInr,
+        completed_at: completedAt,
+        due_at: now,
+      })
+      .eq("id", existing.data.id);
+    if (update.error) {
+      update = await sb
+        .from("work_items")
+        .update({
+          title,
+          worker_id: assignment.worker_code,
+          accountId: assignment.id,
+          status: resolvedStatus,
+          rewardINR: rewardInr,
+          completedAt,
+          dueAt: now,
+        })
+        .eq("id", existing.data.id);
+    }
+    return update.error ? update.error.message : null;
+  }
+
+  if (status !== "Accepted") {
+    return null;
+  }
+
+  let insert = await sb.from("work_items").insert({
+    public_id: publicId,
+    title,
+    type: "Credential Submission",
+    account_id: assignment.id,
+    worker_id: assignment.worker_code,
+    created_at: now,
+    due_at: now,
+    completed_at: now,
+    status: "Approved",
+    priority: "P2",
+    reward_inr: rewardInr,
+    est_minutes: 5,
+    sla_minutes: 5,
+    review: {
+      source: "gig_assignment_approval",
+      assignmentId,
+      payoutType: (gig as any).payout_type ?? null,
+      autoApprovedAt: now,
+    },
+  });
+  if (insert.error) {
+    insert = await sb.from("work_items").insert({
+      public_id: publicId,
+      title,
+      type: "Credential Submission",
+      accountId: assignment.id,
+      worker_id: assignment.worker_code,
+      createdAt: now,
+      dueAt: now,
+      completedAt: now,
+      status: "Approved",
+      priority: "P2",
+      rewardINR: rewardInr,
+      estMinutes: 5,
+      slaMinutes: 5,
+      review: {
+        source: "gig_assignment_approval",
+        assignmentId,
+        payoutType: (gig as any).payout_type ?? null,
+        autoApprovedAt: now,
+      },
+    });
+  }
+
+  return insert.error ? insert.error.message : null;
+}
+
 function makeEmail(gigId: string, workerId: string) {
   const short = `${gigId}-${workerId}`.replace(/[^a-zA-Z0-9]/g, "").slice(-10).toLowerCase();
   return `gig-${short}-${Math.random().toString(36).slice(2, 6)}@fasterdrop.site`;
@@ -232,10 +361,11 @@ export async function PATCH(req: Request) {
     }
     const updates = body.updates ?? {};
     const sb = supabaseAdmin();
+    const nextStatus = String(updates.status ?? "");
     const { data, error } = await sb
       .from("gig_assignments")
       .update({
-        status: updates.status,
+        status: nextStatus,
         submitted_at: updates.submittedAt,
         decided_at: updates.decidedAt,
       })
@@ -245,6 +375,13 @@ export async function PATCH(req: Request) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
+    }
+
+    if (nextStatus === "Accepted" || nextStatus === "Rejected" || nextStatus === "Pending") {
+      const syncError = await syncApprovalEarnings(sb, String(body.id), nextStatus);
+      if (syncError) {
+        return NextResponse.json({ error: syncError }, { status: 500, headers: NO_STORE_HEADERS });
+      }
     }
 
     return NextResponse.json(
