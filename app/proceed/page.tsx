@@ -541,6 +541,25 @@ function ProceedPageInner() {
     }
   }, [assignment?.id, refreshInbox]);
 
+  const refreshWorkerMetrics = React.useCallback(async () => {
+    if (!session?.workerId || session.role !== "Worker") {
+      setWorkerMetrics(null);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/metrics/worker?workerId=${encodeURIComponent(session.workerId)}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Failed to load worker metrics");
+      const data = await res.json();
+      setWorkerMetrics(data ?? null);
+    } catch {
+      setWorkerMetrics(null);
+    }
+  }, [session?.role, session?.workerId]);
+
   useEffect(() => {
     if (!assignment?.id) {
       setCredentialPayoutState({
@@ -636,29 +655,30 @@ function ProceedPageInner() {
   }, [session?.workerId]);
 
   useEffect(() => {
-    if (!session?.workerId || session.role !== "Worker") {
-      setWorkerMetrics(null);
-      return;
-    }
-    const workerId = session.workerId;
-    let alive = true;
     const run = async () => {
-      try {
-        const res = await fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" });
-        if (!res.ok) throw new Error("Failed to load worker metrics");
-        const data = await res.json();
-        if (!alive) return;
-        setWorkerMetrics(data ?? null);
-      } catch {
-        if (!alive) return;
-        setWorkerMetrics(null);
-      }
+      await refreshWorkerMetrics();
     };
+
     void run();
-    return () => {
-      alive = false;
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void run();
     };
-  }, [session?.role, session?.workerId]);
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void run();
+    }, 15000);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(intervalId);
+    };
+  }, [refreshWorkerMetrics]);
+
+  useEffect(() => {
+    if (assignment?.earningsReleaseStatus === "credited") {
+      void refreshWorkerMetrics();
+    }
+  }, [assignment?.earningsReleaseStatus, refreshWorkerMetrics]);
 
   useEffect(() => {
     if (!menuOpen) return;

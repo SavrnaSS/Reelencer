@@ -291,7 +291,7 @@ async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assi
   const publicId = buildApprovalWorkItemId(assignmentId);
   const { data: workItem, error: workItemError } = await sb
     .from("work_items")
-    .select("id,title,reward_inr,rewardINR,status,review")
+    .select("id,title,reward_inr,status,review")
     .eq("public_id", publicId)
     .maybeSingle();
   if (workItemError || !workItem?.id) {
