@@ -35,6 +35,8 @@ type Assignment = {
   submittedAt?: string;
   decidedAt?: string;
   subjectFilter?: string;
+  earningsReleaseStatus?: "none" | "queued" | "credited" | "blocked";
+  earningsReleasedAt?: string;
 };
 
 type ProposalPayload = {
@@ -68,20 +70,6 @@ type WorkerMetrics = {
   money?: {
     earnings?: number;
   };
-};
-
-type WorkerPayoutBatch = {
-  id: string;
-  status: string;
-  paidAt?: string;
-  processedAt?: string;
-  items?: Array<{
-    id: string;
-    workItemId: string;
-    sourceAssignmentId?: string;
-    amountINR?: number;
-    status: string;
-  }>;
 };
 
 type CredentialPayoutState =
@@ -558,7 +546,7 @@ function ProceedPageInner() {
       setCredentialPayoutState({
         stage: "idle",
         headline: "Awaiting review",
-        detail: "Submit the credential package to start the verification and payout workflow.",
+        detail: "Submit the credential package to start the verification and earnings workflow.",
       });
       return;
     }
@@ -576,76 +564,45 @@ function ProceedPageInner() {
       setCredentialPayoutState({
         stage: "pending",
         headline: "Awaiting admin verification",
-        detail: "Your package is under review. Funds stay protected until verification is complete.",
+        detail: "Your package is under review. Earnings stay on hold until verification is complete.",
       });
       return;
     }
 
-    if (assignment.status !== "Accepted" || !session?.workerId) {
+    if (assignment.status !== "Accepted") {
       setCredentialPayoutState({
         stage: "approved",
-        headline: "Approved. Funds will be credited shortly.",
-        detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
+        headline: "Approved. Wallet credit is pending.",
+        detail: "Admin verification is complete. The approved amount is waiting for final wallet credit.",
+      });
+      return;
+    }
+    if (assignment.earningsReleaseStatus === "credited") {
+      setCredentialPayoutState({
+        stage: "paid",
+        headline: "Amount credited to approved earnings",
+        detail: "The approved amount has been added to your approved earnings wallet and is now available in your balance.",
+        paidAt: assignment.earningsReleasedAt,
       });
       return;
     }
 
-    let alive = true;
-    const workerId = session.workerId;
+    if (assignment.earningsReleaseStatus === "queued") {
+      setCredentialPayoutState({
+        stage: "crediting",
+        headline: "Amount will be credited shortly",
+        detail: "Admin has approved the submission. The gig amount is queued for credit into your approved earnings wallet.",
+        paidAt: assignment.earningsReleasedAt,
+      });
+      return;
+    }
 
-    const loadPayoutState = async () => {
-      try {
-        const res = await fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, {
-          method: "GET",
-          cache: "no-store",
-        });
-        const data = res.ok ? await res.json() : [];
-        if (!alive) return;
-        const batches = Array.isArray(data) ? (data as WorkerPayoutBatch[]) : [];
-        const matched = batches
-          .flatMap((batch) => (batch.items ?? []).map((item) => ({ batch, item })))
-          .find(({ item }) => item.sourceAssignmentId === assignment.id);
-
-        if (!matched) {
-          setCredentialPayoutState({
-            stage: "approved",
-            headline: "Approved. Funds will be credited shortly.",
-            detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
-          });
-          return;
-        }
-
-        if (matched.item.status === "Paid" || matched.batch.status === "Paid" || matched.batch.paidAt) {
-          setCredentialPayoutState({
-            stage: "paid",
-            headline: "Funds released successfully",
-            detail: "The approved amount has been released to your payout wallet and is reflected in your ledger.",
-            paidAt: matched.batch.paidAt,
-          });
-          return;
-        }
-
-        setCredentialPayoutState({
-          stage: "crediting",
-          headline: "Amount will be credited shortly",
-          detail: "Admin has initiated the payout release. Settlement is in progress and should appear in your wallet shortly.",
-          paidAt: matched.batch.processedAt,
-        });
-      } catch {
-        if (!alive) return;
-        setCredentialPayoutState({
-          stage: "approved",
-          headline: "Approved. Funds will be credited shortly.",
-          detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
-        });
-      }
-    };
-
-    void loadPayoutState();
-    return () => {
-      alive = false;
-    };
-  }, [assignment?.id, assignment?.status, session?.workerId]);
+    setCredentialPayoutState({
+      stage: "approved",
+      headline: "Approved. Wallet credit is pending.",
+      detail: "Admin verification is complete. The approved amount is waiting for final wallet credit.",
+    });
+  }, [assignment?.earningsReleaseStatus, assignment?.earningsReleasedAt, assignment?.id, assignment?.status]);
 
   useEffect(() => {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -1399,9 +1356,9 @@ function ProceedPageInner() {
             >
               {credentialReviewTone === "approved"
                 ? credentialPayoutState.stage === "paid"
-                  ? "Released"
+                  ? "Credited"
                   : credentialPayoutState.stage === "crediting"
-                    ? "Crediting"
+                    ? "Wallet queue"
                     : "Approved"
                 : credentialReviewTone === "rejected"
                   ? "Revision required"
@@ -1438,10 +1395,10 @@ function ProceedPageInner() {
             <div className="mt-1 text-sm font-semibold text-[#274537]">
               {credentialReviewTone === "approved"
                 ? credentialPayoutState.stage === "paid"
-                  ? "Funds have been released to your payout ledger."
+                  ? "Funds have been credited to your approved earnings wallet."
                   : credentialPayoutState.stage === "crediting"
-                    ? "The release has started and settlement should complete shortly."
-                    : "The amount is approved and queued for release into your payout ledger."
+                    ? "Wallet credit has been initiated and should reflect in your approved earnings shortly."
+                    : "The amount is approved and queued for credit into your approved earnings wallet."
                 : credentialReviewTone === "rejected"
                   ? "No payout is released until the corrected submission is approved."
                   : credentialReviewTone === "pending"
@@ -1481,10 +1438,10 @@ function ProceedPageInner() {
           <div className="mt-1 text-xs leading-5 text-[#617166]">
             {credentialReviewTone === "approved"
               ? credentialPayoutState.stage === "paid"
-                ? "Released to your payout ledger."
+                ? "Credited to approved earnings."
                 : credentialPayoutState.stage === "crediting"
-                  ? "Settlement initiated. Amount will be credited shortly."
-                  : "Approved and queued for wallet release."
+                  ? "Wallet credit initiated. Amount will be added shortly."
+                  : "Approved and queued for wallet credit."
               : "Credits after admin approval."}
           </div>
         </div>
@@ -1500,8 +1457,8 @@ function ProceedPageInner() {
           <div className="mt-2 text-[1.02rem] font-semibold text-[#274537]">
             {credentialReviewTone === "approved"
               ? credentialPayoutState.stage === "paid"
-                ? "Submission verified and payout released"
-                : "Submission verified and queued for settlement"
+                ? "Submission verified and wallet credited"
+                : "Submission verified and queued for wallet credit"
               : credentialReviewTone === "rejected"
                 ? "Submission reviewed and sent back for correction"
                 : credentialReviewTone === "pending"
@@ -1511,8 +1468,8 @@ function ProceedPageInner() {
           <div className="mt-2 text-sm leading-6 text-[#617166]">
             {credentialReviewTone === "approved"
               ? credentialPayoutState.stage === "paid"
-                ? "Your credential package has cleared review and the approved amount has already been released. This project remains archived as a completed managed assignment."
-                : "Your credential package has cleared review. The assignment is now in managed settlement and the approved amount will be credited shortly."
+                ? "Your credential package has cleared review and the approved amount is now in your approved earnings wallet. This project remains archived as a completed managed assignment."
+                : "Your credential package has cleared review. The assignment is now in managed wallet credit and the approved amount will be added shortly."
               : credentialReviewTone === "rejected"
                 ? "The credential package did not pass review. This project stays in a managed review state until the next approved submission is delivered."
                 : credentialReviewTone === "pending"
@@ -1526,7 +1483,7 @@ function ProceedPageInner() {
                 ? "Wait for revision guidance before acting."
                 : credentialReviewTone === "approved"
                   ? credentialPayoutState.stage === "paid"
-                    ? "No action is needed. Funds have been released."
+                    ? "No action is needed. Funds are in your approved earnings wallet."
                     : "No action is needed. Crediting will complete shortly."
                   : "No further action is needed right now."}
             </div>
@@ -1557,10 +1514,10 @@ function ProceedPageInner() {
               <div className="mt-1 text-xs leading-5 text-[#617166]">
                 {credentialReviewTone === "approved"
                   ? credentialPayoutState.stage === "paid"
-                    ? "The approved amount has already been released to your payout ledger."
+                    ? "The approved amount has already been added to your approved earnings wallet."
                     : credentialPayoutState.stage === "crediting"
-                      ? "The payout release is in flight. The amount should appear shortly."
-                      : "Admin approval is complete. The amount is queued for release to your payout ledger."
+                      ? "Wallet credit is in flight. The amount should appear in approved earnings shortly."
+                      : "Admin approval is complete. The amount is queued for credit into approved earnings."
                   : credentialReviewTone === "rejected"
                     ? "Earnings stay blocked until a corrected submission is approved."
                     : "Approved submissions move the gig amount into your approved earnings balance."}

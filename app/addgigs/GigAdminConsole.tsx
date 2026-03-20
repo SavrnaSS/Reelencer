@@ -67,6 +67,7 @@ type AssignmentActionResult = {
   fundsReleased?: boolean;
   payoutBatchId?: string;
   payoutStatus?: string;
+  earningsReleaseStatus?: string;
 };
 
 type CredentialSubmission = {
@@ -952,10 +953,10 @@ export default function GigAdminConsole({
         text:
           status === "Accepted" && options?.releaseFundsNow
             ? payload?.fundsReleased
-              ? "Submission approved and funds released to the worker payout ledger."
-              : "Submission approved. Release is being prepared."
+              ? "Submission approved and the gig amount was credited to the worker's approved earnings wallet."
+              : "Submission approved. Wallet credit is being prepared."
             : status === "Accepted"
-              ? "Submission approved. Earnings are now ready for payout release."
+              ? "Submission approved. Earnings are ready for wallet credit."
               : status === "Pending"
                 ? "Submission kept in managed review."
                 : "Submission returned for correction.",

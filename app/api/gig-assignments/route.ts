@@ -115,6 +115,58 @@ async function ensureApprovalAccountId(
   return "Unable to prepare synthetic account for credential payout.";
 }
 
+async function resolveAssignmentReleaseState(
+  sb: ReturnType<typeof supabaseAdmin>,
+  assignmentId: string,
+  assignmentStatus: string
+) {
+  const { data, error } = await sb
+    .from("work_items")
+    .select("status,review")
+    .eq("public_id", buildApprovalWorkItemId(assignmentId))
+    .maybeSingle();
+
+  if (error) {
+    return {
+      earningsReleaseStatus: assignmentStatus === "Rejected" ? "blocked" : assignmentStatus === "Accepted" ? "queued" : "none",
+      earningsReleasedAt: undefined,
+    };
+  }
+
+  const workStatus = String((data as any)?.status ?? "");
+  const earningsReleasedAt = (data as any)?.review?.walletReleasedAt
+    ? String((data as any).review.walletReleasedAt)
+    : undefined;
+
+  if (workStatus === "Approved") {
+    return { earningsReleaseStatus: "credited", earningsReleasedAt };
+  }
+  if (assignmentStatus === "Rejected" || workStatus === "Hard rejected") {
+    return { earningsReleaseStatus: "blocked", earningsReleasedAt };
+  }
+  if (assignmentStatus === "Accepted" || workStatus === "Submitted") {
+    return { earningsReleaseStatus: "queued", earningsReleasedAt };
+  }
+  return { earningsReleaseStatus: "none", earningsReleasedAt };
+}
+
+async function mapAssignmentRow(sb: ReturnType<typeof supabaseAdmin>, row: any) {
+  const releaseState = await resolveAssignmentReleaseState(sb, String(row.id), String(row.status ?? ""));
+  return {
+    id: String(row.id),
+    gigId: String(row.gig_id),
+    workerId: String(row.worker_code),
+    assignedEmail: row.assigned_email,
+    assignedEmails: row.assigned_emails ?? undefined,
+    status: row.status,
+    submittedAt: row.submitted_at ?? undefined,
+    decidedAt: row.decided_at ?? undefined,
+    createdAt: row.created_at,
+    earningsReleaseStatus: releaseState.earningsReleaseStatus,
+    earningsReleasedAt: releaseState.earningsReleasedAt,
+  };
+}
+
 async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string, status: string) {
   const { data: assignment, error: assignmentError } = await sb
     .from("gig_assignments")
@@ -149,12 +201,16 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
   const rewardInr = parsePayoutAmount((gig as any).payout);
   const title = `${String((gig as any).title ?? "Gig").trim() || "Gig"} credential pack`;
   const now = new Date().toISOString();
+  const existing = await sb.from("work_items").select("id,status,review").eq("public_id", publicId).maybeSingle();
+  const currentStatus = String((existing.data as any)?.status ?? "");
   const resolvedStatus =
     status === "Accepted"
-      ? "Approved"
+      ? currentStatus === "Approved"
+        ? "Approved"
+        : "Submitted"
       : status === "Rejected"
         ? "Hard rejected"
-        : "Needs fix";
+        : "Submitted";
   const completedAt = resolvedStatus === "Approved" || resolvedStatus === "Hard rejected" ? now : null;
   const baseWorkItemPayload = {
     title,
@@ -171,8 +227,8 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
     worker_id: workerLedgerId,
     created_at: now,
     due_at: now,
-    completed_at: now,
-    status: "Approved",
+    completed_at: completedAt,
+    status: resolvedStatus,
     priority: "P2",
     reward_inr: rewardInr,
     est_minutes: 5,
@@ -182,11 +238,14 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
       assignmentId,
       workerCode: assignment.worker_code,
       payoutType: (gig as any).payout_type ?? null,
-      autoApprovedAt: now,
+      autoAcceptedAt: now,
+      walletReleasedAt:
+        resolvedStatus === "Approved"
+          ? (existing.data as any)?.review?.walletReleasedAt ?? now
+          : (existing.data as any)?.review?.walletReleasedAt ?? null,
     },
   };
 
-  const existing = await sb.from("work_items").select("id").eq("public_id", publicId).maybeSingle();
   if (existing.data?.id) {
     let update = await sb
       .from("work_items")
@@ -229,97 +288,44 @@ async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assi
     return { error: "Funds can only be released after admin approval." };
   }
 
-  const workerPayoutId = await resolveWorkerPayoutId(sb, String(assignment.worker_code ?? ""));
-  if (!workerPayoutId) {
-    return {
-      error:
-        "This submission is tied to a preview or unresolved worker identity. Open it from the real worker account before releasing funds.",
-    };
-  }
-  const { data: upiRow, error: upiError } = await sb
-    .from("upi_configs")
-    .select("upi_id,verified")
-    .eq("worker_id", workerPayoutId)
-    .maybeSingle();
-  if (upiError) return { error: upiError.message };
-  if (!upiRow?.verified) {
-    return { error: "Worker payout method is not verified yet. Verify UPI before releasing funds." };
-  }
-
   const publicId = buildApprovalWorkItemId(assignmentId);
   const { data: workItem, error: workItemError } = await sb
     .from("work_items")
-    .select("id,title,reward_inr,rewardINR")
+    .select("id,title,reward_inr,rewardINR,status,review")
     .eq("public_id", publicId)
     .maybeSingle();
   if (workItemError || !workItem?.id) {
-    return { error: workItemError?.message || "Approved earning item not found for release." };
+    return { error: workItemError?.message || "Approved earning item not found for wallet credit." };
   }
 
-  const { data: existingPayoutItem, error: existingPayoutItemError } = await sb
-    .from("payout_items")
-    .select("id,status,batch_id")
-    .eq("work_item_id", String(workItem.id))
-    .neq("status", "Failed")
-    .maybeSingle();
-  if (existingPayoutItemError) return { error: existingPayoutItemError.message };
-
-  if (existingPayoutItem?.id) {
-    const { data: existingBatch } = await sb
-      .from("payout_batches")
-      .select("id,status,paid_at")
-      .eq("id", String(existingPayoutItem.batch_id))
-      .maybeSingle();
+  if (String((workItem as any).status ?? "") === "Approved") {
     return {
       ok: true,
-      fundsReleased: String(existingPayoutItem.status ?? "") === "Paid",
-      payoutBatchId: existingBatch?.id ? String(existingBatch.id) : String(existingPayoutItem.batch_id),
-      payoutStatus: String(existingPayoutItem.status ?? existingBatch?.status ?? "Included"),
+      fundsReleased: true,
+      payoutStatus: "Credited",
     };
   }
 
-  const { data: gig } = await sb.from("gigs").select("id,title").eq("id", assignment.gig_id).maybeSingle();
-  const amountInr = Number((workItem as any).reward_inr ?? (workItem as any).rewardINR ?? 0);
   const now = new Date().toISOString();
-  const today = now.slice(0, 10);
-  const cycleLabel = `Direct credential release ${today}`;
-
-  const { data: batchRow, error: batchError } = await sb
-    .from("payout_batches")
-    .insert({
-      worker_id: workerPayoutId,
-      cycle_label: cycleLabel,
-      period_start: today,
-      period_end: today,
-      status: "Paid",
-      method: "UPI",
-      processed_at: now,
-      paid_at: now,
-      notes: [`Direct release for assignment ${assignmentId}`, `UPI:${String(upiRow.upi_id ?? "")}`],
+  const nextReview = {
+    ...((workItem as any).review ?? {}),
+    walletReleasedAt: now,
+    walletReleaseSource: "admin_assignment_action",
+  };
+  const { error: releaseError } = await sb
+    .from("work_items")
+    .update({
+      status: "Approved",
+      completed_at: now,
+      review: nextReview,
     })
-    .select("id")
-    .maybeSingle();
-  if (batchError || !batchRow?.id) {
-    return { error: batchError?.message || "Unable to create payout batch for direct release." };
-  }
-
-  const { error: payoutItemError } = await sb.from("payout_items").insert({
-    batch_id: String(batchRow.id),
-    work_item_id: String(workItem.id),
-    worker_id: workerPayoutId,
-    handle: String((gig as any)?.title ?? `gig:${assignment.gig_id}`),
-    amount_inr: amountInr,
-    status: "Paid",
-  });
-  if (payoutItemError) {
-    return { error: payoutItemError.message };
-  }
+    .eq("id", String(workItem.id));
+  if (releaseError) return { error: releaseError.message };
 
   return {
     ok: true,
     fundsReleased: true,
-    payoutBatchId: String(batchRow.id),
-    payoutStatus: "Paid",
+    payoutStatus: "Credited",
   };
 }
 
@@ -369,17 +375,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
   }
 
-  const payload = (data ?? []).map((row: any) => ({
-    id: String(row.id),
-    gigId: String(row.gig_id),
-    workerId: String(row.worker_code),
-    assignedEmail: row.assigned_email,
-    assignedEmails: row.assigned_emails ?? undefined,
-    status: row.status,
-    submittedAt: row.submitted_at ?? undefined,
-    decidedAt: row.decided_at ?? undefined,
-    createdAt: row.created_at,
-  }));
+  const payload = await Promise.all((data ?? []).map((row: any) => mapAssignmentRow(sb, row)));
 
   return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }
@@ -467,20 +463,9 @@ export async function POST(req: Request) {
         if (fallbackError) {
           return NextResponse.json({ error: fallbackError.message }, { status: 500, headers: NO_STORE_HEADERS });
         }
-        return NextResponse.json(
-          {
-            id: String(fallback.id),
-            gigId: String(fallback.gig_id),
-            workerId: String(fallback.worker_code),
-            assignedEmail: fallback.assigned_email,
-            assignedEmails,
-            status: fallback.status,
-            submittedAt: fallback.submitted_at ?? undefined,
-            decidedAt: fallback.decided_at ?? undefined,
-            createdAt: fallback.created_at,
-          },
-          { headers: NO_STORE_HEADERS }
-        );
+        return NextResponse.json(await mapAssignmentRow(sb, { ...fallback, assigned_emails: assignedEmails }), {
+          headers: NO_STORE_HEADERS,
+        });
       }
       if (message.toLowerCase().includes("subject_filter")) {
         const { data: fallback, error: fallbackError } = await sb
@@ -502,35 +487,16 @@ export async function POST(req: Request) {
         if (fallbackError) {
           return NextResponse.json({ error: fallbackError.message }, { status: 500, headers: NO_STORE_HEADERS });
         }
-        return NextResponse.json(
-          {
-            id: String(fallback.id),
-            gigId: String(fallback.gig_id),
-            workerId: String(fallback.worker_code),
-            assignedEmail: fallback.assigned_email,
-            assignedEmails,
-            status: fallback.status,
-            submittedAt: fallback.submitted_at ?? undefined,
-            decidedAt: fallback.decided_at ?? undefined,
-            createdAt: fallback.created_at,
-          },
-          { headers: NO_STORE_HEADERS }
-        );
+        return NextResponse.json(await mapAssignmentRow(sb, { ...fallback, assigned_emails: assignedEmails }), {
+          headers: NO_STORE_HEADERS,
+        });
       }
       return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
     }
 
     return NextResponse.json(
       {
-        id: String(data.id),
-        gigId: String(data.gig_id),
-        workerId: String(data.worker_code),
-        assignedEmail: data.assigned_email,
-        assignedEmails: data.assigned_emails ?? assignedEmails,
-        status: data.status,
-        submittedAt: data.submitted_at ?? undefined,
-        decidedAt: data.decided_at ?? undefined,
-        createdAt: data.created_at,
+        ...(await mapAssignmentRow(sb, { ...data, assigned_emails: data.assigned_emails ?? assignedEmails })),
         subjectFilter: data.subject_filter ?? undefined,
       },
       { headers: NO_STORE_HEADERS }
@@ -572,28 +538,22 @@ export async function PATCH(req: Request) {
       }
     }
 
-    let fundRelease: { ok?: boolean; fundsReleased?: boolean; payoutBatchId?: string; payoutStatus?: string; error?: string } | null = null;
+    let fundRelease: { ok?: boolean; fundsReleased?: boolean; payoutStatus?: string; error?: string } | null = null;
     if (nextStatus === "Accepted" && releaseFundsNow) {
       fundRelease = await releaseAssignmentFunds(sb, String(body.id));
       if (fundRelease?.error) {
         return NextResponse.json({ error: fundRelease.error }, { status: 400, headers: NO_STORE_HEADERS });
       }
     }
+    const releaseState = await resolveAssignmentReleaseState(sb, String(data.id), String(data.status ?? ""));
 
     return NextResponse.json(
       {
-        id: String(data.id),
-        gigId: String(data.gig_id),
-        workerId: String(data.worker_code),
-        assignedEmail: data.assigned_email,
-        assignedEmails: (data as any).assigned_emails ?? undefined,
-        status: data.status,
-        submittedAt: data.submitted_at ?? undefined,
-        decidedAt: data.decided_at ?? undefined,
-        createdAt: data.created_at,
+        ...(await mapAssignmentRow(sb, data)),
         fundsReleased: fundRelease?.fundsReleased ?? false,
-        payoutBatchId: fundRelease?.payoutBatchId ?? undefined,
         payoutStatus: fundRelease?.payoutStatus ?? undefined,
+        earningsReleaseStatus: releaseState.earningsReleaseStatus,
+        earningsReleasedAt: releaseState.earningsReleasedAt,
       },
       { headers: NO_STORE_HEADERS }
     );
