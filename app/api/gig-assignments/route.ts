@@ -30,6 +30,24 @@ const EMAIL_DESCRIPTORS = [
   "bridge",
   "crown",
 ];
+const EMAIL_IDENTIFIERS = [
+  "deskline",
+  "mailroom",
+  "frontline",
+  "briefcase",
+  "postbox",
+  "registry",
+  "dispatch",
+  "switchboard",
+  "clearance",
+  "taskline",
+  "relay",
+  "corridor",
+  "workflow",
+  "notary",
+  "station",
+  "inbox",
+];
 
 function parsePayoutAmount(raw: unknown) {
   const text = String(raw ?? "").trim();
@@ -376,22 +394,22 @@ async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assi
 }
 
 function makeEmail(gigId: string, workerId: string, ordinal = 0, used = new Set<string>()) {
-  const gigToken = sanitizeAliasToken(gigId, "gig").replace(/^gig-?/, "") || "gig";
   const workerToken = sanitizeAliasToken(workerId, "wrk").replace(/^wkr-?/, "") || "wrk";
   const baseSeed = hashSeed(`${gigId}:${workerId}:${ordinal}`);
 
   for (let attempt = 0; attempt < 24; attempt += 1) {
-    const prefix = pickBySeed(EMAIL_PREFIXES, baseSeed + attempt);
-    const descriptor = pickBySeed(EMAIL_DESCRIPTORS, baseSeed * 7 + attempt * 3);
-    const suffix = String((baseSeed + attempt * 97) % 900 + 100);
-    const local = `${prefix}.${descriptor}.${gigToken.slice(0, 8)}.${workerToken.slice(0, 6)}.${suffix}`
+    const prefix = pickBySeed(EMAIL_PREFIXES, baseSeed + ordinal + attempt);
+    const descriptor = pickBySeed(EMAIL_DESCRIPTORS, baseSeed * 7 + ordinal * 5 + attempt * 3);
+    const identifier = pickBySeed(EMAIL_IDENTIFIERS, baseSeed * 11 + ordinal * 13 + attempt * 7);
+    const suffix = String((baseSeed + ordinal * 41 + attempt * 97) % 900 + 100);
+    const local = `${prefix}.${descriptor}.${identifier}.${workerToken.slice(0, 4)}${suffix}`
       .replace(/\.{2,}/g, ".")
       .slice(0, 62);
     const email = `${local}@${ASSIGNMENT_EMAIL_DOMAIN}`;
     if (!used.has(email)) return email;
   }
 
-  return `desk.${gigToken.slice(0, 8)}.${workerToken.slice(0, 6)}.${Date.now().toString().slice(-6)}@${ASSIGNMENT_EMAIL_DOMAIN}`;
+  return `desk.${pickBySeed(EMAIL_IDENTIFIERS, baseSeed)}.${workerToken.slice(0, 4)}${Date.now().toString().slice(-6)}@${ASSIGNMENT_EMAIL_DOMAIN}`;
 }
 
 function makeEmails(gigId: string, workerId: string, count: number, seed?: string) {
