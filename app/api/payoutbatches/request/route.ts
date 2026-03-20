@@ -7,6 +7,8 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
+const MIN_PAYOUT_REQUEST_INR = 1000;
+
 function startOfWeek(d: Date) {
   const day = d.getDay(); // 0=Sun
   const diff = (day + 6) % 7; // Monday as start
@@ -107,6 +109,18 @@ export async function POST(req: Request) {
 
     if (!eligible.length) {
       return NextResponse.json({ error: "All approved items already in payout batches" }, { status: 400, headers: NO_STORE_HEADERS });
+    }
+
+    const eligibleTotal = eligible.reduce((sum, item) => sum + Number(item.rewardINR ?? 0), 0);
+    if (eligibleTotal < MIN_PAYOUT_REQUEST_INR) {
+      return NextResponse.json(
+        {
+          error: `Minimum ${MIN_PAYOUT_REQUEST_INR} INR in approved earnings is required before requesting payout`,
+          minimumRequired: MIN_PAYOUT_REQUEST_INR,
+          eligibleAmount: eligibleTotal,
+        },
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
     }
 
     const now = new Date();

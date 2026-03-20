@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 type Role = "Admin" | "Worker";
 type AuthSession = { role: Role; workerId?: string; at: string };
 type UpiSchedule = "Weekly" | "Bi-weekly" | "Monthly";
+type PayoutDay = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 type PayoutBatchStatus = "Draft" | "Processing" | "Paid" | "Failed";
 
 type WorkerMetrics = {
@@ -42,7 +43,7 @@ type UpiConfig = {
   verified: boolean;
   verifiedAt?: string;
   payoutSchedule: UpiSchedule;
-  payoutDay: string;
+  payoutDay: PayoutDay;
 };
 
 type PayoutItem = {
@@ -69,9 +70,20 @@ type PayoutBatch = {
   notes: string[];
 };
 
+const MIN_PAYOUT_REQUEST_INR = 1000;
+
 const LS_KEYS = {
   AUTH: "igops:auth",
 } as const;
+
+const DEFAULT_UPI: UpiConfig = {
+  upiId: "",
+  verified: false,
+  payoutSchedule: "Weekly",
+  payoutDay: "Fri",
+};
+
+const PAYOUT_DAYS: PayoutDay[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -106,6 +118,13 @@ function fmtDate(value?: string | null) {
 
 function batchTotal(batch: PayoutBatch) {
   return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
+}
+
+function isValidUpi(upi: string) {
+  const text = String(upi ?? "").trim();
+  if (!text.includes("@")) return false;
+  const [name, provider] = text.split("@");
+  return !!name && !!provider && name.length >= 2 && provider.length >= 2;
 }
 
 function parsePayoutAmount(raw: unknown) {
@@ -158,6 +177,10 @@ export default function PayoutsPage() {
   const [requesting, setRequesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [upiEditorOpen, setUpiEditorOpen] = useState(false);
+  const [upiDraft, setUpiDraft] = useState<UpiConfig>(DEFAULT_UPI);
+  const [savingUpi, setSavingUpi] = useState(false);
+  const [upiError, setUpiError] = useState<string | null>(null);
   const loadInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -356,6 +379,10 @@ export default function PayoutsPage() {
     };
   }, [loadPayoutData, realtimeWorkerIds, role, sessionLoaded]);
 
+  useEffect(() => {
+    setUpiDraft(upi ?? DEFAULT_UPI);
+  }, [upi]);
+
   const approvedEarnings = metrics?.money?.earnings ?? 0;
   const pendingPayouts = metrics?.money?.pending ?? 0;
   const paidBatches = useMemo(() => batches.filter((batch) => batch.status === "Paid").length, [batches]);
@@ -368,9 +395,12 @@ export default function PayoutsPage() {
     ? "Verify UPI in workspace before requesting payout."
     : processingBatch
       ? "A payout batch is already active."
-      : approvedEarnings <= 0
-        ? "No approved earnings are available yet."
-        : null;
+      : approvedEarnings < MIN_PAYOUT_REQUEST_INR
+        ? `A minimum approved earnings balance of ${formatINR(MIN_PAYOUT_REQUEST_INR)} is required before a payout request can be submitted.`
+        : approvedEarnings <= 0
+          ? "No approved earnings are available yet."
+          : null;
+  const thresholdGap = Math.max(0, MIN_PAYOUT_REQUEST_INR - approvedEarnings);
 
   const requestPayout = async () => {
     if (!workerId) return;
@@ -390,6 +420,49 @@ export default function PayoutsPage() {
       setNotice({ tone: "danger", text: err instanceof Error ? err.message : "Unable to request payout." });
     } finally {
       setRequesting(false);
+    }
+  };
+
+  const saveAndVerifyUpi = async () => {
+    setUpiError(null);
+    if (!isValidUpi(upiDraft.upiId)) {
+      setUpiError("Enter a valid UPI ID like name@bank before saving.");
+      return;
+    }
+
+    setSavingUpi(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Not authenticated");
+
+      const payload: UpiConfig = {
+        ...upiDraft,
+        upiId: upiDraft.upiId.trim(),
+        verified: true,
+        verifiedAt: new Date().toISOString(),
+      };
+
+      const res = await fetch("/api/upi", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next?.error || "Unable to update UPI configuration.");
+
+      setUpi(next);
+      setUpiDraft(next);
+      setUpiEditorOpen(false);
+      setNotice({ tone: "success", text: "UPI payout configuration updated and verified." });
+      await loadPayoutData("refresh");
+    } catch (err) {
+      setUpiError(err instanceof Error ? err.message : "Unable to update UPI configuration.");
+    } finally {
+      setSavingUpi(false);
     }
   };
 
@@ -544,7 +617,7 @@ export default function PayoutsPage() {
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">UPI status</div>
                     <div className="mt-2 text-base font-semibold text-[#274537]">{upi?.verified ? "Verified" : "Not verified"}</div>
                     <div className="mt-1 text-sm text-[#617166]">
-                      {upi?.upiId ? `${upi.upiId} • ${upi.payoutSchedule} • ${upi.payoutDay}` : "Configure and verify UPI in workspace before requesting payout."}
+                      {upi?.upiId ? `${upi.upiId} • ${upi.payoutSchedule} • ${upi.payoutDay}` : "Add and verify a payout UPI ID before requesting funds."}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
@@ -555,10 +628,19 @@ export default function PayoutsPage() {
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">Release threshold</div>
+                    <div className="mt-2 text-base font-semibold text-[#274537]">{formatINR(MIN_PAYOUT_REQUEST_INR)} minimum</div>
+                    <div className="mt-1 text-sm text-[#617166]">
+                      {approvedEarnings >= MIN_PAYOUT_REQUEST_INR
+                        ? "Your approved balance meets the minimum request threshold."
+                        : `${formatINR(thresholdGap)} more in approved earnings is needed before the payout request can be opened.`}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">Eligible amount</div>
                     <div className="mt-2 text-base font-semibold text-[#274537]">{formatINR(approvedEarnings)}</div>
                     <div className="mt-1 text-sm text-[#617166]">
-                      Approved work not yet released into a paid batch is available for the next request cycle.
+                      Approved work not yet released into a paid batch becomes requestable once the minimum threshold is met.
                     </div>
                   </div>
                 </div>
@@ -571,11 +653,114 @@ export default function PayoutsPage() {
                   >
                     {requesting ? "Requesting..." : "Request payout"}
                   </button>
-                  <Link href="/workspace" className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-5 py-2.5 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]">
-                    Configure UPI in workspace
-                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUpiDraft(upi ?? DEFAULT_UPI);
+                      setUpiError(null);
+                      setUpiEditorOpen((prev) => !prev);
+                    }}
+                    className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-5 py-2.5 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]"
+                  >
+                    {upiEditorOpen ? "Close UPI manager" : "Manage payout UPI"}
+                  </button>
                 </div>
                 {requestBlockedReason && <div className="mt-3 text-sm font-medium text-[#6a7f73]">{requestBlockedReason}</div>}
+                {upiEditorOpen && (
+                  <div className="mt-5 rounded-[1.4rem] border border-[#d9e4de] bg-[#f7fbf8] p-4">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#738476]">Payout UPI manager</div>
+                        <div className="mt-1 text-lg font-semibold text-[#234538]">Update payout address and release schedule</div>
+                        <div className="mt-1 text-sm text-[#617166]">Changing the UPI or schedule requires a fresh verification before the next release cycle.</div>
+                      </div>
+                      {upi?.verified && upi?.verifiedAt && (
+                        <span className="self-start rounded-full border border-[#cfe0d4] bg-white px-3 py-1 text-xs font-semibold text-[#2f6655]">
+                          Verified {fmtDate(upi.verifiedAt)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <div className="text-sm font-semibold text-[#274537]">UPI ID</div>
+                        <input
+                          value={upiDraft.upiId}
+                          onChange={(e) => {
+                            setUpiError(null);
+                            setUpiDraft((prev) => ({ ...prev, upiId: e.target.value, verified: false, verifiedAt: undefined }));
+                          }}
+                          placeholder="name@bank"
+                          className="mt-2 w-full rounded-2xl border border-[#cdd9cd] bg-white px-4 py-3 text-sm font-medium text-[#1f2e28] outline-none transition focus:border-[#9cb6aa] focus:ring-2 focus:ring-[#dce7df]"
+                        />
+                        <div className="mt-2 text-xs text-[#738476]">Use the payout UPI where admin releases should settle for your wallet.</div>
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <div className="text-sm font-semibold text-[#274537]">Schedule</div>
+                          <select
+                            value={upiDraft.payoutSchedule}
+                            onChange={(e) => {
+                              setUpiError(null);
+                              setUpiDraft((prev) => ({ ...prev, payoutSchedule: e.target.value as UpiSchedule, verified: false, verifiedAt: undefined }));
+                            }}
+                            className="mt-2 w-full rounded-2xl border border-[#cdd9cd] bg-white px-4 py-3 text-sm font-medium text-[#1f2e28] outline-none transition focus:border-[#9cb6aa] focus:ring-2 focus:ring-[#dce7df]"
+                          >
+                            <option value="Weekly">Weekly</option>
+                            <option value="Bi-weekly">Bi-weekly</option>
+                            <option value="Monthly">Monthly</option>
+                          </select>
+                        </label>
+
+                        <label className="block">
+                          <div className="text-sm font-semibold text-[#274537]">Payout day</div>
+                          <select
+                            value={upiDraft.payoutDay}
+                            onChange={(e) => {
+                              setUpiError(null);
+                              setUpiDraft((prev) => ({ ...prev, payoutDay: e.target.value as PayoutDay, verified: false, verifiedAt: undefined }));
+                            }}
+                            className="mt-2 w-full rounded-2xl border border-[#cdd9cd] bg-white px-4 py-3 text-sm font-medium text-[#1f2e28] outline-none transition focus:border-[#9cb6aa] focus:ring-2 focus:ring-[#dce7df]"
+                          >
+                            {PAYOUT_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {day}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-[#d9e4de] bg-white px-4 py-3 text-sm text-[#5f7267]">
+                      Saving here updates the worker payout profile directly for this account. The new UPI details become the source of truth for future payout cycles.
+                    </div>
+
+                    {upiError && <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{upiError}</div>}
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void saveAndVerifyUpi()}
+                        disabled={savingUpi}
+                        className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2d6b5a] disabled:opacity-50"
+                      >
+                        {savingUpi ? "Saving..." : "Save and verify UPI"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUpiDraft(upi ?? DEFAULT_UPI);
+                          setUpiError(null);
+                        }}
+                        className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-5 py-2.5 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]"
+                      >
+                        Reset changes
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/45 backdrop-blur sm:p-6">
@@ -584,6 +769,9 @@ export default function PayoutsPage() {
                 <div className="mt-5 space-y-3 text-sm text-[#5c7368]">
                   <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
                     Approved work becomes payout-eligible after admin review.
+                  </div>
+                  <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
+                    A minimum approved earnings balance of {formatINR(MIN_PAYOUT_REQUEST_INR)} is required before payout requests can be submitted.
                   </div>
                   <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
                     Requests stay pending until admin approves and marks the batch as paid.

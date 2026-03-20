@@ -184,6 +184,8 @@ const AUTH_DEMO = {
   WORKER_EMAIL_DOMAIN: "igops.com",
 } as const;
 
+const MIN_PAYOUT_REQUEST_INR = 1000;
+
 /** ===================== Utils ===================== */
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -1638,6 +1640,10 @@ export default function MarketplaceWorkerPage() {
       showPayoutNotice("danger", "No approved items available for payout.");
       return;
     }
+    if (eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR) {
+      showPayoutNotice("danger", `Minimum ${formatINR(MIN_PAYOUT_REQUEST_INR)} approved earnings required before requesting payout.`);
+      return;
+    }
 
     const res = await fetchJSON<{ ok: boolean; batchId?: string }>(`/api/payoutbatches/request`, {
       method: "POST",
@@ -1649,7 +1655,7 @@ export default function MarketplaceWorkerPage() {
     }
     showPayoutNotice("success", "Payout request submitted.");
     loadFromApi();
-  }, [isWorkerAuthed, upi.verified, hasProcessingPayout, eligiblePayoutItems.length, effectiveWorkerId, showPayoutNotice, loadFromApi]);
+  }, [isWorkerAuthed, upi.verified, hasProcessingPayout, eligiblePayoutItems.length, eligiblePayoutTotal, effectiveWorkerId, showPayoutNotice, loadFromApi]);
 
   const autoPayoutKey = useMemo(() => {
     const now = istNow();
@@ -1672,7 +1678,7 @@ export default function MarketplaceWorkerPage() {
     if (!isWorkerAuthed || !upi.verified) return;
     if (hasProcessingPayout) return;
     if (!autoPayoutKey) return;
-    if (eligiblePayoutTotal < 500) return;
+    if (eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR) return;
     const lastKey = readLS<string | null>(LS_KEYS.PAYOUTS + ":auto", null);
     if (lastKey === autoPayoutKey) return;
     writeLS(LS_KEYS.PAYOUTS + ":auto", autoPayoutKey);
@@ -2718,16 +2724,28 @@ export default function MarketplaceWorkerPage() {
                         <Row label="Eligible items" value={String(eligiblePayoutItems.length)} />
                         <Row label="Pending request" value={hasProcessingPayout ? "Processing" : hasDraftPayout ? "Draft" : "No"} />
                         <Row label="Auto payout schedule" value={`${upi.payoutSchedule} • ${upi.payoutDay}`} />
-                        <Row label="Auto payout trigger" value={eligiblePayoutTotal >= 500 ? "Eligible (₹500+)" : "Below threshold"} />
+                        <Row
+                          label="Auto payout trigger"
+                          value={eligiblePayoutTotal >= MIN_PAYOUT_REQUEST_INR ? `Eligible (${formatINR(MIN_PAYOUT_REQUEST_INR)}+)` : "Below threshold"}
+                        />
                         {processingEta && <Row label="Estimated payout" value={processingEta} />}
                       </div>
                       <div className="mt-4">
-                        <Button variant="primary" onClick={requestPayout} disabled={!eligiblePayoutItems.length || !upi.verified || hasProcessingPayout}>
+                        <Button
+                          variant="primary"
+                          onClick={requestPayout}
+                          disabled={!eligiblePayoutItems.length || !upi.verified || hasProcessingPayout || eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR}
+                        >
                           <Icon name="wallet" />
                           Request payout
                         </Button>
                       </div>
                       {!upi.verified && <div className="mt-2 text-xs text-amber-700">Verify UPI before requesting payout.</div>}
+                      {upi.verified && eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR && (
+                        <div className="mt-2 text-xs text-amber-700">
+                          Minimum approved earnings of {formatINR(MIN_PAYOUT_REQUEST_INR)} is required. You need {formatINR(Math.max(0, MIN_PAYOUT_REQUEST_INR - eligiblePayoutTotal))} more to open a payout request.
+                        </div>
+                      )}
                       {payoutNotice && (
                         <div
                           className={cx(
@@ -2751,7 +2769,7 @@ export default function MarketplaceWorkerPage() {
                       <div className="space-y-3 text-sm text-slate-700">
                         <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
                           <div className="text-xs font-extrabold text-slate-600">Why payout is pending</div>
-                          <div className="mt-1">Submitted items need Admin approval to become eligible for payout.</div>
+                          <div className="mt-1">Submitted items need Admin approval, and approved earnings must reach at least {formatINR(MIN_PAYOUT_REQUEST_INR)} before payout can be requested.</div>
                         </div>
                         <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
                           <div className="text-xs font-extrabold text-slate-600">Hard reject</div>
