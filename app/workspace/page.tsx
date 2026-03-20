@@ -74,6 +74,9 @@ type WorkItem = {
     submittedAt?: string;
   };
   review?: {
+    source?: string;
+    assignmentId?: string;
+    walletReleasedAt?: string;
     reviewedAt?: string;
     reviewer?: string;
     decision?: "Approved" | "Rejected" | "Hard rejected";
@@ -280,6 +283,13 @@ function workerEmail(w: WorkerProfile) {
 
 function workerPassword(w: WorkerProfile) {
   return (w.password || AUTH_DEMO.WORKER_DEFAULT_PASSWORD).trim();
+}
+
+function isCredentialWalletItem(item: Pick<WorkItem, "review" | "id">) {
+  return (
+    String(item.review?.source ?? "") === "gig_assignment_approval" ||
+    String(item.id ?? "").startsWith("GIGCRED-")
+  );
 }
 
 /** ===================== Safety Normalizers ===================== */
@@ -1293,7 +1303,7 @@ export default function MarketplaceWorkerPage() {
     () =>
       allItems.filter((x) => {
         if (x.workerId && x.workerId !== effectiveWorkerId && x.workerId !== me?.userId) return false;
-        return assignedAccountIds.has(x.accountId);
+        return assignedAccountIds.has(x.accountId) || isCredentialWalletItem(x);
       }),
     [allItems, effectiveWorkerId, me?.userId, assignedAccountIds]
   );

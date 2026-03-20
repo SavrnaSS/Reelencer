@@ -26,6 +26,17 @@ type WorkerMetrics = {
   };
 };
 
+type GigAssignment = {
+  gigId?: string;
+  status?: string;
+  earningsReleaseStatus?: "none" | "queued" | "credited" | "blocked";
+};
+
+type GigSummary = {
+  id: string;
+  payout?: string | null;
+};
+
 type UpiConfig = {
   upiId: string;
   verified: boolean;
@@ -97,6 +108,42 @@ function batchTotal(batch: PayoutBatch) {
   return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
 }
 
+function parsePayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function summarizeCredentialEarnings(assignments: GigAssignment[], gigs: GigSummary[]) {
+  const payoutByGigId = new Map<string, number>(
+    gigs.map((gig) => [String(gig.id), parsePayoutAmount(gig.payout)])
+  );
+
+  return assignments.reduce(
+    (totals, assignment) => {
+      const amount = payoutByGigId.get(String(assignment.gigId ?? "")) ?? 0;
+      if (!amount) return totals;
+
+      if (assignment.earningsReleaseStatus === "credited") {
+        totals.earnings += amount;
+        return totals;
+      }
+
+      if (
+        assignment.earningsReleaseStatus === "queued" ||
+        ["Submitted", "Accepted", "Pending"].includes(String(assignment.status ?? ""))
+      ) {
+        totals.pending += amount;
+      }
+
+      return totals;
+    },
+    { earnings: 0, pending: 0 }
+  );
+}
+
 export default function PayoutsPage() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [role, setRole] = useState<Role | null>(null);
@@ -138,25 +185,66 @@ export default function PayoutsPage() {
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      const [metricsResult, batchesResult, upiResult] = await Promise.allSettled([
+      const [metricsResult, batchesResult, upiResult, assignmentsResult] = await Promise.allSettled([
         fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
         fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
         token
           ? fetch("/api/upi", { method: "GET", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
           : Promise.resolve(null),
+        fetch(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
       ]);
 
       const issues: string[] = [];
+      let credentialFallback = { earnings: 0, pending: 0 };
+
+      if (assignmentsResult.status === "fulfilled" && assignmentsResult.value.ok) {
+        const assignmentsJson = (await assignmentsResult.value.json().catch(() => [])) as GigAssignment[];
+        const gigIds = Array.from(new Set((Array.isArray(assignmentsJson) ? assignmentsJson : []).map((row) => String(row.gigId ?? "")).filter(Boolean)));
+        if (gigIds.length > 0) {
+          const gigsRes = await fetch("/api/gigs", { method: "GET", cache: "no-store" });
+          if (gigsRes.ok) {
+            const gigsJson = (await gigsRes.json().catch(() => [])) as GigSummary[];
+            const relevantGigs = (Array.isArray(gigsJson) ? gigsJson : []).filter((gig) => gigIds.includes(String(gig.id)));
+            credentialFallback = summarizeCredentialEarnings(Array.isArray(assignmentsJson) ? assignmentsJson : [], relevantGigs);
+          }
+        }
+      }
 
       if (metricsResult.status === "fulfilled") {
         if (metricsResult.value.ok) {
           const metricsJson = await metricsResult.value.json();
-          setMetrics(metricsJson ?? null);
+          const mergedMetrics = {
+            ...(metricsJson ?? {}),
+            money: {
+              ...(metricsJson?.money ?? {}),
+              earnings: Math.max(Number(metricsJson?.money?.earnings ?? 0), credentialFallback.earnings),
+              pending: Math.max(Number(metricsJson?.money?.pending ?? 0), credentialFallback.pending),
+            },
+          };
+          setMetrics(mergedMetrics);
+        } else {
+          if (credentialFallback.earnings > 0 || credentialFallback.pending > 0) {
+            setMetrics({
+              money: {
+                earnings: credentialFallback.earnings,
+                pending: credentialFallback.pending,
+              },
+            });
+          } else {
+            issues.push("earnings metrics");
+          }
+        }
+      } else {
+        if (credentialFallback.earnings > 0 || credentialFallback.pending > 0) {
+          setMetrics({
+            money: {
+              earnings: credentialFallback.earnings,
+              pending: credentialFallback.pending,
+            },
+          });
         } else {
           issues.push("earnings metrics");
         }
-      } else {
-        issues.push("earnings metrics");
       }
 
       if (batchesResult.status === "fulfilled") {

@@ -129,6 +129,14 @@ function isProjectGigType(gig: Pick<Gig, "gigType">) {
   return raw === "project";
 }
 
+function parseProceedPayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
 function isContentPostingGigType(gig: Pick<Gig, "gigType">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -1186,7 +1194,7 @@ function ProceedPageInner() {
             <div className={`mt-2 flex gap-3 ${desktop ? "items-end justify-between" : "flex-col"}`}>
               <div className="min-w-0 flex-1">
                 <div className={`font-semibold leading-none text-slate-900 ${desktop ? "text-[1.5rem]" : "text-[1.35rem]"}`}>
-                  ₹{Math.round(Number(workerMetrics?.money?.earnings ?? 0))}
+                  ₹{Math.round(approvedEarningsDisplay)}
                 </div>
                 <div className={`mt-1 text-[11px] leading-5 text-slate-500 ${desktop ? "max-w-[14rem]" : "max-w-[18rem]"}`}>
                   Synced from your workspace payout ledger
@@ -1293,6 +1301,12 @@ function ProceedPageInner() {
       : [];
     return list.map((e) => e.trim().toLowerCase()).filter(Boolean);
   }, [assignment?.assignedEmails, assignment?.assignedEmail]);
+  const approvedEarningsDisplay = useMemo(() => {
+    const synced = Number(workerMetrics?.money?.earnings ?? 0);
+    const creditedFallback =
+      assignment?.earningsReleaseStatus === "credited" ? parseProceedPayoutAmount(gig?.payout) : 0;
+    return Math.max(synced, creditedFallback);
+  }, [assignment?.earningsReleaseStatus, gig?.payout, workerMetrics?.money?.earnings]);
   const hasCredentialSubmission = Boolean(
     assignment?.submittedAt || ["Submitted", "Accepted", "Rejected", "Pending"].includes(assignmentStatus)
   );

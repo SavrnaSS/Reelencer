@@ -44,9 +44,11 @@ type GigApplication = {
 };
 
 type GigAssignment = {
+  id?: string;
   gigId?: string;
   gig_id?: string;
   status?: string;
+  earningsReleaseStatus?: "none" | "queued" | "credited" | "blocked";
 };
 
 type WorkerMetrics = {
@@ -117,6 +119,14 @@ function formatGigTypeLabel(raw?: string) {
 function getGigBrief(gig: Pick<Gig, "requirements">) {
   const line = (gig.requirements ?? []).find((item) => String(item).toLowerCase().startsWith("brief::"));
   return line ? String(line).replace(/^brief::/i, "").trim() : "";
+}
+
+function parseBrowsePayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
 }
 
 function getGigRequirementTags(gig: Pick<Gig, "requirements">) {
@@ -370,7 +380,17 @@ export default function BrowsePage() {
   const hasApprovedKyc = role === "Worker" && kycStatus === "approved";
   const kycBadgeStatus = hasApprovedKyc ? "approved" : kycStatus;
   const mobileDisplayName = displayName.trim().split(/\s+/)[0] || "User";
-  const approvedEarnings = workerMetrics?.money?.earnings ?? 0;
+  const creditedAssignmentFallback = useMemo(() => {
+    if (!assignments.length || !gigs.length) return 0;
+    return assignments.reduce((sum, assignment) => {
+      if (assignment.earningsReleaseStatus !== "credited") return sum;
+      const gigId = String(assignment.gigId ?? assignment.gig_id ?? "").trim();
+      if (!gigId) return sum;
+      const gig = gigs.find((item) => String(item.id) === gigId);
+      return sum + parseBrowsePayoutAmount(gig?.payout);
+    }, 0);
+  }, [assignments, gigs]);
+  const approvedEarnings = Math.max(workerMetrics?.money?.earnings ?? 0, creditedAssignmentFallback);
   const computeMenuAnchor = React.useCallback(() => {
     const el = menuButtonRef.current;
     if (!el) return;

@@ -120,6 +120,13 @@ const isMissingColumn = (msg?: string | null) => {
   );
 };
 
+function isCredentialApprovalRow(row: any) {
+  return (
+    String(row?.review?.source ?? "") === "gig_assignment_approval" ||
+    String(row?.public_id ?? row?.publicId ?? "").startsWith("GIGCRED-")
+  );
+}
+
 async function insertScheduledItems(sb: ReturnType<typeof supabaseAdmin>, rows: any[]) {
   let ins = await sb.from("work_items").insert(rows);
   if (!ins.error) return null;
@@ -562,7 +569,31 @@ export async function GET(req: Request) {
         res = { data: [], error: null };
       }
     }
-    data = res.data ?? null;
+    let merged = Array.isArray(res.data) ? [...res.data] : [];
+
+    if (workerUuidResolved) {
+      let creditRes: any = await sb.from("work_items").select("*").eq("worker_id", workerUuidResolved);
+      if (creditRes.error && isMissingColumn(creditRes.error.message)) {
+        creditRes = await sb
+          .from("work_items")
+          .select("*")
+          .in("workerId", [workerId, workerUuidResolved].filter(Boolean));
+      }
+      if (!creditRes.error && Array.isArray(creditRes.data)) {
+        const extra = creditRes.data.filter((row: any) => isCredentialApprovalRow(row));
+        if (extra.length) {
+          const seen = new Set(merged.map((row: any) => String(row.id ?? row.public_id ?? row.publicId ?? "")));
+          for (const row of extra) {
+            const key = String(row.id ?? row.public_id ?? row.publicId ?? "");
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            merged.push(row);
+          }
+        }
+      }
+    }
+
+    data = merged;
     error = res.error ?? null;
   } else {
     const workerIdOr = workerUuidResolved ? `worker_id.eq.${workerUuidResolved}` : "";

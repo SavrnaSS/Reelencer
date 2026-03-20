@@ -20,6 +20,15 @@ function buildApprovalWorkItemId(assignmentId: string) {
   return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
 }
 
+function isMissingColumn(msg?: string | null) {
+  if (!msg) return false;
+  return (
+    (msg.includes("column") && msg.includes("does not exist")) ||
+    (msg.includes("Could not find the") && msg.includes("column")) ||
+    msg.includes("schema cache")
+  );
+}
+
 async function resolveWorkerAliases(workerId: string) {
   const sb = supabaseAdmin();
   const aliases = new Set<string>([workerId].filter(Boolean));
@@ -46,14 +55,21 @@ export async function GET(req: Request) {
 
   const workerAliases = await resolveWorkerAliases(workerId);
 
-  const { data, error } = await supabaseAdmin()
+  const sb = supabaseAdmin();
+  let workItemsRes: { data: any[] | null; error: { message: string } | null } = await sb
     .from("work_items")
     .select("public_id,status,reward_inr,started_at,completed_at,due_at,sla_minutes,review")
     .or(workerAliases.map((id) => `worker_id.eq.${id}`).join(","));
+  if (workItemsRes.error && isMissingColumn(workItemsRes.error.message)) {
+    workItemsRes = await sb
+      .from("work_items")
+      .select("public_id,status,reward_inr,started_at,completed_at,due_at,sla_minutes")
+      .or(workerAliases.map((id) => `worker_id.eq.${id}`).join(","));
+  }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
+  if (workItemsRes.error) return NextResponse.json({ error: workItemsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
 
-  const items = data ?? [];
+  const items = workItemsRes.data ?? [];
   const operationalItems = items.filter((x: any) => String(x?.review?.source ?? "") !== "gig_assignment_approval");
   const approved = operationalItems.filter((x) => x.status === "Approved");
   const submitted = operationalItems.filter((x) => x.status === "Submitted");
@@ -84,7 +100,7 @@ export async function GET(req: Request) {
 
   const credentialPublicIds = credentialAssignments.map((row: any) => buildApprovalWorkItemId(String(row.id)));
   const credentialWorkItemsRes = credentialPublicIds.length
-    ? await supabaseAdmin().from("work_items").select("public_id,status").in("public_id", credentialPublicIds)
+    ? await sb.from("work_items").select("public_id,status").in("public_id", credentialPublicIds)
     : { data: [], error: null as any };
   if (credentialWorkItemsRes.error) {
     return NextResponse.json({ error: credentialWorkItemsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
