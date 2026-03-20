@@ -20,10 +20,34 @@ function buildApprovalWorkItemId(assignmentId: string) {
   return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
 }
 
+function buildApprovalAccountId(assignmentId: string) {
+  const compact = String(assignmentId ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return `GIGACC-${compact.slice(0, 18) || "ITEM"}`;
+}
+
 const APPROVAL_WORK_ITEM_TYPE = "Reel posting";
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isMissingColumn(msg?: string | null) {
+  if (!msg) return false;
+  return (
+    (msg.includes("column") && msg.includes("does not exist")) ||
+    (msg.includes("Could not find the") && msg.includes("column")) ||
+    msg.includes("schema cache")
+  );
+}
+
+function stripMissing(payload: Record<string, any>, msg?: string | null) {
+  if (!msg) return payload;
+  const match = msg.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/);
+  const col = match?.[1];
+  if (!col) return payload;
+  const next = { ...payload };
+  delete next[col];
+  return next;
 }
 
 async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, workerCode: string) {
@@ -33,6 +57,62 @@ async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, worke
   if (!normalized.startsWith("WKR-")) return null;
   const { data } = await sb.from("profiles").select("id").eq("worker_code", workerCode).maybeSingle();
   return data?.id ? String(data.id) : null;
+}
+
+async function ensureApprovalAccountId(
+  sb: ReturnType<typeof supabaseAdmin>,
+  assignmentId: string,
+  gig: { title?: string | null; company?: string | null; platform?: string | null }
+) {
+  const accountId = buildApprovalAccountId(assignmentId);
+  const existing = await sb.from("accounts").select("id").eq("id", accountId).maybeSingle();
+  if (existing.data?.id) return accountId;
+  if (existing.error && !isMissingColumn(existing.error.message)) {
+    return existing.error.message;
+  }
+
+  const { data: firstCredential } = await sb
+    .from("gig_account_credentials")
+    .select("handle,email")
+    .eq("assignment_id", assignmentId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  const rawHandle =
+    String(firstCredential?.handle ?? "")
+      .trim()
+      .replace(/^@+/, "")
+      .replace(/\s+/g, "")
+      .replace(/[^a-zA-Z0-9._-]/g, "") ||
+    String(firstCredential?.email ?? "")
+      .split("@")[0]
+      ?.trim()
+      .replace(/[^a-zA-Z0-9._-]/g, "") ||
+    accountId.toLowerCase();
+
+  let payload: Record<string, any> = {
+    id: accountId,
+    handle: rawHandle.startsWith("@") ? rawHandle : `@${rawHandle}`,
+    niche: String(gig.platform ?? "Credential Workflow").trim() || "Credential Workflow",
+    owner_team: String(gig.company ?? "Gig Ops").trim() || "Gig Ops",
+    policy_tier: "Standard",
+    health: "Healthy",
+    rules: [],
+    allowed_audios: [],
+    required_hashtags: [],
+  };
+
+  for (let i = 0; i < 6; i += 1) {
+    const insert = await sb.from("accounts").insert(payload).select("id").maybeSingle();
+    if (!insert.error) return accountId;
+    if (!isMissingColumn(insert.error.message)) return insert.error.message;
+    const stripped = stripMissing(payload, insert.error.message);
+    if (Object.keys(stripped).length === Object.keys(payload).length) return insert.error.message;
+    payload = stripped;
+  }
+
+  return "Unable to prepare synthetic account for credential payout.";
 }
 
 async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string, status: string) {
@@ -48,12 +128,21 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
 
   const { data: gig, error: gigError } = await sb
     .from("gigs")
-    .select("id,title,payout,payout_type")
+    .select("id,title,company,platform,payout,payout_type")
     .eq("id", assignment.gig_id)
     .maybeSingle();
 
   if (gigError || !gig) {
     return gigError?.message || "Gig not found for approval sync";
+  }
+
+  const workerLedgerId = await resolveWorkerPayoutId(sb, String(assignment.worker_code ?? ""));
+  if (!workerLedgerId) {
+    return "Worker profile could not be resolved for approval sync.";
+  }
+  const approvalAccountId = await ensureApprovalAccountId(sb, assignmentId, gig as any);
+  if (!approvalAccountId || approvalAccountId.startsWith("Unable") || approvalAccountId.includes(" ")) {
+    return approvalAccountId || "Synthetic approval account could not be prepared.";
   }
 
   const publicId = buildApprovalWorkItemId(assignmentId);
@@ -69,7 +158,7 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
   const completedAt = resolvedStatus === "Approved" || resolvedStatus === "Hard rejected" ? now : null;
   const baseWorkItemPayload = {
     title,
-    worker_id: assignment.worker_code,
+    worker_id: workerLedgerId,
     status: resolvedStatus,
     reward_inr: rewardInr,
     completed_at: completedAt,
@@ -79,7 +168,7 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
     public_id: publicId,
     title,
     type: APPROVAL_WORK_ITEM_TYPE,
-    worker_id: assignment.worker_code,
+    worker_id: workerLedgerId,
     created_at: now,
     due_at: now,
     completed_at: now,
@@ -91,6 +180,7 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
     review: {
       source: "gig_assignment_approval",
       assignmentId,
+      workerCode: assignment.worker_code,
       payoutType: (gig as any).payout_type ?? null,
       autoApprovedAt: now,
     },
@@ -102,10 +192,10 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
       .from("work_items")
       .update({
         ...baseWorkItemPayload,
-        account_id: assignment.id,
+        account_id: approvalAccountId,
       })
       .eq("id", existing.data.id);
-    if (update.error && String(update.error.message || "").includes("account_id")) {
+    if (update.error && isMissingColumn(update.error.message)) {
       update = await sb.from("work_items").update(baseWorkItemPayload).eq("id", existing.data.id);
     }
     return update.error ? update.error.message : null;
@@ -117,9 +207,9 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
 
   let insert = await sb.from("work_items").insert({
     ...createWorkItemPayload,
-    account_id: assignment.id,
+    account_id: approvalAccountId,
   });
-  if (insert.error && String(insert.error.message || "").includes("account_id")) {
+  if (insert.error && isMissingColumn(insert.error.message)) {
     insert = await sb.from("work_items").insert(createWorkItemPayload);
   }
 
