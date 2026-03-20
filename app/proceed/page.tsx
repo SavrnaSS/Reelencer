@@ -1179,9 +1179,17 @@ function ProceedPageInner() {
       ? "border-rose-200 bg-rose-50 text-rose-700"
     : assignmentStatus === "Submitted"
       ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-      : assignmentStatus === "Applied" || assignmentStatus === "Pending"
+    : assignmentStatus === "Applied" || assignmentStatus === "Pending"
       ? "border-[#d4dfd7] bg-white text-[#4d665c]"
       : "border-[#d4dccf] bg-[#f4f8f1] text-[#5f746a]";
+  const assignedList = useMemo(() => {
+    const list = assignment?.assignedEmails?.length
+      ? assignment.assignedEmails
+      : assignment?.assignedEmail
+      ? [assignment.assignedEmail]
+      : [];
+    return list.map((e) => e.trim().toLowerCase()).filter(Boolean);
+  }, [assignment?.assignedEmails, assignment?.assignedEmail]);
   const credentialSubmissionLocked = assignmentStatus === "Submitted";
   const showCredentialReviewState = credentialSubmissionLocked || success === CREDENTIAL_SUCCESS_MESSAGE;
   const credentialSubmittedAt = assignment?.submittedAt ? new Date(assignment.submittedAt).toLocaleString() : null;
@@ -1270,15 +1278,6 @@ function ProceedPageInner() {
       </div>
     </div>
   ) : null;
-
-  const assignedList = useMemo(() => {
-    const list = assignment?.assignedEmails?.length
-      ? assignment.assignedEmails
-      : assignment?.assignedEmail
-      ? [assignment.assignedEmail]
-      : [];
-    return list.map((e) => e.trim().toLowerCase()).filter(Boolean);
-  }, [assignment?.assignedEmails, assignment?.assignedEmail]);
 
   useEffect(() => {
     if (!assignment?.id) {
