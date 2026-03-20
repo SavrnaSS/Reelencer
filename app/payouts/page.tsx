@@ -163,6 +163,113 @@ function summarizeCredentialEarnings(assignments: GigAssignment[], gigs: GigSumm
   );
 }
 
+function PayoutsSkeleton() {
+  const shimmer = "animate-pulse rounded-full bg-[#e7efe5]";
+  const card = "rounded-[1.6rem] border border-[#cfdbc8] bg-white/90 p-4 shadow-xl shadow-[#c8d5c7]/30 backdrop-blur sm:p-6";
+
+  return (
+    <div className="min-h-screen bg-[#eef4ea] text-slate-900">
+      <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,rgba(220,233,222,0.95),transparent_38%)]">
+        <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+            <div className="space-y-3">
+              <div className="h-3 w-28 rounded-full bg-[#dfe8dc]" />
+              <div className="h-11 w-72 rounded-full bg-[#e7efe5] sm:w-96" />
+              <div className="h-4 w-full max-w-2xl rounded-full bg-[#edf3eb]" />
+              <div className="h-4 w-4/5 max-w-xl rounded-full bg-[#edf3eb]" />
+            </div>
+            <div className="flex gap-2">
+              <div className="h-11 w-32 rounded-full bg-[#edf3eb]" />
+              <div className="h-11 w-32 rounded-full bg-[#dce8df]" />
+            </div>
+          </div>
+        </div>
+
+        <div className="relative mx-auto w-full max-w-7xl px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="h-4 w-72 rounded-full bg-[#dfe8dc]" />
+            <div className="h-11 w-full rounded-full bg-[#edf3eb] sm:w-44" />
+          </div>
+
+          <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="rounded-[1.2rem] border border-[#cfdbc8] bg-white/90 px-4 py-4 shadow-lg shadow-[#d6dfd2]/35 sm:rounded-[1.4rem] sm:px-5 sm:py-5">
+                <div className={`${shimmer} h-7 w-28`} />
+                <div className="mt-5 h-12 w-24 rounded-2xl bg-[#e1ebe0]" />
+                <div className="mt-4 h-4 w-32 rounded-full bg-[#edf3eb]" />
+              </div>
+            ))}
+          </section>
+
+          <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(320px,0.88fr)]">
+            <div className={card}>
+              <div className="space-y-3">
+                <div className="h-3 w-28 rounded-full bg-[#dfe8dc]" />
+                <div className="h-9 w-52 rounded-full bg-[#e7efe5]" />
+                <div className="h-4 w-72 rounded-full bg-[#edf3eb]" />
+              </div>
+              <div className="mt-6 space-y-4">
+                {Array.from({ length: 2 }).map((_, idx) => (
+                  <div key={idx} className="rounded-2xl border border-[#d9e4de] bg-[#f9fcf8] p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <div className="h-6 w-44 rounded-full bg-[#e7efe5]" />
+                        <div className="h-4 w-36 rounded-full bg-[#edf3eb]" />
+                      </div>
+                      <div className="h-8 w-24 rounded-full bg-[#edf3eb]" />
+                    </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      <div className="h-10 rounded-xl bg-white" />
+                      <div className="h-10 rounded-xl bg-white" />
+                      <div className="h-10 rounded-xl bg-white" />
+                    </div>
+                    <div className="mt-4 h-20 rounded-xl bg-white" />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className={card}>
+                <div className="space-y-3">
+                  <div className="h-3 w-32 rounded-full bg-[#dfe8dc]" />
+                  <div className="h-9 w-64 rounded-full bg-[#e7efe5]" />
+                </div>
+                <div className="mt-5 space-y-3">
+                  {Array.from({ length: 4 }).map((_, idx) => (
+                    <div key={idx} className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-4">
+                      <div className="h-3 w-28 rounded-full bg-[#dfe8dc]" />
+                      <div className="mt-3 h-6 w-36 rounded-full bg-[#e7efe5]" />
+                      <div className="mt-2 h-4 w-full rounded-full bg-[#edf3eb]" />
+                      <div className="mt-2 h-4 w-4/5 rounded-full bg-[#edf3eb]" />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <div className="h-11 w-36 rounded-full bg-[#dce8df]" />
+                  <div className="h-11 w-48 rounded-full bg-[#edf3eb]" />
+                </div>
+              </div>
+
+              <div className={card}>
+                <div className="space-y-3">
+                  <div className="h-3 w-32 rounded-full bg-[#dfe8dc]" />
+                  <div className="h-8 w-48 rounded-full bg-[#e7efe5]" />
+                </div>
+                <div className="mt-5 space-y-3">
+                  {Array.from({ length: 3 }).map((_, idx) => (
+                    <div key={idx} className="h-16 rounded-2xl bg-[#f7fbf8]" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PayoutsPage() {
   const [sessionLoaded, setSessionLoaded] = useState(false);
   const [role, setRole] = useState<Role | null>(null);
@@ -467,16 +574,7 @@ export default function PayoutsPage() {
   };
 
   if (!sessionLoaded || loading) {
-    return (
-      <div className="min-h-screen bg-[#eef4ea] text-slate-900">
-        <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#cdd9cd] bg-white px-3 py-1 text-xs font-semibold text-[#486455] shadow-sm">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-[#c3d1c3] border-t-[#1f4f43]" />
-            Loading payout data...
-          </div>
-        </div>
-      </div>
-    );
+    return <PayoutsSkeleton />;
   }
 
   return (
