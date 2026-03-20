@@ -20,6 +20,12 @@ function buildApprovalWorkItemId(assignmentId: string) {
   return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
 }
 
+async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, workerCode: string) {
+  if (!workerCode.startsWith("WKR-")) return workerCode;
+  const { data } = await sb.from("profiles").select("id").eq("worker_code", workerCode).maybeSingle();
+  return data?.id ? String(data.id) : workerCode;
+}
+
 async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string, status: string) {
   const { data: assignment, error: assignmentError } = await sb
     .from("gig_assignments")
@@ -134,6 +140,107 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
   }
 
   return insert.error ? insert.error.message : null;
+}
+
+async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assignmentId: string) {
+  const { data: assignment, error: assignmentError } = await sb
+    .from("gig_assignments")
+    .select("id,gig_id,worker_code,status")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (assignmentError || !assignment) {
+    return { error: assignmentError?.message || "Assignment not found for fund release" };
+  }
+  if (String(assignment.status ?? "") !== "Accepted") {
+    return { error: "Funds can only be released after admin approval." };
+  }
+
+  const workerPayoutId = await resolveWorkerPayoutId(sb, String(assignment.worker_code ?? ""));
+  const { data: upiRow, error: upiError } = await sb
+    .from("upi_configs")
+    .select("upi_id,verified")
+    .eq("worker_id", workerPayoutId)
+    .maybeSingle();
+  if (upiError) return { error: upiError.message };
+  if (!upiRow?.verified) {
+    return { error: "Worker payout method is not verified yet. Verify UPI before releasing funds." };
+  }
+
+  const publicId = buildApprovalWorkItemId(assignmentId);
+  const { data: workItem, error: workItemError } = await sb
+    .from("work_items")
+    .select("id,title,reward_inr,rewardINR")
+    .eq("public_id", publicId)
+    .maybeSingle();
+  if (workItemError || !workItem?.id) {
+    return { error: workItemError?.message || "Approved earning item not found for release." };
+  }
+
+  const { data: existingPayoutItem, error: existingPayoutItemError } = await sb
+    .from("payout_items")
+    .select("id,status,batch_id")
+    .eq("work_item_id", String(workItem.id))
+    .neq("status", "Failed")
+    .maybeSingle();
+  if (existingPayoutItemError) return { error: existingPayoutItemError.message };
+
+  if (existingPayoutItem?.id) {
+    const { data: existingBatch } = await sb
+      .from("payout_batches")
+      .select("id,status,paid_at")
+      .eq("id", String(existingPayoutItem.batch_id))
+      .maybeSingle();
+    return {
+      ok: true,
+      fundsReleased: String(existingPayoutItem.status ?? "") === "Paid",
+      payoutBatchId: existingBatch?.id ? String(existingBatch.id) : String(existingPayoutItem.batch_id),
+      payoutStatus: String(existingPayoutItem.status ?? existingBatch?.status ?? "Included"),
+    };
+  }
+
+  const { data: gig } = await sb.from("gigs").select("id,title").eq("id", assignment.gig_id).maybeSingle();
+  const amountInr = Number((workItem as any).reward_inr ?? (workItem as any).rewardINR ?? 0);
+  const now = new Date().toISOString();
+  const today = now.slice(0, 10);
+  const cycleLabel = `Direct credential release ${today}`;
+
+  const { data: batchRow, error: batchError } = await sb
+    .from("payout_batches")
+    .insert({
+      worker_id: workerPayoutId,
+      cycle_label: cycleLabel,
+      period_start: today,
+      period_end: today,
+      status: "Paid",
+      method: "UPI",
+      processed_at: now,
+      paid_at: now,
+      notes: [`Direct release for assignment ${assignmentId}`, `UPI:${String(upiRow.upi_id ?? "")}`],
+    })
+    .select("id")
+    .maybeSingle();
+  if (batchError || !batchRow?.id) {
+    return { error: batchError?.message || "Unable to create payout batch for direct release." };
+  }
+
+  const { error: payoutItemError } = await sb.from("payout_items").insert({
+    batch_id: String(batchRow.id),
+    work_item_id: String(workItem.id),
+    worker_id: workerPayoutId,
+    handle: String((gig as any)?.title ?? `gig:${assignment.gig_id}`),
+    amount_inr: amountInr,
+    status: "Paid",
+  });
+  if (payoutItemError) {
+    return { error: payoutItemError.message };
+  }
+
+  return {
+    ok: true,
+    fundsReleased: true,
+    payoutBatchId: String(batchRow.id),
+    payoutStatus: "Paid",
+  };
 }
 
 function makeEmail(gigId: string, workerId: string) {
@@ -362,6 +469,7 @@ export async function PATCH(req: Request) {
     const updates = body.updates ?? {};
     const sb = supabaseAdmin();
     const nextStatus = String(updates.status ?? "");
+    const releaseFundsNow = !!updates.releaseFundsNow;
     const { data, error } = await sb
       .from("gig_assignments")
       .update({
@@ -384,6 +492,14 @@ export async function PATCH(req: Request) {
       }
     }
 
+    let fundRelease: { ok?: boolean; fundsReleased?: boolean; payoutBatchId?: string; payoutStatus?: string; error?: string } | null = null;
+    if (nextStatus === "Accepted" && releaseFundsNow) {
+      fundRelease = await releaseAssignmentFunds(sb, String(body.id));
+      if (fundRelease?.error) {
+        return NextResponse.json({ error: fundRelease.error }, { status: 400, headers: NO_STORE_HEADERS });
+      }
+    }
+
     return NextResponse.json(
       {
         id: String(data.id),
@@ -395,6 +511,9 @@ export async function PATCH(req: Request) {
         submittedAt: data.submitted_at ?? undefined,
         decidedAt: data.decided_at ?? undefined,
         createdAt: data.created_at,
+        fundsReleased: fundRelease?.fundsReleased ?? false,
+        payoutBatchId: fundRelease?.payoutBatchId ?? undefined,
+        payoutStatus: fundRelease?.payoutStatus ?? undefined,
       },
       { headers: NO_STORE_HEADERS }
     );

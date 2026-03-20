@@ -34,6 +34,12 @@ type DbPayoutItem = {
   reason?: string | null;
 };
 
+type DbWorkItem = {
+  id: string | number;
+  public_id?: string | null;
+  review?: any;
+};
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -88,19 +94,45 @@ export async function GET(req: Request) {
       items = (itemsRaw ?? []) as DbPayoutItem[];
     }
 
+    const workItemIds = items.map((item) => String(item.work_item_id)).filter(Boolean);
+    const workItemMap = new Map<string, DbWorkItem>();
+    if (workItemIds.length > 0) {
+      const { data: workItemsRaw, error: workItemErr } = await sb
+        .from("work_items")
+        .select("id, public_id, review")
+        .in("id", workItemIds);
+
+      if (workItemErr) {
+        return NextResponse.json({ error: workItemErr.message }, { status: 500, headers: NO_STORE_HEADERS });
+      }
+
+      for (const workItem of (workItemsRaw ?? []) as DbWorkItem[]) {
+        workItemMap.set(String(workItem.id), workItem);
+      }
+    }
+
     // ✅ 3) Group items by batch
     const itemsByBatch = new Map<string, any[]>();
     for (const it of items) {
       const bid = String(it.batch_id);
+      const workItem = workItemMap.get(String(it.work_item_id));
+      const sourceAssignmentId =
+        typeof workItem?.review?.assignmentId === "string"
+          ? workItem.review.assignmentId
+          : typeof workItem?.review?.assignment_id === "string"
+            ? workItem.review.assignment_id
+            : undefined;
       const arr = itemsByBatch.get(bid) ?? [];
       arr.push({
         id: String(it.id),
         workItemId: it.work_item_id,
+        workItemPublicId: workItem?.public_id ?? undefined,
         workerId: it.worker_id,
         handle: it.handle,
         amountINR: Number(it.amount_inr ?? 0),
         status: it.status,
         reason: it.reason ?? undefined,
+        sourceAssignmentId,
       });
       itemsByBatch.set(bid, arr);
     }

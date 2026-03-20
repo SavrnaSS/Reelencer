@@ -70,6 +70,28 @@ type WorkerMetrics = {
   };
 };
 
+type WorkerPayoutBatch = {
+  id: string;
+  status: string;
+  paidAt?: string;
+  processedAt?: string;
+  items?: Array<{
+    id: string;
+    workItemId: string;
+    sourceAssignmentId?: string;
+    amountINR?: number;
+    status: string;
+  }>;
+};
+
+type CredentialPayoutState =
+  | { stage: "idle"; headline: string; detail: string }
+  | { stage: "pending"; headline: string; detail: string }
+  | { stage: "approved"; headline: string; detail: string }
+  | { stage: "crediting"; headline: string; detail: string; paidAt?: string }
+  | { stage: "paid"; headline: string; detail: string; paidAt?: string }
+  | { stage: "blocked"; headline: string; detail: string };
+
 type CredentialRow = {
   handle: string;
   email: string;
@@ -454,6 +476,11 @@ function ProceedPageInner() {
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
   const [displayName, setDisplayName] = useState("User");
   const [workerMetrics, setWorkerMetrics] = useState<WorkerMetrics | null>(null);
+  const [credentialPayoutState, setCredentialPayoutState] = useState<CredentialPayoutState>({
+    stage: "idle",
+    headline: "Awaiting review",
+    detail: "Submit the credential package to start the verification and payout workflow.",
+  });
 
   const [inbox, setInbox] = useState<any[]>([]);
   const [polling, setPolling] = useState(false);
@@ -525,6 +552,100 @@ function ProceedPageInner() {
       setRefreshing(false);
     }
   }, [assignment?.id, refreshInbox]);
+
+  useEffect(() => {
+    if (!assignment?.id) {
+      setCredentialPayoutState({
+        stage: "idle",
+        headline: "Awaiting review",
+        detail: "Submit the credential package to start the verification and payout workflow.",
+      });
+      return;
+    }
+
+    if (assignment.status === "Rejected") {
+      setCredentialPayoutState({
+        stage: "blocked",
+        headline: "Payout remains on hold",
+        detail: "This submission needs correction before any funds can be released.",
+      });
+      return;
+    }
+
+    if (assignment.status === "Submitted" || assignment.status === "Pending") {
+      setCredentialPayoutState({
+        stage: "pending",
+        headline: "Awaiting admin verification",
+        detail: "Your package is under review. Funds stay protected until verification is complete.",
+      });
+      return;
+    }
+
+    if (assignment.status !== "Accepted" || !session?.workerId) {
+      setCredentialPayoutState({
+        stage: "approved",
+        headline: "Approved. Funds will be credited shortly.",
+        detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
+      });
+      return;
+    }
+
+    let alive = true;
+    const workerId = session.workerId;
+
+    const loadPayoutState = async () => {
+      try {
+        const res = await fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        const data = res.ok ? await res.json() : [];
+        if (!alive) return;
+        const batches = Array.isArray(data) ? (data as WorkerPayoutBatch[]) : [];
+        const matched = batches
+          .flatMap((batch) => (batch.items ?? []).map((item) => ({ batch, item })))
+          .find(({ item }) => item.sourceAssignmentId === assignment.id);
+
+        if (!matched) {
+          setCredentialPayoutState({
+            stage: "approved",
+            headline: "Approved. Funds will be credited shortly.",
+            detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
+          });
+          return;
+        }
+
+        if (matched.item.status === "Paid" || matched.batch.status === "Paid" || matched.batch.paidAt) {
+          setCredentialPayoutState({
+            stage: "paid",
+            headline: "Funds released successfully",
+            detail: "The approved amount has been released to your payout wallet and is reflected in your ledger.",
+            paidAt: matched.batch.paidAt,
+          });
+          return;
+        }
+
+        setCredentialPayoutState({
+          stage: "crediting",
+          headline: "Amount will be credited shortly",
+          detail: "Admin has initiated the payout release. Settlement is in progress and should appear in your wallet shortly.",
+          paidAt: matched.batch.processedAt,
+        });
+      } catch {
+        if (!alive) return;
+        setCredentialPayoutState({
+          stage: "approved",
+          headline: "Approved. Funds will be credited shortly.",
+          detail: "Admin verification is complete. Your payout is approved and will move into your wallet workflow shortly.",
+        });
+      }
+    };
+
+    void loadPayoutState();
+    return () => {
+      alive = false;
+    };
+  }, [assignment?.id, assignment?.status, session?.workerId]);
 
   useEffect(() => {
     const s = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
@@ -1207,6 +1328,14 @@ function ProceedPageInner() {
         : assignmentStatus === "Pending"
           ? "pending"
           : "submitted";
+  const payoutCheckpointLabel =
+    credentialReviewTone === "approved"
+      ? credentialPayoutState.headline
+      : credentialReviewTone === "rejected"
+        ? "Submission requires correction before approval."
+        : credentialReviewTone === "pending"
+          ? "Awaiting final reviewer decision."
+          : "Admin verifies handles, assigned emails, and login validity.";
   const showCredentialReviewState = credentialSubmissionLocked || success === CREDENTIAL_SUCCESS_MESSAGE;
   const credentialSubmittedAt = assignment?.submittedAt ? new Date(assignment.submittedAt).toLocaleString() : null;
   const credentialReviewBanner = showCredentialReviewState ? (
@@ -1237,7 +1366,9 @@ function ProceedPageInner() {
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#6f8578]">Review status</div>
             <div className="mt-1 text-[1.05rem] font-semibold sm:text-[1.2rem] text-[#214d3f]">
               {credentialReviewTone === "approved"
-                ? "Approved by admin"
+                ? credentialPayoutState.stage === "paid"
+                  ? "Approved and released"
+                  : "Approved by admin"
                 : credentialReviewTone === "rejected"
                   ? "Returned for correction"
                   : credentialReviewTone === "pending"
@@ -1246,7 +1377,7 @@ function ProceedPageInner() {
             </div>
             <div className="mt-1 max-w-[44rem] text-sm leading-6 text-[#567062]">
               {credentialReviewTone === "approved"
-                ? "Your account pack has passed admin verification. The gig amount is now eligible to appear in your approved earnings balance."
+                ? credentialPayoutState.detail
                 : credentialReviewTone === "rejected"
                   ? "Admin reviewed the submission and sent it back for correction. Update the credential pack once the revision instructions are available."
                   : credentialReviewTone === "pending"
@@ -1267,13 +1398,25 @@ function ProceedPageInner() {
               }`}
             >
               {credentialReviewTone === "approved"
-                ? "Approved"
+                ? credentialPayoutState.stage === "paid"
+                  ? "Released"
+                  : credentialPayoutState.stage === "crediting"
+                    ? "Crediting"
+                    : "Approved"
                 : credentialReviewTone === "rejected"
                   ? "Revision required"
                   : credentialReviewTone === "pending"
                     ? "Pending"
                     : "Awaiting approval"}
             </span>
+            {credentialReviewTone === "approved" && (
+              <Link
+                href="/payouts"
+                className="rounded-full border border-[#d8e4db] bg-white px-3 py-1.5 text-xs font-semibold text-[#305847] transition hover:border-[#bdd5c7] hover:bg-[#f7fbf8]"
+              >
+                View payouts
+              </Link>
+            )}
             {credentialSubmittedAt && (
               <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-medium text-[#5f746a]">
                 Submitted {credentialSubmittedAt}
@@ -1286,15 +1429,7 @@ function ProceedPageInner() {
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
           <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Current checkpoint</div>
-            <div className="mt-1 text-sm font-semibold text-[#274537]">
-              {credentialReviewTone === "approved"
-                ? "Verification completed and approved."
-                : credentialReviewTone === "rejected"
-                  ? "Submission requires correction before approval."
-                  : credentialReviewTone === "pending"
-                    ? "Awaiting final reviewer decision."
-                    : "Admin verifies handles, assigned emails, and login validity."}
-            </div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">{payoutCheckpointLabel}</div>
           </div>
           <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">
@@ -1302,7 +1437,11 @@ function ProceedPageInner() {
             </div>
             <div className="mt-1 text-sm font-semibold text-[#274537]">
               {credentialReviewTone === "approved"
-                ? "The gig amount is now released into your approved earnings workflow."
+                ? credentialPayoutState.stage === "paid"
+                  ? "Funds have been released to your payout ledger."
+                  : credentialPayoutState.stage === "crediting"
+                    ? "The release has started and settlement should complete shortly."
+                    : "The amount is approved and queued for release into your payout ledger."
                 : credentialReviewTone === "rejected"
                   ? "No payout is released until the corrected submission is approved."
                   : credentialReviewTone === "pending"
@@ -1339,7 +1478,15 @@ function ProceedPageInner() {
         <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout state</div>
           <div className="mt-1 text-lg font-semibold text-[#25473b]">{gig?.payout ?? "—"}</div>
-          <div className="mt-1 text-xs leading-5 text-[#617166]">Credits after admin approval.</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">
+            {credentialReviewTone === "approved"
+              ? credentialPayoutState.stage === "paid"
+                ? "Released to your payout ledger."
+                : credentialPayoutState.stage === "crediting"
+                  ? "Settlement initiated. Amount will be credited shortly."
+                  : "Approved and queued for wallet release."
+              : "Credits after admin approval."}
+          </div>
         </div>
         <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Visibility</div>
@@ -1352,7 +1499,9 @@ function ProceedPageInner() {
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">Review summary</div>
           <div className="mt-2 text-[1.02rem] font-semibold text-[#274537]">
             {credentialReviewTone === "approved"
-              ? "Submission verified and closed by admin"
+              ? credentialPayoutState.stage === "paid"
+                ? "Submission verified and payout released"
+                : "Submission verified and queued for settlement"
               : credentialReviewTone === "rejected"
                 ? "Submission reviewed and sent back for correction"
                 : credentialReviewTone === "pending"
@@ -1361,7 +1510,9 @@ function ProceedPageInner() {
           </div>
           <div className="mt-2 text-sm leading-6 text-[#617166]">
             {credentialReviewTone === "approved"
-              ? "Your credential package has cleared review. This project now remains in a completed managed state and no live execution blocks are shown again."
+              ? credentialPayoutState.stage === "paid"
+                ? "Your credential package has cleared review and the approved amount has already been released. This project remains archived as a completed managed assignment."
+                : "Your credential package has cleared review. The assignment is now in managed settlement and the approved amount will be credited shortly."
               : credentialReviewTone === "rejected"
                 ? "The credential package did not pass review. This project stays in a managed review state until the next approved submission is delivered."
                 : credentialReviewTone === "pending"
@@ -1371,7 +1522,13 @@ function ProceedPageInner() {
           <div className="mt-4 rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Worker experience</div>
             <div className="mt-1 text-sm font-semibold text-[#274537]">
-              {credentialReviewTone === "rejected" ? "Wait for revision guidance before acting." : "No further action is needed right now."}
+              {credentialReviewTone === "rejected"
+                ? "Wait for revision guidance before acting."
+                : credentialReviewTone === "approved"
+                  ? credentialPayoutState.stage === "paid"
+                    ? "No action is needed. Funds have been released."
+                    : "No action is needed. Crediting will complete shortly."
+                  : "No further action is needed right now."}
             </div>
             <div className="mt-1 text-xs leading-5 text-[#617166]">
               This page will continue reflecting the latest review state without showing your submitted credentials again.
@@ -1399,7 +1556,11 @@ function ProceedPageInner() {
               <div className="text-sm font-semibold text-[#274537]">3. Earnings release</div>
               <div className="mt-1 text-xs leading-5 text-[#617166]">
                 {credentialReviewTone === "approved"
-                  ? "Approved submissions move the gig amount into your approved earnings balance."
+                  ? credentialPayoutState.stage === "paid"
+                    ? "The approved amount has already been released to your payout ledger."
+                    : credentialPayoutState.stage === "crediting"
+                      ? "The payout release is in flight. The amount should appear shortly."
+                      : "Admin approval is complete. The amount is queued for release to your payout ledger."
                   : credentialReviewTone === "rejected"
                     ? "Earnings stay blocked until a corrected submission is approved."
                     : "Approved submissions move the gig amount into your approved earnings balance."}

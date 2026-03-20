@@ -63,6 +63,12 @@ type Assignment = {
   decidedAt?: string;
 };
 
+type AssignmentActionResult = {
+  fundsReleased?: boolean;
+  payoutBatchId?: string;
+  payoutStatus?: string;
+};
+
 type CredentialSubmission = {
   id: string;
   handle: string;
@@ -319,6 +325,8 @@ export default function GigAdminConsole({
   const [assignmentsRefreshing, setAssignmentsRefreshing] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const [lastSeenSubmittedAt, setLastSeenSubmittedAt] = useState<string | null>(null);
+  const [assignmentActionId, setAssignmentActionId] = useState<string | null>(null);
+  const [assignmentNotice, setAssignmentNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [kycRows, setKycRows] = useState<KycRow[]>([]);
   const [kycLoading, setKycLoading] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
@@ -911,17 +919,62 @@ export default function GigAdminConsole({
     await persistApplicationReview(app, review, status);
   };
 
-  const updateAssignment = async (assignment: Assignment, status: string) => {
+  const updateAssignment = async (
+    assignment: Assignment,
+    status: string,
+    options?: { releaseFundsNow?: boolean }
+  ): Promise<AssignmentActionResult | null> => {
     const decidedAt = new Date().toISOString();
+    setAssignmentActionId(assignment.id);
+    setAssignmentNotice(null);
     setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? { ...a, status, decidedAt } : a)));
     try {
-      await fetch("/api/gig-assignments", {
+      const res = await fetch("/api/gig-assignments", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: assignment.id, updates: { status, decidedAt } }),
+        body: JSON.stringify({ id: assignment.id, updates: { status, decidedAt, releaseFundsNow: !!options?.releaseFundsNow } }),
       });
-    } catch {
-      // ignore
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || "Unable to update submission.");
+      }
+      const nextAssignment = payload
+        ? {
+            ...assignment,
+            status: payload.status ?? status,
+            decidedAt: payload.decidedAt ?? decidedAt,
+          }
+        : { ...assignment, status, decidedAt };
+      setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? nextAssignment : a)));
+      setSelectedAssignment((prev) => (prev?.id === assignment.id ? nextAssignment : prev));
+      setAssignmentNotice({
+        tone: "success",
+        text:
+          status === "Accepted" && options?.releaseFundsNow
+            ? payload?.fundsReleased
+              ? "Submission approved and funds released to the worker payout ledger."
+              : "Submission approved. Release is being prepared."
+            : status === "Accepted"
+              ? "Submission approved. Earnings are now ready for payout release."
+              : status === "Pending"
+                ? "Submission kept in managed review."
+                : "Submission returned for correction.",
+      });
+      return payload;
+    } catch (err: any) {
+      setAssignments((prev) => prev.map((a) => (a.id === assignment.id ? assignment : a)));
+      setSelectedAssignment((prev) => (prev?.id === assignment.id ? assignment : prev));
+      setAssignmentNotice({
+        tone: "danger",
+        text:
+          err?.message ||
+          (status === "Accepted" && options?.releaseFundsNow
+            ? "Approval saved failed or payout release is blocked. Check the worker payout method."
+            : "Unable to update the submission right now."),
+      });
+      return null;
+    } finally {
+      setAssignmentActionId((prev) => (prev === assignment.id ? null : prev));
     }
   };
 
@@ -2059,6 +2112,17 @@ export default function GigAdminConsole({
             </div>
 
             <div className="mt-4 space-y-3">
+              {assignmentNotice && (
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
+                    assignmentNotice.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {assignmentNotice.text}
+                </div>
+              )}
               {filteredAssignments.length === 0 && (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-xs text-slate-500">
                   No submissions yet.
@@ -2121,20 +2185,30 @@ export default function GigAdminConsole({
                       {loadingCredsId === assignment.id ? "Loading..." : "Preview"}
                     </button>
                     <button
-                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 disabled:opacity-60"
                       onClick={() => updateAssignment(assignment, "Accepted")}
+                      disabled={assignmentActionId === assignment.id}
                     >
-                      Accept
+                      {assignmentActionId === assignment.id ? "Saving..." : "Approve only"}
                     </button>
                     <button
-                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700"
+                      className="rounded-full border border-[#25473b] bg-[#25473b] px-3 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                      onClick={() => updateAssignment(assignment, "Accepted", { releaseFundsNow: true })}
+                      disabled={assignmentActionId === assignment.id}
+                    >
+                      {assignmentActionId === assignment.id ? "Releasing..." : "Approve & release funds"}
+                    </button>
+                    <button
+                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 disabled:opacity-60"
                       onClick={() => updateAssignment(assignment, "Pending")}
+                      disabled={assignmentActionId === assignment.id}
                     >
                       Keep pending
                     </button>
                     <button
-                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700"
+                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700 disabled:opacity-60"
                       onClick={() => updateAssignment(assignment, "Rejected")}
+                      disabled={assignmentActionId === assignment.id}
                     >
                       Reject
                     </button>
