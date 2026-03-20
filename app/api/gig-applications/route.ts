@@ -28,6 +28,13 @@ type ProposalPayload = {
   reviewedAt?: string;
 };
 
+type NotificationContext = {
+  recipient: string;
+  gigTitle: string;
+  company: string;
+  proceedUrl: string;
+};
+
 function encodeWorkerName(workerName?: string | null, proposal?: ProposalPayload | null) {
   const cleanName = String(workerName ?? "").trim();
   if (!proposal) return cleanName || null;
@@ -81,6 +88,130 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
     auth: { user, pass },
   });
   await transporter.sendMail({ from, to, subject, html });
+}
+
+function appBaseUrl() {
+  const raw = String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://reelencer.com").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderMailLayout({
+  eyebrow,
+  title,
+  intro,
+  sections,
+  ctaLabel,
+  ctaHref,
+}: {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  sections?: Array<{ label: string; value: string }>;
+  ctaLabel: string;
+  ctaHref: string;
+}) {
+  const sectionHtml = (sections ?? [])
+    .filter((section) => section.value.trim())
+    .map(
+      (section) => `
+        <tr>
+          <td style="padding:0 0 14px 0;">
+            <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7b8f84;font-weight:700;">${escapeHtml(section.label)}</div>
+            <div style="margin-top:6px;font-size:15px;line-height:1.6;color:#2f4b3f;">${escapeHtml(section.value)}</div>
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <div style="margin:0;padding:32px 16px;background:#eef4ea;font-family:Inter,Segoe UI,Arial,sans-serif;color:#1f352c;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;border-collapse:collapse;">
+        <tr>
+          <td style="padding:0;">
+            <div style="border:1px solid #d4dccf;border-radius:28px;background:#ffffff;overflow:hidden;box-shadow:0 18px 48px rgba(35,69,56,0.08);">
+              <div style="padding:28px 28px 18px;background:linear-gradient(180deg,#f8faf7 0%,#edf5ef 100%);border-bottom:1px solid #dfe8dc;">
+                <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#6f877d;font-weight:800;">${escapeHtml(eyebrow)}</div>
+                <div style="margin-top:10px;font-size:30px;line-height:1.15;font-weight:800;color:#1d3f33;">${escapeHtml(title)}</div>
+                <div style="margin-top:12px;font-size:16px;line-height:1.7;color:#496257;">${escapeHtml(intro)}</div>
+              </div>
+              <div style="padding:26px 28px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  ${sectionHtml}
+                  <tr>
+                    <td style="padding-top:8px;">
+                      <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#1f4f43;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;">${escapeHtml(ctaLabel)}</a>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+              <div style="padding:18px 28px 26px;font-size:13px;line-height:1.7;color:#71887c;border-top:1px solid #edf3eb;background:#fbfdfb;">
+                This update was sent by Reelencer Operations. You can continue the full workflow from your registered dashboard.
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, row: any): Promise<{ to: string | null; context: NotificationContext | null }> {
+  const workerCode = String(row?.worker_code ?? "");
+  const gigId = String(row?.gig_id ?? "");
+  const [{ data: worker }, { data: gig }] = await Promise.all([
+    sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
+    sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
+  ]);
+
+  const profile = worker?.user_id
+    ? await sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
+    : { data: null as any };
+  const to = String(profile.data?.email ?? worker?.email ?? "").trim() || null;
+  if (!to) return { to: null, context: null };
+
+  return {
+    to,
+    context: {
+      recipient: String(profile.data?.display_name ?? worker?.name ?? "there"),
+      gigTitle: String(gig?.title ?? "your project"),
+      company: String(gig?.company ?? "Reelencer"),
+      proceedUrl: `${appBaseUrl()}/proceed?gigId=${encodeURIComponent(gigId)}`,
+    },
+  };
+}
+
+async function sendLifecycleNotification(
+  to: string | null,
+  context: NotificationContext | null,
+  config: {
+    eyebrow: string;
+    title: string;
+    intro: string;
+    sections?: Array<{ label: string; value: string }>;
+    ctaLabel?: string;
+  }
+) {
+  if (!to || !context) return;
+  const subject = `${config.eyebrow}: ${context.gigTitle}`;
+  const html = renderMailLayout({
+    eyebrow: config.eyebrow,
+    title: config.title,
+    intro: config.intro,
+    sections: config.sections,
+    ctaLabel: config.ctaLabel ?? "Open project panel",
+    ctaHref: context.proceedUrl,
+  });
+  await sendDecisionEmail(to, subject, html);
 }
 
 export async function GET(req: Request) {
@@ -140,18 +271,36 @@ export async function POST(req: Request) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
     }
-    return NextResponse.json(
-      {
-        ...(decodeWorkerName(data.worker_name)),
-        id: String(data.id),
-        gigId: String(data.gig_id),
-        workerId: String(data.worker_code),
-        status: data.status,
-        appliedAt: data.applied_at,
-        decidedAt: data.decided_at ?? undefined,
-      },
-      { headers: NO_STORE_HEADERS }
-    );
+    const responsePayload = {
+      ...(decodeWorkerName(data.worker_name)),
+      id: String(data.id),
+      gigId: String(data.gig_id),
+      workerId: String(data.worker_code),
+      status: data.status,
+      appliedAt: data.applied_at,
+      decidedAt: data.decided_at ?? undefined,
+    };
+
+    try {
+      const decoded = decodeWorkerName(data.worker_name);
+      if (decoded.proposal) {
+        const { to, context } = await resolveNotificationContext(sb, data);
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "Proposal Submitted",
+          title: "Your proposal has been received",
+          intro: `Your proposal for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} is now queued for recruiter review.`,
+          sections: [
+            { label: "Current stage", value: "Recruiter review is pending. Updates will be published in your project panel and sent by email when the workflow advances." },
+            { label: "Next step", value: "Wait for recruiter guidance, onboarding instructions, or a final decision." },
+          ],
+          ctaLabel: "Track proposal status",
+        });
+      }
+    } catch {
+      // optional notification only
+    }
+
+    return NextResponse.json(responsePayload, { headers: NO_STORE_HEADERS });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Invalid payload" }, { status: 400, headers: NO_STORE_HEADERS });
   }
@@ -188,48 +337,93 @@ export async function PATCH(req: Request) {
     if (!data) {
       return NextResponse.json({ error: "Application not found" }, { status: 404, headers: NO_STORE_HEADERS });
     }
+    const nextDecoded = decodeWorkerName(data.worker_name);
+    const prevDecoded = decodeWorkerName(prevRow?.worker_name);
+    const nextProposal = nextDecoded.proposal ?? {};
+    const prevProposal = prevDecoded.proposal ?? {};
     const nextStatus = String(data.status ?? "");
     const prevStatus = String(prevRow?.status ?? "");
-    const isFinalDecision = (nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus;
-    if (isFinalDecision) {
-      try {
-        const workerCode = String(data.worker_code ?? "");
-        const gigId = String(data.gig_id ?? "");
-        const [{ data: worker }, { data: gig }] = await Promise.all([
-          sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
-          sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
-        ]);
-        const profile = worker?.user_id
-          ? await sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
-          : { data: null };
-        const to = String(profile.data?.email ?? worker?.email ?? "").trim();
-        if (to) {
-          const recipient = profile.data?.display_name || worker?.name || "there";
-          const gigTitle = String(gig?.title ?? "your project");
-          const company = String(gig?.company ?? "Reelencer");
-          const subject =
+    const proposalStatusChanged = String(nextProposal.reviewStatus ?? "") !== String(prevProposal.reviewStatus ?? "");
+    const whatsappLinkAdded = !!nextProposal.whatsappLink?.trim() && nextProposal.whatsappLink !== prevProposal.whatsappLink;
+    const onboardingChanged = !!nextProposal.onboardingSteps?.trim() && nextProposal.onboardingSteps !== prevProposal.onboardingSteps;
+    const groupConfirmedNow = !!nextProposal.groupJoinedConfirmed && !prevProposal.groupJoinedConfirmed;
+    const recruiterNoteChanged =
+      nextProposal.adminNote !== prevProposal.adminNote || nextProposal.adminExplanation !== prevProposal.adminExplanation;
+
+    try {
+      const { to, context } = await resolveNotificationContext(sb, data);
+      if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "Proposal Approved",
+          title: "Recruiter approved your proposal",
+          intro: `Your proposal for ${context?.gigTitle ?? "this role"} has been approved and moved into onboarding.`,
+          sections: [
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Approval confirmed. Continue to the next onboarding checkpoint." },
+            { label: "Next steps", value: String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() || "Open your project panel to review the onboarding workflow and recruiter instructions." },
+          ],
+          ctaLabel: "Open onboarding panel",
+        });
+      } else if (proposalStatusChanged && nextProposal.reviewStatus === "Rejected") {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "Proposal Update",
+          title: "Your proposal needs revision",
+          intro: `Recruiter review for ${context?.gigTitle ?? "this role"} has completed and changes are required before the next round.`,
+          sections: [
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Review the latest notes in your project panel." },
+            { label: "Guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Submit a stronger revision after addressing the current feedback." },
+          ],
+          ctaLabel: "Review feedback",
+        });
+      } else if (whatsappLinkAdded || onboardingChanged || recruiterNoteChanged) {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "Recruiter Workflow Update",
+          title: "Your onboarding instructions were updated",
+          intro: `New recruiter guidance is available for ${context?.gigTitle ?? "your application"}.`,
+          sections: [
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
+            { label: "Next steps", value: String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() },
+            { label: "WhatsApp invite", value: whatsappLinkAdded ? "A WhatsApp onboarding link has been issued in your project panel." : "" },
+          ],
+          ctaLabel: "View latest instructions",
+        });
+      } else if (groupConfirmedNow) {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "Onboarding Confirmed",
+          title: "Group join confirmation recorded",
+          intro: `Your onboarding confirmation for ${context?.gigTitle ?? "this role"} has been recorded successfully.`,
+          sections: [
+            { label: "Current stage", value: "Recruiter final review remains in progress. You will be notified once the final decision is published." },
+            { label: "Confirmed at", value: String(nextProposal.groupJoinedConfirmedAt ?? "").trim() },
+          ],
+          ctaLabel: "Track final review",
+        });
+      } else if ((nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus) {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: nextStatus === "Accepted" ? "Application Approved" : "Application Update",
+          title: nextStatus === "Accepted" ? "Final approval confirmed" : "Application closed",
+          intro:
             nextStatus === "Accepted"
-              ? `Offer Update: ${gigTitle} Approved`
-              : `Proposal Update: ${gigTitle}`;
-          const html =
-            nextStatus === "Accepted"
-              ? `<p>Hi ${recipient},</p>
-                 <p>Congratulations. Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been approved.</p>
-                 <p>Your offer is now active. Continue in your workspace/proceed panel to complete onboarding handoff and begin execution.</p>
-                 <p>Regards,<br/>Reelencer Operations Team</p>`
-              : `<p>Hi ${recipient},</p>
-                 <p>Your proposal for <b>${gigTitle}</b> at <b>${company}</b> has been reviewed and requires revision before the next round.</p>
-                 <p>Please review the latest notes in your proceed panel and submit an improved update.</p>
-                 <p>Regards,<br/>Reelencer Operations Team</p>`;
-          await sendDecisionEmail(to, subject, html);
-        }
-      } catch {
-        // optional notification only
+              ? `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has cleared final review.`
+              : `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has been closed after review.`,
+          sections: [
+            {
+              label: "Summary",
+              value:
+                nextStatus === "Accepted"
+                  ? "Continue in your project or workspace panel to begin execution and follow any remaining handoff steps."
+                  : "Review the final notes in your project panel for recruiter context and any next actions.",
+            },
+          ],
+          ctaLabel: nextStatus === "Accepted" ? "Continue workflow" : "Open project panel",
+        });
       }
+    } catch {
+      // optional notification only
     }
+
     return NextResponse.json(
       {
-        ...(decodeWorkerName(data.worker_name)),
+        ...nextDecoded,
         id: String(data.id),
         gigId: String(data.gig_id),
         workerId: String(data.worker_code),
