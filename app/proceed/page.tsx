@@ -1195,23 +1195,84 @@ function ProceedPageInner() {
       : [];
     return list.map((e) => e.trim().toLowerCase()).filter(Boolean);
   }, [assignment?.assignedEmails, assignment?.assignedEmail]);
-  const credentialSubmissionLocked = assignmentStatus === "Submitted";
+  const hasCredentialSubmission = Boolean(
+    assignment?.submittedAt || ["Submitted", "Accepted", "Rejected", "Pending"].includes(assignmentStatus)
+  );
+  const credentialSubmissionLocked = hasCredentialSubmission;
+  const credentialReviewTone =
+    assignmentStatus === "Accepted"
+      ? "approved"
+      : assignmentStatus === "Rejected"
+        ? "rejected"
+        : assignmentStatus === "Pending"
+          ? "pending"
+          : "submitted";
   const showCredentialReviewState = credentialSubmissionLocked || success === CREDENTIAL_SUCCESS_MESSAGE;
   const credentialSubmittedAt = assignment?.submittedAt ? new Date(assignment.submittedAt).toLocaleString() : null;
   const credentialReviewBanner = showCredentialReviewState ? (
-    <div className="mt-4 overflow-hidden rounded-[1.25rem] border border-emerald-200 bg-[linear-gradient(180deg,#f7fcf8,#eef7f1)] shadow-[0_14px_32px_rgba(52,93,74,0.08)]">
-      <div className="border-b border-emerald-100 px-4 py-4 sm:px-5">
+    <div
+      className={`mt-4 overflow-hidden rounded-[1.25rem] shadow-[0_14px_32px_rgba(52,93,74,0.08)] ${
+        credentialReviewTone === "approved"
+          ? "border border-emerald-200 bg-[linear-gradient(180deg,#f5fcf7,#edf8f1)]"
+          : credentialReviewTone === "rejected"
+            ? "border border-rose-200 bg-[linear-gradient(180deg,#fff8f8,#fff1f1)]"
+            : credentialReviewTone === "pending"
+              ? "border border-amber-200 bg-[linear-gradient(180deg,#fffaf1,#fff5df)]"
+              : "border border-emerald-200 bg-[linear-gradient(180deg,#f7fcf8,#eef7f1)]"
+      }`}
+    >
+      <div
+        className={`px-4 py-4 sm:px-5 ${
+          credentialReviewTone === "approved"
+            ? "border-b border-emerald-100"
+            : credentialReviewTone === "rejected"
+              ? "border-b border-rose-100"
+              : credentialReviewTone === "pending"
+                ? "border-b border-amber-100"
+                : "border-b border-emerald-100"
+        }`}
+      >
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#6f8578]">Review status</div>
-            <div className="mt-1 text-[1.05rem] font-semibold text-[#214d3f] sm:text-[1.2rem]">Submitted for admin approval</div>
+            <div className="mt-1 text-[1.05rem] font-semibold sm:text-[1.2rem] text-[#214d3f]">
+              {credentialReviewTone === "approved"
+                ? "Approved by admin"
+                : credentialReviewTone === "rejected"
+                  ? "Returned for correction"
+                  : credentialReviewTone === "pending"
+                    ? "Held in pending review"
+                    : "Submitted for admin approval"}
+            </div>
             <div className="mt-1 max-w-[44rem] text-sm leading-6 text-[#567062]">
-              Your account pack has been delivered for verification. Payment for this gig is released only after admin approves the submitted accounts.
+              {credentialReviewTone === "approved"
+                ? "Your account pack has passed admin verification. The gig amount is now eligible to appear in your approved earnings balance."
+                : credentialReviewTone === "rejected"
+                  ? "Admin reviewed the submission and sent it back for correction. Update the credential pack once the revision instructions are available."
+                  : credentialReviewTone === "pending"
+                    ? "Your account pack is still under manual review. Final approval is pending before any payout is released."
+                    : "Your account pack has been delivered for verification. Payment for this gig is released only after admin approves the submitted accounts."}
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700">
-              Awaiting approval
+            <span
+              className={`rounded-full bg-white px-3 py-1.5 text-xs font-semibold ${
+                credentialReviewTone === "approved"
+                  ? "border border-emerald-200 text-emerald-700"
+                  : credentialReviewTone === "rejected"
+                    ? "border border-rose-200 text-rose-700"
+                    : credentialReviewTone === "pending"
+                      ? "border border-amber-200 text-amber-700"
+                      : "border border-emerald-200 text-emerald-700"
+              }`}
+            >
+              {credentialReviewTone === "approved"
+                ? "Approved"
+                : credentialReviewTone === "rejected"
+                  ? "Revision required"
+                  : credentialReviewTone === "pending"
+                    ? "Pending"
+                    : "Awaiting approval"}
             </span>
             {credentialSubmittedAt && (
               <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-medium text-[#5f746a]">
@@ -1225,11 +1286,29 @@ function ProceedPageInner() {
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
           <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Current checkpoint</div>
-            <div className="mt-1 text-sm font-semibold text-[#274537]">Admin verifies handles, assigned emails, and login validity.</div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">
+              {credentialReviewTone === "approved"
+                ? "Verification completed and approved."
+                : credentialReviewTone === "rejected"
+                  ? "Submission requires correction before approval."
+                  : credentialReviewTone === "pending"
+                    ? "Awaiting final reviewer decision."
+                    : "Admin verifies handles, assigned emails, and login validity."}
+            </div>
           </div>
           <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout release</div>
-            <div className="mt-1 text-sm font-semibold text-[#274537]">Once approved, the gig amount moves into your approved earnings ledger.</div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">
+              {credentialReviewTone === "approved" ? "Earnings result" : "Payout release"}
+            </div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">
+              {credentialReviewTone === "approved"
+                ? "The gig amount is now released into your approved earnings workflow."
+                : credentialReviewTone === "rejected"
+                  ? "No payout is released until the corrected submission is approved."
+                  : credentialReviewTone === "pending"
+                    ? "Payout stays on hold until admin finalizes this review."
+                    : "Once approved, the gig amount moves into your approved earnings ledger."}
+            </div>
           </div>
         </div>
       </div>
@@ -1241,8 +1320,16 @@ function ProceedPageInner() {
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Submission state</div>
-          <div className="mt-1 text-lg font-semibold text-[#25473b]">Locked</div>
-          <div className="mt-1 text-xs leading-5 text-[#617166]">Workspace execution blocks are now hidden.</div>
+          <div className="mt-1 text-lg font-semibold text-[#25473b]">
+            {credentialReviewTone === "approved" ? "Completed" : credentialReviewTone === "rejected" ? "Needs update" : "Locked"}
+          </div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">
+            {credentialReviewTone === "approved"
+              ? "Verification is complete and the workspace stays archived."
+              : credentialReviewTone === "rejected"
+                ? "Execution blocks stay hidden until the review issue is resolved."
+                : "Workspace execution blocks are now hidden."}
+          </div>
         </div>
         <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Package size</div>
@@ -1263,14 +1350,32 @@ function ProceedPageInner() {
       <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(300px,0.95fr)]">
         <div className="rounded-[1.2rem] border border-[#d8e4db] bg-white px-4 py-4 sm:px-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">Review summary</div>
-          <div className="mt-2 text-[1.02rem] font-semibold text-[#274537]">Submission locked and forwarded to admin verification</div>
+          <div className="mt-2 text-[1.02rem] font-semibold text-[#274537]">
+            {credentialReviewTone === "approved"
+              ? "Submission verified and closed by admin"
+              : credentialReviewTone === "rejected"
+                ? "Submission reviewed and sent back for correction"
+                : credentialReviewTone === "pending"
+                  ? "Submission locked and waiting for final reviewer action"
+                  : "Submission locked and forwarded to admin verification"}
+          </div>
           <div className="mt-2 text-sm leading-6 text-[#617166]">
-            Your credential package is now sealed. The review team is validating the assigned emails, account access, and compliance quality before releasing payout.
+            {credentialReviewTone === "approved"
+              ? "Your credential package has cleared review. This project now remains in a completed managed state and no live execution blocks are shown again."
+              : credentialReviewTone === "rejected"
+                ? "The credential package did not pass review. This project stays in a managed review state until the next approved submission is delivered."
+                : credentialReviewTone === "pending"
+                  ? "The credential package is sealed while the review team finalizes the decision and payout eligibility."
+                  : "Your credential package is now sealed. The review team is validating the assigned emails, account access, and compliance quality before releasing payout."}
           </div>
           <div className="mt-4 rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-3.5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Worker experience</div>
-            <div className="mt-1 text-sm font-semibold text-[#274537]">No further action is needed right now.</div>
-            <div className="mt-1 text-xs leading-5 text-[#617166]">This page will continue reflecting the latest review state without showing your submitted credentials again.</div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">
+              {credentialReviewTone === "rejected" ? "Wait for revision guidance before acting." : "No further action is needed right now."}
+            </div>
+            <div className="mt-1 text-xs leading-5 text-[#617166]">
+              This page will continue reflecting the latest review state without showing your submitted credentials again.
+            </div>
           </div>
         </div>
         <div className="rounded-[1.2rem] border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4 sm:px-5">
@@ -1282,11 +1387,23 @@ function ProceedPageInner() {
             </div>
             <div className="rounded-xl border border-[#d8e4db] bg-white px-3.5 py-3">
               <div className="text-sm font-semibold text-[#274537]">2. Status decision</div>
-              <div className="mt-1 text-xs leading-5 text-[#617166]">This panel updates once the submission is approved or returned for correction.</div>
+              <div className="mt-1 text-xs leading-5 text-[#617166]">
+                {credentialReviewTone === "approved"
+                  ? "The submission has already been approved and closed."
+                  : credentialReviewTone === "rejected"
+                    ? "The submission has been returned for correction."
+                    : "This panel updates once the submission is approved or returned for correction."}
+              </div>
             </div>
             <div className="rounded-xl border border-[#d8e4db] bg-white px-3.5 py-3">
               <div className="text-sm font-semibold text-[#274537]">3. Earnings release</div>
-              <div className="mt-1 text-xs leading-5 text-[#617166]">Approved submissions move the gig amount into your approved earnings balance.</div>
+              <div className="mt-1 text-xs leading-5 text-[#617166]">
+                {credentialReviewTone === "approved"
+                  ? "Approved submissions move the gig amount into your approved earnings balance."
+                  : credentialReviewTone === "rejected"
+                    ? "Earnings stay blocked until a corrected submission is approved."
+                    : "Approved submissions move the gig amount into your approved earnings balance."}
+              </div>
             </div>
           </div>
         </div>
