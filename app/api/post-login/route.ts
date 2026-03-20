@@ -51,7 +51,7 @@ export async function POST(req: Request) {
 
     if (profErr) return NextResponse.json({ error: profErr.message }, { status: 500 });
 
-    const redirectTo = isAdminRole(prof.role) ? "/admin" : "/";
+    const redirectTo = isAdminRole(prof.role) ? "/admin" : "/browse";
 
     return NextResponse.json({
       ok: true,
