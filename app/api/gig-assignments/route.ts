@@ -20,6 +20,8 @@ function buildApprovalWorkItemId(assignmentId: string) {
   return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
 }
 
+const APPROVAL_WORK_ITEM_TYPE = "Reel posting";
+
 async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, workerCode: string) {
   if (!workerCode.startsWith("WKR-")) return workerCode;
   const { data } = await sb.from("profiles").select("id").eq("worker_code", workerCode).maybeSingle();
@@ -58,47 +60,18 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
         ? "Hard rejected"
         : "Needs fix";
   const completedAt = resolvedStatus === "Approved" || resolvedStatus === "Hard rejected" ? now : null;
-
-  const existing = await sb.from("work_items").select("id").eq("public_id", publicId).maybeSingle();
-  if (existing.data?.id) {
-    let update = await sb
-      .from("work_items")
-      .update({
-        title,
-        worker_id: assignment.worker_code,
-        account_id: assignment.id,
-        status: resolvedStatus,
-        reward_inr: rewardInr,
-        completed_at: completedAt,
-        due_at: now,
-      })
-      .eq("id", existing.data.id);
-    if (update.error) {
-      update = await sb
-        .from("work_items")
-        .update({
-          title,
-          worker_id: assignment.worker_code,
-          accountId: assignment.id,
-          status: resolvedStatus,
-          rewardINR: rewardInr,
-          completedAt,
-          dueAt: now,
-        })
-        .eq("id", existing.data.id);
-    }
-    return update.error ? update.error.message : null;
-  }
-
-  if (status !== "Accepted") {
-    return null;
-  }
-
-  let insert = await sb.from("work_items").insert({
+  const baseWorkItemPayload = {
+    title,
+    worker_id: assignment.worker_code,
+    status: resolvedStatus,
+    reward_inr: rewardInr,
+    completed_at: completedAt,
+    due_at: now,
+  };
+  const createWorkItemPayload = {
     public_id: publicId,
     title,
-    type: "Credential Submission",
-    account_id: assignment.id,
+    type: APPROVAL_WORK_ITEM_TYPE,
     worker_id: assignment.worker_code,
     created_at: now,
     due_at: now,
@@ -114,29 +87,33 @@ async function syncApprovalEarnings(sb: ReturnType<typeof supabaseAdmin>, assign
       payoutType: (gig as any).payout_type ?? null,
       autoApprovedAt: now,
     },
+  };
+
+  const existing = await sb.from("work_items").select("id").eq("public_id", publicId).maybeSingle();
+  if (existing.data?.id) {
+    let update = await sb
+      .from("work_items")
+      .update({
+        ...baseWorkItemPayload,
+        account_id: assignment.id,
+      })
+      .eq("id", existing.data.id);
+    if (update.error && String(update.error.message || "").includes("account_id")) {
+      update = await sb.from("work_items").update(baseWorkItemPayload).eq("id", existing.data.id);
+    }
+    return update.error ? update.error.message : null;
+  }
+
+  if (status !== "Accepted") {
+    return null;
+  }
+
+  let insert = await sb.from("work_items").insert({
+    ...createWorkItemPayload,
+    account_id: assignment.id,
   });
-  if (insert.error) {
-    insert = await sb.from("work_items").insert({
-      public_id: publicId,
-      title,
-      type: "Credential Submission",
-      accountId: assignment.id,
-      worker_id: assignment.worker_code,
-      createdAt: now,
-      dueAt: now,
-      completedAt: now,
-      status: "Approved",
-      priority: "P2",
-      rewardINR: rewardInr,
-      estMinutes: 5,
-      slaMinutes: 5,
-      review: {
-        source: "gig_assignment_approval",
-        assignmentId,
-        payoutType: (gig as any).payout_type ?? null,
-        autoApprovedAt: now,
-      },
-    });
+  if (insert.error && String(insert.error.message || "").includes("account_id")) {
+    insert = await sb.from("work_items").insert(createWorkItemPayload);
   }
 
   return insert.error ? insert.error.message : null;
