@@ -7,6 +7,19 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
+function parsePayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function buildApprovalWorkItemId(assignmentId: string) {
+  const compact = String(assignmentId ?? "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return `GIGCRED-${compact.slice(0, 18) || "ITEM"}`;
+}
+
 async function resolveWorkerAliases(workerId: string) {
   const sb = supabaseAdmin();
   const aliases = new Set<string>([workerId].filter(Boolean));
@@ -35,18 +48,76 @@ export async function GET(req: Request) {
 
   const { data, error } = await supabaseAdmin()
     .from("work_items")
-    .select("status,reward_inr,started_at,completed_at,due_at,sla_minutes")
+    .select("public_id,status,reward_inr,started_at,completed_at,due_at,sla_minutes,review")
     .or(workerAliases.map((id) => `worker_id.eq.${id}`).join(","));
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
 
   const items = data ?? [];
-  const approved = items.filter((x) => x.status === "Approved");
-  const submitted = items.filter((x) => x.status === "Submitted");
-  const inProg = items.filter((x) => x.status === "In progress");
+  const operationalItems = items.filter((x: any) => String(x?.review?.source ?? "") !== "gig_assignment_approval");
+  const approved = operationalItems.filter((x) => x.status === "Approved");
+  const submitted = operationalItems.filter((x) => x.status === "Submitted");
+  const inProg = operationalItems.filter((x) => x.status === "In progress");
 
-  const earnings = approved.reduce((s, x) => s + (x.reward_inr ?? 0), 0);
-  const pending = submitted.reduce((s, x) => s + (x.reward_inr ?? 0), 0);
+  const workerCodeAliases = workerAliases.filter((id) => id.startsWith("WKR-"));
+  const credentialAssignmentsRes = workerCodeAliases.length
+    ? await supabaseAdmin()
+        .from("gig_assignments")
+        .select("id,gig_id,status")
+        .in("worker_code", workerCodeAliases)
+    : { data: [], error: null as any };
+  if (credentialAssignmentsRes.error) {
+    return NextResponse.json({ error: credentialAssignmentsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
+  }
+
+  const credentialAssignments = credentialAssignmentsRes.data ?? [];
+  const credentialGigIds = Array.from(new Set(credentialAssignments.map((row: any) => String(row.gig_id)).filter(Boolean)));
+  const credentialGigsRes = credentialGigIds.length
+    ? await supabaseAdmin().from("gigs").select("id,payout").in("id", credentialGigIds)
+    : { data: [], error: null as any };
+  if (credentialGigsRes.error) {
+    return NextResponse.json({ error: credentialGigsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
+  }
+  const payoutByGigId = new Map<string, number>(
+    (credentialGigsRes.data ?? []).map((gig: any) => [String(gig.id), parsePayoutAmount(gig.payout)])
+  );
+
+  const credentialPublicIds = credentialAssignments.map((row: any) => buildApprovalWorkItemId(String(row.id)));
+  const credentialWorkItemsRes = credentialPublicIds.length
+    ? await supabaseAdmin().from("work_items").select("public_id,status").in("public_id", credentialPublicIds)
+    : { data: [], error: null as any };
+  if (credentialWorkItemsRes.error) {
+    return NextResponse.json({ error: credentialWorkItemsRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
+  }
+  const credentialWorkItemByPublicId = new Map<string, { status?: string }>(
+    (credentialWorkItemsRes.data ?? []).map((row: any) => [String(row.public_id), row])
+  );
+
+  let credentialApprovedCount = 0;
+  let credentialSubmittedCount = 0;
+  let credentialApprovedEarnings = 0;
+  let credentialPendingEarnings = 0;
+  for (const assignment of credentialAssignments) {
+    const publicId = buildApprovalWorkItemId(String((assignment as any).id));
+    const workItem = credentialWorkItemByPublicId.get(publicId);
+    const amount = payoutByGigId.get(String((assignment as any).gig_id)) ?? 0;
+    const workStatus = String(workItem?.status ?? "");
+    if (workStatus === "Approved") {
+      credentialApprovedCount += 1;
+      credentialApprovedEarnings += amount;
+      continue;
+    }
+    if (
+      ["Submitted", "Accepted", "Pending"].includes(String((assignment as any).status ?? "")) ||
+      workStatus === "Submitted"
+    ) {
+      credentialSubmittedCount += 1;
+      credentialPendingEarnings += amount;
+    }
+  }
+
+  const earnings = approved.reduce((s, x) => s + (x.reward_inr ?? 0), 0) + credentialApprovedEarnings;
+  const pending = submitted.reduce((s, x) => s + (x.reward_inr ?? 0), 0) + credentialPendingEarnings;
 
   // SLA: count breaches where started_at exists and duration > sla_minutes
   let slaBreaches = 0;
@@ -64,9 +135,9 @@ export async function GET(req: Request) {
 
   return NextResponse.json({
     counts: {
-      total: items.length,
-      approved: approved.length,
-      submitted: submitted.length,
+      total: operationalItems.length + credentialAssignments.length,
+      approved: approved.length + credentialApprovedCount,
+      submitted: submitted.length + credentialSubmittedCount,
       inProgress: inProg.length,
     },
     money: { earnings, pending },
