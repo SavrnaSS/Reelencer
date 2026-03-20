@@ -79,6 +79,13 @@ type CredentialRow = {
 
 const CREDENTIAL_SUCCESS_MESSAGE = "Credentials submitted. Admin review is now in progress.";
 
+function maskSensitiveLabel(value: string, lead = 2, tail = 1) {
+  const clean = String(value ?? "").trim();
+  if (!clean) return "Hidden";
+  if (clean.length <= lead + tail) return `${clean.slice(0, 1)}•••`;
+  return `${clean.slice(0, lead)}•••${clean.slice(-tail)}`;
+}
+
 function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -1203,6 +1210,64 @@ function ProceedPageInner() {
         </div>
       </div>
       {credentialSubmittedAt && <div className="mt-3 text-xs text-[#6d7d73]">Submitted at {credentialSubmittedAt}</div>}
+    </div>
+  ) : null;
+  const credentialReceiptPanel = credentialSubmissionLocked ? (
+    <div className="mt-4 rounded-[1.2rem] border border-[#d8e4db] bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">Secure handoff receipt</div>
+          <div className="mt-1 text-base font-semibold text-[#25473b]">Credential package sealed for review</div>
+          <div className="mt-1 text-sm leading-6 text-[#617166]">
+            Sensitive fields are now hidden from the workspace. Admin can continue verification from the credential review desk.
+          </div>
+        </div>
+        <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-semibold text-[#355548]">
+          5 accounts received
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)]">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {rows.map((row, idx) => {
+            const emailValue = row.email.trim() || assignedList[idx] || assignment?.assignedEmails?.[idx] || assignment?.assignedEmail || "";
+            return (
+              <div key={`${idx}-${emailValue}`} className="rounded-2xl border border-[#d8e4db] bg-[linear-gradient(180deg,#fcfefd,#f7fbf7)] px-3 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#839186]">Account {idx + 1}</div>
+                  <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                    Received
+                  </span>
+                </div>
+                <div className="mt-2 text-sm font-semibold text-[#2c3038]">{emailValue || "Assigned email"}</div>
+                <div className="mt-2 text-xs leading-5 text-[#6b7770]">
+                  Handle: {maskSensitiveLabel(row.handle, 2, 1)}
+                  <br />
+                  Password: Hidden after secure submission
+                  <br />
+                  Phone: {row.phone.trim() ? "Included" : "Not provided"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#809184]">Operations note</div>
+          <div className="mt-2 text-sm leading-6 text-[#52655b]">
+            The review team checks email-to-account mapping, handle validity, credential access, and compliance quality before releasing earnings.
+          </div>
+          <div className="mt-4 grid gap-2">
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
+              <span className="font-semibold text-[#274537]">Visibility:</span> Worker inputs are hidden after submission.
+            </div>
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
+              <span className="font-semibold text-[#274537]">Release rule:</span> Earnings are credited only after admin approval.
+            </div>
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
+              <span className="font-semibold text-[#274537]">Next update:</span> Track status here or from the payouts ledger.
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   ) : null;
 
@@ -2391,48 +2456,52 @@ function ProceedPageInner() {
                           </span>
                         </div>
 
-                        <div className="mt-4 grid gap-3">
-                          {rows.map((row, idx) => (
-                            <div key={idx} className="grid gap-3 rounded-2xl border border-[#d8e4db] bg-white p-4 shadow-sm md:grid-cols-4">
-                              <input
-                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
-                                placeholder={`@handle ${idx + 1}`}
-                                value={row.handle}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, handle: value } : r)));
-                                }}
-                              />
-                              <input
-                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
-                                placeholder="Email used"
-                                value={row.email}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, email: value } : r)));
-                                }}
-                              />
-                              <input
-                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
-                                placeholder="Password"
-                                value={row.password}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, password: value } : r)));
-                                }}
-                              />
-                              <input
-                                className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
-                                placeholder="Phone (optional)"
-                                value={row.phone}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, phone: value } : r)));
-                                }}
-                              />
-                            </div>
-                          ))}
-                        </div>
+                        {credentialSubmissionLocked ? (
+                          credentialReceiptPanel
+                        ) : (
+                          <div className="mt-4 grid gap-3">
+                            {rows.map((row, idx) => (
+                              <div key={idx} className="grid gap-3 rounded-2xl border border-[#d8e4db] bg-white p-4 shadow-sm md:grid-cols-4">
+                                <input
+                                  className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                  placeholder={`@handle ${idx + 1}`}
+                                  value={row.handle}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, handle: value } : r)));
+                                  }}
+                                />
+                                <input
+                                  className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                  placeholder="Email used"
+                                  value={row.email}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, email: value } : r)));
+                                  }}
+                                />
+                                <input
+                                  className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                  placeholder="Password"
+                                  value={row.password}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, password: value } : r)));
+                                  }}
+                                />
+                                <input
+                                  className="rounded-xl border border-[#d8e4db] bg-[#fcfdfc] px-3 py-3 text-sm text-slate-900"
+                                  placeholder="Phone (optional)"
+                                  value={row.phone}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, phone: value } : r)));
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {credentialReviewBanner}
 
@@ -3598,48 +3667,52 @@ function ProceedPageInner() {
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">Required: 5</span>
           </div>
 
-          <div className="mt-5 grid gap-3">
-            {rows.map((row, idx) => (
-              <div key={idx} className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
-                <input
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  placeholder={`@handle ${idx + 1}`}
-                  value={row.handle}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, handle: value } : r)));
-                  }}
-                />
-                <input
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  placeholder="Email used"
-                  value={row.email}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, email: value } : r)));
-                  }}
-                />
-                <input
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  placeholder="Password"
-                  value={row.password}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, password: value } : r)));
-                  }}
-                />
-                <input
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  placeholder="Phone (optional)"
-                  value={row.phone}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, phone: value } : r)));
-                  }}
-                />
-              </div>
-            ))}
-          </div>
+          {credentialSubmissionLocked ? (
+            credentialReceiptPanel
+          ) : (
+            <div className="mt-5 grid gap-3">
+              {rows.map((row, idx) => (
+                <div key={idx} className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-4">
+                  <input
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder={`@handle ${idx + 1}`}
+                    value={row.handle}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, handle: value } : r)));
+                    }}
+                  />
+                  <input
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder="Email used"
+                    value={row.email}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, email: value } : r)));
+                    }}
+                  />
+                  <input
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder="Password"
+                    value={row.password}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, password: value } : r)));
+                    }}
+                  />
+                  <input
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                    placeholder="Phone (optional)"
+                    value={row.phone}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, phone: value } : r)));
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
 
           {error && (
             <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
