@@ -969,8 +969,8 @@ function ProceedPageInner() {
   }, [projectMeta.kyc_required]);
   const shouldBlockForKyc = session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
   const marketplaceProfileLabel = useMemo(
-    () => String(session?.workerId ?? session?.role ?? "Account").trim() || "Account",
-    [session?.role, session?.workerId]
+    () => String(displayName || session?.workerId || session?.role || "Account").trim() || "Account",
+    [displayName, session?.role, session?.workerId]
   );
   const marketplaceProfileInitial = marketplaceProfileLabel.charAt(0).toUpperCase() || "A";
 
