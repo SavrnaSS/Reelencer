@@ -121,6 +121,17 @@ type PayoutBatch = {
   notes: string[];
 };
 
+type GigAssignment = {
+  gigId?: string;
+  status?: string;
+  earningsReleaseStatus?: "none" | "queued" | "credited" | "blocked";
+};
+
+type GigSummary = {
+  id: string;
+  payout?: string | null;
+};
+
 type WorkerProfile = {
   id: string;
   userId?: string;
@@ -289,6 +300,44 @@ function isCredentialWalletItem(item: Pick<WorkItem, "review" | "id">) {
   return (
     String(item.review?.source ?? "") === "gig_assignment_approval" ||
     String(item.id ?? "").startsWith("GIGCRED-")
+  );
+}
+
+function parsePayoutAmount(raw: unknown) {
+  const text = String(raw ?? "").trim();
+  if (!text) return 0;
+  const normalized = text.replace(/[, ]+/g, "");
+  const match = normalized.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function summarizeCredentialWallet(assignments: GigAssignment[], gigs: GigSummary[]) {
+  const payoutByGigId = new Map<string, number>(
+    gigs.map((gig) => [String(gig.id), parsePayoutAmount(gig.payout)])
+  );
+
+  return assignments.reduce(
+    (totals, assignment) => {
+      const amount = payoutByGigId.get(String(assignment.gigId ?? "")) ?? 0;
+      if (!amount) return totals;
+
+      if (assignment.earningsReleaseStatus === "credited") {
+        totals.approvedCount += 1;
+        totals.earnings += amount;
+        return totals;
+      }
+
+      if (
+        assignment.earningsReleaseStatus === "queued" ||
+        ["Submitted", "Accepted", "Pending"].includes(String(assignment.status ?? ""))
+      ) {
+        totals.pendingCount += 1;
+        totals.pending += amount;
+      }
+
+      return totals;
+    },
+    { approvedCount: 0, pendingCount: 0, earnings: 0, pending: 0 }
   );
 }
 
@@ -700,6 +749,7 @@ export default function MarketplaceWorkerPage() {
   const [allItems, setAllItems] = useState<WorkItem[]>([]);
   const [upi, setUpi] = useState<UpiConfig>(DEFAULT_UPI);
   const [payoutBatches, setPayoutBatches] = useState<PayoutBatch[]>([]);
+  const [credentialWallet, setCredentialWallet] = useState({ approvedCount: 0, pendingCount: 0, earnings: 0, pending: 0 });
   const [apiLoaded, setApiLoaded] = useState(false);
 
   // UI state (stable hooks)
@@ -1032,12 +1082,14 @@ export default function MarketplaceWorkerPage() {
     setLoading(true);
     setLoadError("");
 
-    const [rWorkers, rAccounts, rItems, rPayouts, rUpi] = await Promise.all([
+    const [rWorkers, rAccounts, rItems, rPayouts, rUpi, rAssignments, rGigs] = await Promise.all([
       fetchJSON<WorkerProfile[] | null | undefined>(`/api/workers`, { method: "GET" }),
       fetchJSON<AssignedAccount[] | null | undefined>(`/api/accounts`, { method: "GET" }),
       fetchJSON<WorkItem[] | null | undefined>(`/api/workitems?workerId=${encodeURIComponent(effectiveWorkerId)}&scope=all`, { method: "GET" }),
       fetchJSON<PayoutBatch[] | null | undefined>(`/api/payoutbatches?workerId=${encodeURIComponent(effectiveWorkerId)}`, { method: "GET" }),
       fetchJSON<UpiConfig | null | undefined>(`/api/upi?workerId=${encodeURIComponent(effectiveWorkerId)}`, { method: "GET" }),
+      fetchJSON<GigAssignment[] | null | undefined>(`/api/gig-assignments?workerId=${encodeURIComponent(effectiveWorkerId)}`, { method: "GET" }),
+      fetchJSON<GigSummary[] | null | undefined>(`/api/gigs`, { method: "GET" }),
     ]);
 
     let anyOk = false;
@@ -1098,6 +1150,14 @@ export default function MarketplaceWorkerPage() {
         setUpi(safe);
         writeLS(LS_KEYS.UPI, safe);
       }
+    }
+
+    if (rAssignments.ok && rGigs.ok) {
+      const safeAssignments = toArray<GigAssignment>(rAssignments.data, []);
+      const safeGigs = toArray<GigSummary>(rGigs.data, []);
+      setCredentialWallet(summarizeCredentialWallet(safeAssignments, safeGigs));
+    } else {
+      setCredentialWallet({ approvedCount: 0, pendingCount: 0, earnings: 0, pending: 0 });
     }
 
     if (!anyOk) {
@@ -1308,22 +1368,31 @@ export default function MarketplaceWorkerPage() {
     [allItems, effectiveWorkerId, me?.userId, assignedAccountIds]
   );
 
+  const operationalKpiScope = useMemo(
+    () => kpiScope.filter((x) => !isCredentialWalletItem(x)),
+    [kpiScope]
+  );
+
   const kpis = useMemo(() => {
     const open = activeItems.filter((x) => x.status === "Open").length;
     const inProg = activeItems.filter((x) => x.status === "In progress").length;
     const needsFix = activeItems.filter((x) => x.status === "Needs fix").length;
-    const submitted = kpiScope.filter((x) => x.status === "Submitted").length;
+    const submitted = operationalKpiScope.filter((x) => x.status === "Submitted").length + credentialWallet.pendingCount;
     const hardRejected = kpiScope.filter((x) => x.status === "Hard rejected").length;
-    const approved = kpiScope.filter((x) => x.status === "Approved").length;
-    const earnings = kpiScope.filter((x) => x.status === "Approved").reduce((s, x) => s + x.rewardINR, 0);
-    const pending = kpiScope.filter((x) => x.status === "Submitted").reduce((s, x) => s + x.rewardINR, 0);
+    const approved = operationalKpiScope.filter((x) => x.status === "Approved").length + credentialWallet.approvedCount;
+    const earnings = operationalKpiScope.filter((x) => x.status === "Approved").reduce((s, x) => s + x.rewardINR, 0) + credentialWallet.earnings;
+    const pending = operationalKpiScope.filter((x) => x.status === "Submitted").reduce((s, x) => s + x.rewardINR, 0) + credentialWallet.pending;
     const count = kpiScope.length;
     return { open, inProg, submitted, needsFix, hardRejected, approved, earnings, pending, count };
-  }, [activeItems, kpiScope]);
+  }, [activeItems, credentialWallet, kpiScope.length, operationalKpiScope]);
 
   const completedCount = useMemo(() => {
-    return kpiScope.filter((x) => !!x.submission?.submittedAt || !!x.completedAt || x.status === "Approved" || x.status === "Hard rejected" || x.status === "Needs fix" || x.status === "Submitted").length;
-  }, [kpiScope]);
+    return (
+      operationalKpiScope.filter((x) => !!x.submission?.submittedAt || !!x.completedAt || x.status === "Approved" || x.status === "Hard rejected" || x.status === "Needs fix" || x.status === "Submitted").length +
+      credentialWallet.approvedCount +
+      credentialWallet.pendingCount
+    );
+  }, [credentialWallet.approvedCount, credentialWallet.pendingCount, operationalKpiScope]);
 
   const levelLabel = useMemo(() => {
     if (completedCount >= 1000) return "Skilled";
@@ -1371,7 +1440,7 @@ export default function MarketplaceWorkerPage() {
 
   /** ===================== Performance metrics (Worker) ===================== */
   const perf = useMemo(() => {
-    const scope = kpiScope;
+    const scope = operationalKpiScope;
     const started = scope.filter((x) => !!x.startedAt).length;
     const completed = scope.filter((x) => !!x.completedAt || x.status === "Approved" || x.status === "Submitted").length;
     const now = new Date();
@@ -1411,8 +1480,8 @@ export default function MarketplaceWorkerPage() {
     const dueEvaluated = scope.filter((x) => !!x.completedAt).length;
     const dueOnTimeRate = dueEvaluated > 0 ? Math.round((onTimeDueCount / dueEvaluated) * 100) : 0;
 
-    const earningsApproved = scope.filter((x) => x.status === "Approved").reduce((s, x) => s + x.rewardINR, 0);
-    const pendingSubmitted = scope.filter((x) => x.status === "Submitted").reduce((s, x) => s + x.rewardINR, 0);
+    const earningsApproved = scope.filter((x) => x.status === "Approved").reduce((s, x) => s + x.rewardINR, 0) + credentialWallet.earnings;
+    const pendingSubmitted = scope.filter((x) => x.status === "Submitted").reduce((s, x) => s + x.rewardINR, 0) + credentialWallet.pending;
     const hardRejects = scope.filter((x) => x.status === "Hard rejected").length;
     const needsFixCount = scope.filter((x) => x.status === "Needs fix").length;
     const approvedReels = scope.filter((x) => x.type === "Reel posting" && x.status === "Approved").length;
@@ -1434,7 +1503,7 @@ export default function MarketplaceWorkerPage() {
       approvedReels,
       completedReels: completedReels.length,
     };
-  }, [kpiScope, tick]);
+  }, [credentialWallet.earnings, credentialWallet.pending, operationalKpiScope, tick]);
 
   /** ===================== Actions (Worker-only) ===================== */
   const logAuditLocal = useCallback((id: string, by: string, text: string) => {
