@@ -1221,25 +1221,47 @@ function ProceedPageInner() {
     </div>
   ) : null;
   const credentialReceiptPanel = credentialSubmissionLocked ? (
-    <div className="mt-4 rounded-[1.2rem] border border-[#d8e4db] bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <div className="mt-4 rounded-[1.35rem] border border-[#d8e4db] bg-[linear-gradient(180deg,#ffffff,#f9fcf9)] p-4 shadow-[0_12px_34px_rgba(46,74,61,0.08)] sm:p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">Secure handoff receipt</div>
-          <div className="mt-1 text-base font-semibold text-[#25473b]">Credential package sealed for review</div>
-          <div className="mt-1 text-sm leading-6 text-[#617166]">
-            Sensitive fields are now hidden from the workspace. Admin can continue verification from the credential review desk.
+          <div className="mt-1 text-[1.05rem] font-semibold text-[#25473b] sm:text-[1.15rem]">Credential package sealed for review</div>
+          <div className="mt-1 max-w-[42rem] text-sm leading-6 text-[#617166]">
+            Sensitive fields are now hidden from the workspace. Admin can continue verification from the credential review desk while your payout status remains tracked here.
           </div>
         </div>
-        <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-semibold text-[#355548]">
-          5 accounts received
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700">
+            5 accounts received
+          </span>
+          <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-semibold text-[#355548]">
+            Review in progress
+          </span>
+        </div>
       </div>
-      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(260px,0.7fr)]">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Workspace access</div>
+          <div className="mt-1 text-sm font-semibold text-[#274537]">Inputs secured</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Raw credentials are no longer shown after submission.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Admin checkpoint</div>
+          <div className="mt-1 text-sm font-semibold text-[#274537]">Verification queue</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Handles, email mapping, and login quality are under review.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout trigger</div>
+          <div className="mt-1 text-sm font-semibold text-[#274537]">Approval-based release</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Earnings move to your approved balance only after admin approval.</div>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+        <div className="grid gap-3 sm:grid-cols-2">
           {rows.map((row, idx) => {
             const emailValue = row.email.trim() || assignedList[idx] || assignment?.assignedEmails?.[idx] || assignment?.assignedEmail || "";
             return (
-              <div key={`${idx}-${emailValue}`} className="rounded-2xl border border-[#d8e4db] bg-[linear-gradient(180deg,#fcfefd,#f7fbf7)] px-3 py-3">
+              <div key={`${idx}-${emailValue}`} className="rounded-2xl border border-[#d8e4db] bg-[linear-gradient(180deg,#fcfefd,#f7fbf7)] px-3.5 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.92)]">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#839186]">Account {idx + 1}</div>
                   <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
@@ -1247,31 +1269,41 @@ function ProceedPageInner() {
                   </span>
                 </div>
                 <div className="mt-2 text-sm font-semibold text-[#2c3038]">{emailValue || "Assigned email"}</div>
-                <div className="mt-2 text-xs leading-5 text-[#6b7770]">
-                  Handle: {maskSensitiveLabel(row.handle, 2, 1)}
-                  <br />
-                  Password: Hidden after secure submission
-                  <br />
-                  Phone: {row.phone.trim() ? "Included" : "Not provided"}
+                <div className="mt-3 grid gap-2 text-xs leading-5 text-[#6b7770]">
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e3ebe4] bg-white px-3 py-2">
+                    <span className="font-semibold text-[#6e7c73]">Handle</span>
+                    <span className="text-right font-medium text-[#2f473d]">{maskSensitiveLabel(row.handle, 2, 1)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e3ebe4] bg-white px-3 py-2">
+                    <span className="font-semibold text-[#6e7c73]">Password</span>
+                    <span className="text-right font-medium text-[#2f473d]">Hidden after secure submission</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e3ebe4] bg-white px-3 py-2">
+                    <span className="font-semibold text-[#6e7c73]">Phone</span>
+                    <span className="text-right font-medium text-[#2f473d]">{row.phone.trim() ? "Included" : "Not provided"}</span>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
-        <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4">
+        <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4 sm:px-5">
           <div className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#809184]">Operations note</div>
           <div className="mt-2 text-sm leading-6 text-[#52655b]">
             The review team checks email-to-account mapping, handle validity, credential access, and compliance quality before releasing earnings.
           </div>
-          <div className="mt-4 grid gap-2">
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
-              <span className="font-semibold text-[#274537]">Visibility:</span> Worker inputs are hidden after submission.
+          <div className="mt-4 space-y-2.5">
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3 text-sm text-[#355548]">
+              <div className="font-semibold text-[#274537]">Visibility</div>
+              <div className="mt-1 text-[#5d7066]">Worker inputs are hidden after submission.</div>
             </div>
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
-              <span className="font-semibold text-[#274537]">Release rule:</span> Earnings are credited only after admin approval.
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3 text-sm text-[#355548]">
+              <div className="font-semibold text-[#274537]">Release rule</div>
+              <div className="mt-1 text-[#5d7066]">Earnings are credited only after admin approval.</div>
             </div>
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-2.5 text-sm text-[#355548]">
-              <span className="font-semibold text-[#274537]">Next update:</span> Track status here or from the payouts ledger.
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3 text-sm text-[#355548]">
+              <div className="font-semibold text-[#274537]">Next update</div>
+              <div className="mt-1 text-[#5d7066]">Track status here or from the payouts ledger.</div>
             </div>
           </div>
         </div>
