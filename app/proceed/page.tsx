@@ -79,6 +79,19 @@ type CredentialRow = {
 
 const CREDENTIAL_SUCCESS_MESSAGE = "Credentials submitted. Admin review is now in progress.";
 
+function getProceedDisplayName(user: { email?: string | null; user_metadata?: { name?: string; full_name?: string } }) {
+  const explicitName = user.user_metadata?.name?.trim() || user.user_metadata?.full_name?.trim();
+  if (explicitName) return explicitName;
+
+  const email = user.email?.trim();
+  if (!email) return "User";
+
+  const local = email.split("@")[0]?.replace(/[._-]+/g, " ").trim();
+  if (!local) return "User";
+
+  return local.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function isWorkspaceGig(gig: Pick<Gig, "gigType" | "title">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -535,10 +548,9 @@ function ProceedPageInner() {
     (async () => {
       const { data } = await supabase.auth.getSession();
       const user = data.session?.user;
-      const explicit = user?.user_metadata?.name?.trim() || user?.user_metadata?.full_name?.trim();
-      const fallback = session?.workerId || "User";
+      const resolved = user ? getProceedDisplayName(user) : session?.workerId || "User";
       if (!alive) return;
-      setDisplayName(explicit || fallback);
+      setDisplayName(resolved);
     })();
     return () => {
       alive = false;
@@ -1187,72 +1199,92 @@ function ProceedPageInner() {
   const showCredentialReviewState = credentialSubmissionLocked || success === CREDENTIAL_SUCCESS_MESSAGE;
   const credentialSubmittedAt = assignment?.submittedAt ? new Date(assignment.submittedAt).toLocaleString() : null;
   const credentialReviewBanner = showCredentialReviewState ? (
-    <div className="mt-4 rounded-[1.15rem] border border-emerald-200 bg-[linear-gradient(180deg,#f4fbf6,#edf7f0)] px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.92)]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f8578]">Review status</div>
-          <div className="mt-1 text-[1rem] font-semibold text-[#214d3f]">Submitted for admin approval</div>
-          <div className="mt-1 text-sm leading-6 text-[#567062]">
-            Your account pack has been delivered for verification. Payment for this gig is released only after admin approves the submitted accounts.
+    <div className="mt-4 overflow-hidden rounded-[1.25rem] border border-emerald-200 bg-[linear-gradient(180deg,#f7fcf8,#eef7f1)] shadow-[0_14px_32px_rgba(52,93,74,0.08)]">
+      <div className="border-b border-emerald-100 px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#6f8578]">Review status</div>
+            <div className="mt-1 text-[1.05rem] font-semibold text-[#214d3f] sm:text-[1.2rem]">Submitted for admin approval</div>
+            <div className="mt-1 max-w-[44rem] text-sm leading-6 text-[#567062]">
+              Your account pack has been delivered for verification. Payment for this gig is released only after admin approves the submitted accounts.
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700">
+              Awaiting approval
+            </span>
+            {credentialSubmittedAt && (
+              <span className="rounded-full border border-[#d8e4db] bg-[#f8fbf8] px-3 py-1.5 text-xs font-medium text-[#5f746a]">
+                Submitted {credentialSubmittedAt}
+              </span>
+            )}
           </div>
         </div>
-        <span className="rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700">
-          Awaiting approval
-        </span>
       </div>
-      <div className="mt-3 grid gap-2 text-sm text-[#355548] sm:grid-cols-2">
-        <div className="rounded-2xl border border-[#d8e4db] bg-white px-3 py-2.5">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Next step</div>
-          <div className="mt-1">Admin verifies handles, assigned emails, and login validity.</div>
-        </div>
-        <div className="rounded-2xl border border-[#d8e4db] bg-white px-3 py-2.5">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout release</div>
-          <div className="mt-1">Once approved, the gig amount moves into your approved earnings ledger.</div>
+      <div className="px-4 py-4 sm:px-5">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(260px,0.9fr)]">
+          <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Current checkpoint</div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">Admin verifies handles, assigned emails, and login validity.</div>
+          </div>
+          <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout release</div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">Once approved, the gig amount moves into your approved earnings ledger.</div>
+          </div>
         </div>
       </div>
-      {credentialSubmittedAt && <div className="mt-3 text-xs text-[#6d7d73]">Submitted at {credentialSubmittedAt}</div>}
     </div>
   ) : null;
   const credentialReviewPanel = credentialSubmissionLocked ? (
-    <div className="mt-4 rounded-[1.4rem] border border-[#d8e4db] bg-[linear-gradient(180deg,#ffffff,#f7fbf8)] p-4 shadow-[0_14px_36px_rgba(42,74,60,0.08)] sm:p-5">
+    <div className="mt-4 rounded-[1.45rem] border border-[#d8e4db] bg-[linear-gradient(180deg,#ffffff,#f7fbf8)] p-4 shadow-[0_16px_38px_rgba(42,74,60,0.08)] sm:p-5">
       {credentialReviewBanner}
-      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-        <div className="rounded-[1.2rem] border border-[#d8e4db] bg-white px-4 py-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Submission state</div>
+          <div className="mt-1 text-lg font-semibold text-[#25473b]">Locked</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Workspace execution blocks are now hidden.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Package size</div>
+          <div className="mt-1 text-lg font-semibold text-[#25473b]">5 accounts</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Submission received and sealed.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout state</div>
+          <div className="mt-1 text-lg font-semibold text-[#25473b]">{gig?.payout ?? "—"}</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Credits after admin approval.</div>
+        </div>
+        <div className="rounded-2xl border border-[#d8e4db] bg-white px-4 py-3.5">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Visibility</div>
+          <div className="mt-1 text-lg font-semibold text-[#25473b]">Private</div>
+          <div className="mt-1 text-xs leading-5 text-[#617166]">Sensitive fields are removed from your feed.</div>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(300px,0.95fr)]">
+        <div className="rounded-[1.2rem] border border-[#d8e4db] bg-white px-4 py-4 sm:px-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">Review summary</div>
           <div className="mt-2 text-[1.02rem] font-semibold text-[#274537]">Submission locked and forwarded to admin verification</div>
           <div className="mt-2 text-sm leading-6 text-[#617166]">
-            Your credential package is now sealed. Workspace execution blocks are hidden while operations verifies the assigned emails, account access, and compliance quality.
+            Your credential package is now sealed. The review team is validating the assigned emails, account access, and compliance quality before releasing payout.
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-3 py-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Package size</div>
-              <div className="mt-1 text-base font-semibold text-[#25473b]">5 accounts</div>
-              <div className="mt-1 text-xs leading-5 text-[#617166]">Submission received and sealed.</div>
-            </div>
-            <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-3 py-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Visibility</div>
-              <div className="mt-1 text-base font-semibold text-[#25473b]">Hidden</div>
-              <div className="mt-1 text-xs leading-5 text-[#617166]">Sensitive fields are removed from your feed.</div>
-            </div>
-            <div className="rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-3 py-3">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Payout state</div>
-              <div className="mt-1 text-base font-semibold text-[#25473b]">{gig?.payout ?? "—"}</div>
-              <div className="mt-1 text-xs leading-5 text-[#617166]">Credits after admin approval.</div>
-            </div>
+          <div className="mt-4 rounded-2xl border border-[#d8e4db] bg-[#fbfdfb] px-4 py-3.5">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#809184]">Worker experience</div>
+            <div className="mt-1 text-sm font-semibold text-[#274537]">No further action is needed right now.</div>
+            <div className="mt-1 text-xs leading-5 text-[#617166]">This page will continue reflecting the latest review state without showing your submitted credentials again.</div>
           </div>
         </div>
-        <div className="rounded-[1.2rem] border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4">
+        <div className="rounded-[1.2rem] border border-[#d8e4db] bg-[#fbfdfb] px-4 py-4 sm:px-5">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7c8c82]">What happens next</div>
-          <div className="mt-3 space-y-2.5">
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3">
+          <div className="mt-3 grid gap-2.5">
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3.5 py-3">
               <div className="text-sm font-semibold text-[#274537]">1. Admin verification</div>
               <div className="mt-1 text-xs leading-5 text-[#617166]">The review team checks email mapping, account validity, and credential quality.</div>
             </div>
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3">
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3.5 py-3">
               <div className="text-sm font-semibold text-[#274537]">2. Status decision</div>
               <div className="mt-1 text-xs leading-5 text-[#617166]">This panel updates once the submission is approved or returned for correction.</div>
             </div>
-            <div className="rounded-xl border border-[#d8e4db] bg-white px-3 py-3">
+            <div className="rounded-xl border border-[#d8e4db] bg-white px-3.5 py-3">
               <div className="text-sm font-semibold text-[#274537]">3. Earnings release</div>
               <div className="mt-1 text-xs leading-5 text-[#617166]">Approved submissions move the gig amount into your approved earnings balance.</div>
             </div>
@@ -1598,45 +1630,50 @@ function ProceedPageInner() {
     return (
       <div className={`relative min-h-screen overflow-x-hidden ${showMarketplaceSkeleton ? "bg-[#fbfbfb] text-[#25272d]" : "bg-[#eef4ea] text-slate-900"}`}>
         {!showMarketplaceSkeleton && <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_42%)]" />}
-        <div className={`border-b ${showMarketplaceSkeleton ? "border-[#eceef2] bg-white" : "border-[#d4dccf] bg-[#f8faf7]"}`}>
-          <div className={`relative mx-auto flex w-full items-center justify-between px-5 py-6 ${showMarketplaceSkeleton ? "max-w-[1380px]" : "max-w-5xl"}`}>
-            <div>
-              <div className="text-lg font-semibold tracking-wide">{showMarketplaceSkeleton ? "Project" : "Submission"}</div>
-              <div className="text-xs text-slate-500">
-                {showMarketplaceSkeleton ? "Preparing project marketplace view..." : "Preparing your project workspace..."}
-              </div>
-            </div>
-          </div>
-        </div>
         {showMarketplaceSkeleton ? (
-          <main className="relative mx-auto w-full max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
+          <>
+            <header className="sticky top-0 z-30 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
+              <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-3 py-3 sm:px-6 lg:px-8">
+                <div className="flex items-center gap-3 sm:gap-4 lg:gap-8">
+                  <div className="hidden lg:block">
+                    <BrandMark />
+                  </div>
+                  <div className="lg:hidden">
+                    <BrandMark compact />
+                  </div>
+                </div>
+                <div className="h-12 w-[9.5rem] animate-pulse rounded-full border border-[#d8e0d4] bg-white shadow-sm sm:w-[11rem]" />
+              </div>
+            </header>
+            <main className="relative mx-auto w-full max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
             <div className="mb-4 animate-pulse border-b border-[#eceef2] pb-4 sm:mb-5 sm:pb-5">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
-                  <div className="h-4 w-3 rounded-full bg-[#eef1f4]" />
-                  <div className="h-4 w-16 rounded-full bg-[#eef1f4]" />
-                  <div className="h-4 w-3 rounded-full bg-[#eef1f4]" />
-                  <div className="h-8 w-52 rounded-full bg-[#f2f4f7]" />
+                  <div className="h-3 w-10 rounded-full bg-[#eef1f4]" />
+                  <div className="h-3 w-2 rounded-full bg-[#eef1f4]" />
+                  <div className="h-3 w-14 rounded-full bg-[#eef1f4]" />
+                  <div className="h-3 w-2 rounded-full bg-[#eef1f4]" />
+                  <div className="h-7 w-52 rounded-full bg-[#f2f4f7]" />
                 </div>
-                <div className="flex items-center gap-2 sm:gap-3">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                   <div className="h-10 w-10 rounded-full bg-[#eef1f4] sm:h-11 sm:w-11" />
                   <div className="h-10 w-10 rounded-full bg-[#eef1f4] sm:h-11 sm:w-11" />
-                  <div className="h-4 w-14 rounded-full bg-[#eef1f4]" />
-                  <div className="h-4 w-12 rounded-full bg-[#eef1f4]" />
-                  <div className="h-8 w-8 rounded-full bg-[#f6efe0]" />
+                  <div className="h-4 w-10 rounded-full bg-[#eef1f4]" />
+                  <div className="h-4 w-10 rounded-full bg-[#eef1f4]" />
+                  <div className="h-10 w-10 rounded-full bg-[#f6efe0]" />
                 </div>
               </div>
             </div>
             <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="space-y-4 sm:space-y-5">
                 <div className="animate-pulse rounded-[1.45rem] border border-[#f1dfd7] bg-[linear-gradient(135deg,#fff8f4,rgba(255,245,239,0.98))] p-4 shadow-sm sm:rounded-[1.7rem] sm:p-8">
-                  <div className="h-10 w-[86%] rounded-2xl bg-white/85 sm:h-14 lg:w-[78%]" />
-                  <div className="mt-3 h-10 w-[72%] rounded-2xl bg-white/75 sm:h-14 lg:w-[70%]" />
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    <div className="h-5 w-20 rounded-full bg-white/80" />
-                    <div className="h-5 w-24 rounded-full bg-white/80" />
-                    <div className="h-5 w-24 rounded-full bg-white/80" />
+                  <div className="h-4 w-24 rounded-full bg-white/80" />
+                  <div className="mt-5 h-14 w-full max-w-[38rem] rounded-[1.6rem] bg-white/90" />
+                  <div className="mt-3 h-14 w-4/5 rounded-[1.6rem] bg-white/75 lg:w-[70%]" />
+                  <div className="mt-7 flex flex-wrap gap-4">
+                    <div className="h-4 w-20 rounded-full bg-white/80" />
+                    <div className="h-4 w-24 rounded-full bg-white/80" />
+                    <div className="h-4 w-28 rounded-full bg-white/80" />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -1725,19 +1762,33 @@ function ProceedPageInner() {
                 </div>
               </aside>
             </div>
-          </main>
+            </main>
+          </>
         ) : (
-          <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
-            <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
-              <div className="h-4 w-24 rounded bg-[#e7efe8]" />
-              <div className="mt-4 h-8 w-2/3 rounded bg-[#e7efe8]" />
-              <div className="mt-3 h-4 w-1/2 rounded bg-[#e7efe8]" />
+          <>
+            <div className="border-b border-[#d4dccf] bg-[#f8faf7]">
+              <div className="relative mx-auto flex w-full max-w-5xl items-center justify-between px-5 py-6">
+                <div className="flex items-center gap-3">
+                  <BrandMark compact />
+                  <div>
+                    <div className="text-lg font-semibold tracking-wide">Submission</div>
+                    <div className="text-xs text-slate-500">Preparing your project workspace...</div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
-              <div className="h-5 w-48 rounded bg-[#e7efe8]" />
-              <div className="mt-4 h-32 rounded-2xl bg-[#eef4ef]" />
-            </div>
-          </main>
+            <main className="relative mx-auto w-full max-w-5xl space-y-6 px-5 py-8">
+              <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+                <div className="h-4 w-24 rounded bg-[#e7efe8]" />
+                <div className="mt-4 h-8 w-2/3 rounded bg-[#e7efe8]" />
+                <div className="mt-3 h-4 w-1/2 rounded bg-[#e7efe8]" />
+              </div>
+              <div className="animate-pulse rounded-3xl border border-[#cfdbc8] bg-white/80 p-6 shadow-sm">
+                <div className="h-5 w-48 rounded bg-[#e7efe8]" />
+                <div className="mt-4 h-32 rounded-2xl bg-[#eef4ef]" />
+              </div>
+            </main>
+          </>
         )}
       </div>
     );
