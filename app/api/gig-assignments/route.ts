@@ -6,6 +6,30 @@ const NO_STORE_HEADERS = {
   Pragma: "no-cache",
   Expires: "0",
 };
+const ASSIGNMENT_EMAIL_DOMAIN = "fasterdrop.site";
+const EMAIL_PREFIXES = ["studio", "desk", "ops", "team", "office", "mail", "crew", "admin", "support", "work", "hub", "unit"];
+const EMAIL_DESCRIPTORS = [
+  "north",
+  "atlas",
+  "prime",
+  "summit",
+  "harbor",
+  "signal",
+  "vector",
+  "cobalt",
+  "meridian",
+  "anchor",
+  "crest",
+  "field",
+  "circuit",
+  "ledger",
+  "pilot",
+  "central",
+  "orbit",
+  "forge",
+  "bridge",
+  "crown",
+];
 
 function parsePayoutAmount(raw: unknown) {
   const text = String(raw ?? "").trim();
@@ -48,6 +72,28 @@ function stripMissing(payload: Record<string, any>, msg?: string | null) {
   const next = { ...payload };
   delete next[col];
   return next;
+}
+
+function sanitizeAliasToken(raw: unknown, fallback: string) {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 14);
+  return cleaned || fallback;
+}
+
+function hashSeed(input: string) {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function pickBySeed<T>(items: T[], seed: number) {
+  return items[Math.abs(seed) % items.length];
 }
 
 async function resolveWorkerPayoutId(sb: ReturnType<typeof supabaseAdmin>, workerCode: string) {
@@ -329,17 +375,38 @@ async function releaseAssignmentFunds(sb: ReturnType<typeof supabaseAdmin>, assi
   };
 }
 
-function makeEmail(gigId: string, workerId: string) {
-  const short = `${gigId}-${workerId}`.replace(/[^a-zA-Z0-9]/g, "").slice(-10).toLowerCase();
-  return `gig-${short}-${Math.random().toString(36).slice(2, 6)}@fasterdrop.site`;
+function makeEmail(gigId: string, workerId: string, ordinal = 0, used = new Set<string>()) {
+  const gigToken = sanitizeAliasToken(gigId, "gig").replace(/^gig-?/, "") || "gig";
+  const workerToken = sanitizeAliasToken(workerId, "wrk").replace(/^wkr-?/, "") || "wrk";
+  const baseSeed = hashSeed(`${gigId}:${workerId}:${ordinal}`);
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const prefix = pickBySeed(EMAIL_PREFIXES, baseSeed + attempt);
+    const descriptor = pickBySeed(EMAIL_DESCRIPTORS, baseSeed * 7 + attempt * 3);
+    const suffix = String((baseSeed + attempt * 97) % 900 + 100);
+    const local = `${prefix}.${descriptor}.${gigToken.slice(0, 8)}.${workerToken.slice(0, 6)}.${suffix}`
+      .replace(/\.{2,}/g, ".")
+      .slice(0, 62);
+    const email = `${local}@${ASSIGNMENT_EMAIL_DOMAIN}`;
+    if (!used.has(email)) return email;
+  }
+
+  return `desk.${gigToken.slice(0, 8)}.${workerToken.slice(0, 6)}.${Date.now().toString().slice(-6)}@${ASSIGNMENT_EMAIL_DOMAIN}`;
 }
 
 function makeEmails(gigId: string, workerId: string, count: number, seed?: string) {
   const emails: string[] = [];
-  if (seed) emails.push(seed);
+  const used = new Set<string>();
+  if (seed) {
+    emails.push(seed);
+    used.add(seed);
+  }
   while (emails.length < count) {
-    const next = makeEmail(gigId, workerId);
-    if (!emails.includes(next)) emails.push(next);
+    const next = makeEmail(gigId, workerId, emails.length, used);
+    if (!used.has(next)) {
+      emails.push(next);
+      used.add(next);
+    }
   }
   return emails;
 }
