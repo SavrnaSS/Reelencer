@@ -2407,14 +2407,14 @@ function ProceedPageInner() {
                       {customMediaItems.map((url, idx) => (
                         <div key={`${url}-${idx}`} className="overflow-hidden rounded-xl border border-[#d4dfd7] bg-white">
                           {isImageUrl(url) ? (
-                            <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
+                            <div className="aspect-[9/11] w-full overflow-hidden bg-slate-100 sm:aspect-[4/5]">
                               <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
                             </div>
                           ) : isVideoUrl(url) ? (
-                            <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
-                              <video src={url} controls className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
+                            <div className="relative aspect-[9/11] w-full overflow-hidden bg-[#eef3ef] sm:aspect-[4/5]">
+                              <video src={url} controls playsInline className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
                               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                <div className="rounded-full border border-white/35 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+                                <div className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
                                   Tap to Play
                                 </div>
                               </div>
@@ -3254,7 +3254,7 @@ function ProceedPageInner() {
                         }`}
                       >
                         {isImageUrl(url) ? (
-                          <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
+                          <div className="relative aspect-[9/11] w-full overflow-hidden bg-[#eef3ef] sm:aspect-[4/5]">
                             <img
                               src={url}
                               alt={`Reference media ${idx + 1}`}
@@ -3264,10 +3264,10 @@ function ProceedPageInner() {
                             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/45 via-black/10 to-transparent" />
                           </div>
                         ) : isVideoUrl(url) ? (
-                          <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
-                            <video src={url} controls className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
+                          <div className="relative aspect-[9/11] w-full overflow-hidden bg-[#eef3ef] sm:aspect-[4/5]">
+                            <video src={url} controls playsInline className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
                             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                              <div className="rounded-full border border-white/35 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+                              <div className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
                                 Tap to Play
                               </div>
                             </div>
