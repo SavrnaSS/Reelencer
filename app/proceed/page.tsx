@@ -2411,8 +2411,14 @@ function ProceedPageInner() {
                               <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
                             </div>
                           ) : isVideoUrl(url) ? (
-                            <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
-                              <video src={url} controls className="h-full w-full bg-slate-100 object-cover" preload="metadata" />
+                            <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
+                              <video src={url} controls className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
+                              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                <div className="rounded-full border border-white/35 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+                                  Tap to Play
+                                </div>
+                              </div>
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/25 via-black/5 to-transparent" />
                             </div>
                           ) : (
                             <div className="p-3 text-xs text-[#4d665c]">
@@ -3228,26 +3234,76 @@ function ProceedPageInner() {
 
               {customMediaItems.length > 0 && (
                 <section className="space-y-3">
-                  <div className="text-[1.75rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Reference Media</div>
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-3 rounded-[1.6rem] border border-[#e7ece8] bg-[linear-gradient(180deg,#fbfdfb_0%,#f4f8f4_100%)] p-4 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-5">
+                    <div>
+                      <div className="text-[1.55rem] font-semibold tracking-tight text-[#24262d] sm:text-[2rem]">Reference Media</div>
+                      <div className="mt-1 max-w-2xl text-sm leading-6 text-[#5f6672]">
+                        Review the supplied examples before preparing your proposal. Open any asset to inspect framing, pacing, and visual direction.
+                      </div>
+                    </div>
+                    <div className="inline-flex self-start whitespace-nowrap rounded-full border border-[#d6e1d7] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#6f877d]">
+                      {customMediaItems.length} asset{customMediaItems.length === 1 ? "" : "s"}
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {customMediaItems.map((url, idx) => (
-                      <div key={`${url}-${idx}`} className="overflow-hidden rounded-2xl border border-[#eceef2] bg-white shadow-sm">
+                      <article
+                        key={`${url}-${idx}`}
+                        className={`group overflow-hidden rounded-[1.4rem] border border-[#e6ece8] bg-white shadow-[0_14px_34px_rgba(31,79,67,0.08)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(31,79,67,0.12)] sm:rounded-[1.7rem] ${
+                          customMediaItems.length === 1 ? "md:mx-auto md:w-full md:max-w-[34rem]" : ""
+                        }`}
+                      >
                         {isImageUrl(url) ? (
-                          <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
-                            <img src={url} alt={`Reference media ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                          <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
+                            <img
+                              src={url}
+                              alt={`Reference media ${idx + 1}`}
+                              className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                              loading="lazy"
+                            />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/45 via-black/10 to-transparent" />
                           </div>
                         ) : isVideoUrl(url) ? (
-                          <div className="aspect-[4/5] w-full overflow-hidden bg-slate-100">
-                            <video src={url} controls className="h-full w-full bg-slate-100 object-cover" preload="metadata" />
+                          <div className="relative aspect-[4/5] w-full overflow-hidden bg-[#eef3ef]">
+                            <video src={url} controls className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
+                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                              <div className="rounded-full border border-white/35 bg-black/20 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+                                Tap to Play
+                              </div>
+                            </div>
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
                           </div>
                         ) : (
-                          <div className="p-4 text-sm text-[#425952]">
-                            <a href={url} target="_blank" rel="noreferrer" className="font-semibold text-[#1f4f43] underline-offset-2 hover:underline">
-                              Open reference asset {idx + 1}
+                          <div className="flex aspect-[4/5] items-center justify-center bg-[linear-gradient(180deg,#f8faf8_0%,#f0f5f1_100%)] p-5 text-sm text-[#425952]">
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center justify-center rounded-full border border-[#c9d7ce] bg-white px-4 py-2 font-semibold text-[#1f4f43] transition hover:border-[#9fb7aa]"
+                            >
+                              Open reference asset
                             </a>
                           </div>
                         )}
-                      </div>
+                        <div className="border-t border-[#edf2ee] px-4 py-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="text-sm font-semibold text-[#23372f]">Reference Asset {idx + 1}</div>
+                              <div className="mt-1 text-xs uppercase tracking-[0.18em] text-[#74877d]">
+                                {isImageUrl(url) ? "Image reference" : isVideoUrl(url) ? "Video reference" : "External asset"}
+                              </div>
+                            </div>
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex min-h-10 items-center justify-center rounded-full border border-[#d3ddd6] bg-[#f8faf8] px-4 py-2 text-xs font-semibold text-[#27483c] transition hover:border-[#a8bcb1] hover:bg-white"
+                            >
+                              Open
+                            </a>
+                          </div>
+                        </div>
+                      </article>
                     ))}
                   </div>
                 </section>
