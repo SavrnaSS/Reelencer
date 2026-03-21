@@ -1766,7 +1766,9 @@ function ProceedPageInner() {
     if (projectFormIncomplete || customFormIncomplete) {
       setError(
         isProjectStyleFlow
-          ? "Please complete hourly price, estimated hours, and cover letter before submission."
+          ? isContentPostingFlow
+            ? "Please complete per post price, accounts you can manage, and cover letter before submission."
+            : "Please complete hourly price, estimated hours, and cover letter before submission."
           : "Please complete pitch, approach, and timeline before submission."
       );
       return;
@@ -3258,7 +3260,7 @@ function ProceedPageInner() {
                     <>
                       <div className="grid gap-3 lg:grid-cols-2">
                         <label className="text-sm font-semibold text-[#2c3038]">
-                          Your Hourly Price
+                          {isContentPostingFlow ? "Your Per Post Price" : "Your Hourly Price"}
                           <input
                             inputMode="decimal"
                             className="mt-3 w-full rounded-2xl border border-[#e7ebef] bg-white px-5 py-4 text-[1.05rem] text-slate-900"
@@ -3268,11 +3270,11 @@ function ProceedPageInner() {
                           />
                         </label>
                         <label className="text-sm font-semibold text-[#2c3038]">
-                          Estimated Hours
+                          {isContentPostingFlow ? "Accounts You Can Manage" : "Estimated Hours"}
                           <input
                             inputMode="numeric"
                             className="mt-3 w-full rounded-2xl border border-[#e7ebef] bg-white px-5 py-4 text-[1.05rem] text-slate-900"
-                            placeholder="4"
+                            placeholder={isContentPostingFlow ? "5" : "4"}
                             value={proposalTimeline}
                             onChange={(e) => setProposalTimeline(e.target.value)}
                           />
