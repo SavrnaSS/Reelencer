@@ -495,6 +495,7 @@ function ProceedPageInner() {
   const [groupJoinConfirming, setGroupJoinConfirming] = useState(false);
   const [savedGig, setSavedGig] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [activeReferenceVideo, setActiveReferenceVideo] = useState<{ url: string; label: string } | null>(null);
 
   const pollingRef = React.useRef(false);
   const menuButtonRef = React.useRef<HTMLButtonElement | null>(null);
@@ -1093,6 +1094,23 @@ function ProceedPageInner() {
     [displayName, session?.role, session?.workerId]
   );
   const marketplaceProfileInitial = marketplaceProfileLabel.charAt(0).toUpperCase() || "A";
+
+  useEffect(() => {
+    if (!activeReferenceVideo || typeof document === "undefined") return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActiveReferenceVideo(null);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeReferenceVideo]);
 
   const handleProjectShare = React.useCallback(async () => {
     const title = gig?.title || "Reelencer project";
@@ -2241,6 +2259,38 @@ function ProceedPageInner() {
           </div>
         </div>
       )}
+      {activeReferenceVideo &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[10020] flex items-center justify-center bg-black/88 p-3 sm:p-5">
+            <div className="flex h-full w-full max-w-6xl items-center justify-center">
+              <div className="relative flex h-full max-h-[92vh] w-full items-center justify-center overflow-hidden rounded-[1.75rem] bg-black shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+                <button
+                  type="button"
+                  aria-label="Close video"
+                  onClick={() => setActiveReferenceVideo(null)}
+                  className="absolute right-3 top-3 z-20 inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-black/45 text-xl font-semibold text-white backdrop-blur-sm transition hover:bg-black/60 sm:right-4 sm:top-4"
+                  style={{ top: "max(0.75rem, env(safe-area-inset-top))" }}
+                >
+                  ×
+                </button>
+                <video
+                  key={activeReferenceVideo.url}
+                  src={activeReferenceVideo.url}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-contain"
+                  preload="auto"
+                />
+                <div className="pointer-events-none absolute left-4 top-4 rounded-full border border-white/20 bg-black/35 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-white backdrop-blur-sm">
+                  {activeReferenceVideo.label}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       <main className={`relative mx-auto w-full ${isMarketplaceFlow ? "max-w-[1380px] px-3 py-4 sm:px-6 sm:py-5 lg:px-8" : "max-w-5xl space-y-6 px-5 py-8"}`}>
         {isMarketplaceFlow && (
@@ -2412,13 +2462,27 @@ function ProceedPageInner() {
                             </div>
                           ) : isVideoUrl(url) ? (
                             <div className="relative aspect-[9/11] w-full overflow-hidden bg-[#eef3ef] sm:aspect-[4/5]">
-                              <video src={url} controls playsInline className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
-                              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                <div className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
+                              <video
+                                src={url}
+                                autoPlay
+                                muted
+                                loop
+                                playsInline
+                                className="h-full w-full scale-[1.05] bg-[#eef3ef] object-cover blur-[3px] brightness-[0.88] saturate-[0.92]"
+                                preload="metadata"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setActiveReferenceVideo({ url, label: `Reference Asset ${idx + 1}` })}
+                                className="absolute inset-0 flex items-center justify-center"
+                                aria-label={`Play reference video ${idx + 1}`}
+                              >
+                                <span className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-black/30 sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
                                   Tap to Play
-                                </div>
-                              </div>
-                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/25 via-black/5 to-transparent" />
+                                </span>
+                              </button>
+                              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_20%,rgba(0,0,0,0.12)_56%,rgba(0,0,0,0.24)_100%)]" />
+                              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/38 via-black/14 to-transparent" />
                             </div>
                           ) : (
                             <div className="p-3 text-xs text-[#4d665c]">
@@ -3265,13 +3329,27 @@ function ProceedPageInner() {
                           </div>
                         ) : isVideoUrl(url) ? (
                           <div className="relative aspect-[9/11] w-full overflow-hidden bg-[#eef3ef] sm:aspect-[4/5]">
-                            <video src={url} controls playsInline className="h-full w-full bg-[#eef3ef] object-cover" preload="metadata" />
-                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                              <div className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
+                            <video
+                              src={url}
+                              autoPlay
+                              muted
+                              loop
+                              playsInline
+                              className="h-full w-full scale-[1.05] bg-[#eef3ef] object-cover blur-[3.25px] brightness-[0.86] saturate-[0.92]"
+                              preload="metadata"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setActiveReferenceVideo({ url, label: `Reference Asset ${idx + 1}` })}
+                              className="absolute inset-0 flex items-center justify-center"
+                              aria-label={`Play reference video ${idx + 1}`}
+                            >
+                              <span className="rounded-full border border-white/35 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-[0_12px_28px_rgba(0,0,0,0.18)] backdrop-blur-sm transition hover:bg-black/30 sm:px-4 sm:text-[11px] sm:tracking-[0.18em]">
                                 Tap to Play
-                              </div>
-                            </div>
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+                              </span>
+                            </button>
+                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_20%,rgba(0,0,0,0.14)_56%,rgba(0,0,0,0.28)_100%)]" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/48 via-black/16 to-transparent" />
                           </div>
                         ) : (
                           <div className="flex aspect-[4/5] items-center justify-center bg-[linear-gradient(180deg,#f8faf8_0%,#f0f5f1_100%)] p-5 text-sm text-[#425952]">
