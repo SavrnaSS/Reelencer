@@ -180,6 +180,7 @@ export async function GET(req: Request) {
   const rows = data ?? [];
   const withUrls = await Promise.all(
     rows.map(async (row: any) => {
+      const recipient = await resolveKycRecipient(sb, row.user_id, row.worker_id ?? null);
       const idDoc =
         row.id_doc_path
           ? await sb.storage.from("kyc").createSignedUrl(row.id_doc_path, 60 * 10)
@@ -193,13 +194,12 @@ export async function GET(req: Request) {
         .select("status,note,created_at,actor_id")
         .eq("kyc_id", row.id)
         .order("created_at", { ascending: false });
-      const { data: prof } = await sb.from("profiles").select("email").eq("id", row.user_id).maybeSingle();
       return {
         ...row,
         id_doc_url: idDoc?.data?.signedUrl ?? null,
         selfie_url: selfie?.data?.signedUrl ?? null,
         events: events ?? [],
-        email: prof?.email ?? null,
+        email: recipient.email,
       };
     })
   );
@@ -313,6 +313,18 @@ export async function PATCH(req: Request) {
       userId: row.user_id,
       status,
       error: mailError instanceof Error ? mailError.message : String(mailError),
+    });
+  }
+
+  if (mailStatus) {
+    await sb.from("worker_kyc_events").insert({
+      kyc_id: row.id,
+      status,
+      note: mailStatus.sent
+        ? `Notification sent to ${mailStatus.recipient}`
+        : `Notification not sent: ${mailStatus.reason}`,
+      actor_id: guard.userId,
+      created_at: new Date().toISOString(),
     });
   }
 
