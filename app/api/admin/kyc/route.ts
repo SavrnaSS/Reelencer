@@ -31,13 +31,15 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 }
 
 async function sendKycEmail(to: string, subject: string, html: string) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user;
+  const gmailUser = String(process.env.GMAIL_IMAP_USER || "").trim();
+  const gmailPass = String(process.env.GMAIL_IMAP_APP_PASSWORD || "").trim();
+  const host = String(process.env.SMTP_HOST || (gmailUser && gmailPass ? "smtp.gmail.com" : "")).trim();
+  const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
+  const user = String(process.env.SMTP_USER || gmailUser).trim();
+  const pass = String(process.env.SMTP_PASS || gmailPass).trim();
+  const from = String(process.env.SMTP_FROM || `Reelencer <${user}>`).trim();
   if (!host || !user || !pass || !from) {
-    return { sent: false as const, reason: "SMTP is not configured for KYC notifications." };
+    return { sent: false as const, reason: "Mail delivery is not configured for KYC notifications." };
   }
 
   const transporter = nodemailer.createTransport({
