@@ -48,6 +48,95 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   await transporter.sendMail({ from, to, subject, html });
 }
 
+function appBaseUrl() {
+  const raw = String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://reelencer.com").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function renderKycMailLayout({
+  eyebrow,
+  title,
+  intro,
+  tone = "neutral",
+  sections,
+  ctaLabel,
+  ctaHref,
+  footer,
+}: {
+  eyebrow: string;
+  title: string;
+  intro: string;
+  tone?: "neutral" | "success" | "warning";
+  sections?: Array<{ label: string; value: string }>;
+  ctaLabel: string;
+  ctaHref: string;
+  footer: string;
+}) {
+  const accent =
+    tone === "success"
+      ? { surface: "#edf8f1", border: "#d6eadc", pill: "#eff9f2", pillText: "#2c684d" }
+      : tone === "warning"
+        ? { surface: "#fff7ef", border: "#f3dcc2", pill: "#fff2df", pillText: "#9b5d16" }
+        : { surface: "#f4f8f4", border: "#dfe8dc", pill: "#f6faf5", pillText: "#476255" };
+
+  const sectionHtml = (sections ?? [])
+    .filter((section) => section.value.trim())
+    .map(
+      (section) => `
+        <tr>
+          <td style="padding:0 0 14px 0;">
+            <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7b8f84;font-weight:700;">${escapeHtml(section.label)}</div>
+            <div style="margin-top:6px;font-size:15px;line-height:1.6;color:#2f4b3f;">${escapeHtml(section.value)}</div>
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `
+    <div style="margin:0;padding:32px 16px;background:#eef4ea;font-family:Inter,Segoe UI,Arial,sans-serif;color:#1f352c;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;border-collapse:collapse;">
+        <tr>
+          <td style="padding:0;">
+            <div style="border:1px solid #d4dccf;border-radius:28px;background:#ffffff;overflow:hidden;box-shadow:0 18px 48px rgba(35,69,56,0.08);">
+              <div style="padding:28px 28px 18px;background:linear-gradient(180deg,#f8faf7 0%,${accent.surface} 100%);border-bottom:1px solid ${accent.border};">
+                <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#6f877d;font-weight:800;">${escapeHtml(eyebrow)}</div>
+                <div style="margin-top:10px;font-size:30px;line-height:1.15;font-weight:800;color:#1d3f33;">${escapeHtml(title)}</div>
+                <div style="margin-top:12px;font-size:16px;line-height:1.7;color:#496257;">${escapeHtml(intro)}</div>
+                <div style="margin-top:18px;display:inline-block;padding:10px 16px;border-radius:999px;border:1px solid ${accent.border};background:${accent.pill};color:${accent.pillText};font-size:12px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;">
+                  ${escapeHtml(eyebrow)}
+                </div>
+              </div>
+              <div style="padding:26px 28px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  ${sectionHtml}
+                  <tr>
+                    <td style="padding-top:8px;">
+                      <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#1f4f43;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;">${escapeHtml(ctaLabel)}</a>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+              <div style="padding:18px 28px 26px;font-size:13px;line-height:1.7;color:#71887c;border-top:1px solid #edf3eb;background:#fbfdfb;">
+                ${escapeHtml(footer)}
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
 export async function GET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
@@ -137,12 +226,43 @@ export async function PATCH(req: Request) {
   // Optional email notification via SMTP
   try {
     const { data: prof } = await sb.from("profiles").select("email,display_name").eq("id", row.user_id).maybeSingle();
-    if (prof?.email) {
-      const subject = status === "approved" ? "KYC approved" : "KYC rejected";
+    if (prof?.email && (status === "approved" || status === "rejected")) {
+      const recipientName = String(prof.display_name ?? "there").trim() || "there";
+      const dashboardHref = `${appBaseUrl()}/browse`;
+      const kycHref = `${appBaseUrl()}/browse`;
+      const subject = status === "approved" ? "KYC approved for Reelencer workspace access" : "KYC review requires your attention";
       const html =
         status === "approved"
-          ? `<p>Hi ${prof.display_name ?? "there"},</p><p>Your KYC has been approved. Your Worker ID is <b>${workerId}</b>.</p>`
-          : `<p>Hi ${prof.display_name ?? "there"},</p><p>Your KYC was rejected.${rejectionReason ? ` Reason: ${rejectionReason}` : ""}</p>`;
+          ? renderKycMailLayout({
+              eyebrow: "KYC Approved",
+              title: `Workspace access is now available, ${recipientName}`,
+              intro: "Your identity verification has been approved. You can now continue into the Reelencer worker experience and access verified workspace opportunities.",
+              tone: "success",
+              sections: [
+                { label: "Verification status", value: "Approved by admin review" },
+                { label: "Worker ID", value: workerId || "Assigned in your profile" },
+                { label: "Next step", value: "Open your dashboard and continue browsing approved workspace gigs." },
+                { label: "Admin note", value: String(adminNote ?? "").trim() },
+              ],
+              ctaLabel: "Open worker dashboard",
+              ctaHref: dashboardHref,
+              footer: "This confirmation was sent by Reelencer Operations after admin verification. Your account remains active for verified workspace access.",
+            })
+          : renderKycMailLayout({
+              eyebrow: "KYC Update",
+              title: `KYC review needs an update, ${recipientName}`,
+              intro: "Your submitted identity packet was reviewed, but the verification could not be approved yet. Please review the note below and resubmit with corrected details if needed.",
+              tone: "warning",
+              sections: [
+                { label: "Verification status", value: "Review returned for correction" },
+                { label: "Reason", value: String(rejectionReason ?? "Please review your submission and upload clearer or matching documents.").trim() },
+                { label: "Admin note", value: String(adminNote ?? "").trim() },
+                { label: "Next step", value: "Open your dashboard, update the KYC details, and resubmit the verification packet." },
+              ],
+              ctaLabel: "Review KYC status",
+              ctaHref: kycHref,
+              footer: "This notification was sent by Reelencer Operations. After you resubmit corrected details, the verification queue will reopen for review.",
+            });
       await sendKycEmail(prof.email, subject, html);
     }
   } catch {
