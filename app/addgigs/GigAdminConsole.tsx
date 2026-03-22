@@ -490,10 +490,12 @@ export default function GigAdminConsole({
     };
   }, []);
 
-  const fetchKyc = async () => {
+  const fetchKyc = async ({ preserveFeedback = false }: { preserveFeedback?: boolean } = {}) => {
     setKycLoading(true);
-    setKycError(null);
-    setKycNotice(null);
+    if (!preserveFeedback) {
+      setKycError(null);
+      setKycNotice(null);
+    }
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
@@ -1855,7 +1857,9 @@ export default function GigAdminConsole({
               </div>
               <button
                 className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-400"
-                onClick={fetchKyc}
+                onClick={() => {
+                  void fetchKyc();
+                }}
               >
                 Refresh
               </button>
@@ -1994,7 +1998,7 @@ export default function GigAdminConsole({
                           });
                           const payload = await res.json().catch(() => ({}));
                           if (!res.ok) setKycError(payload?.error || "Failed to update KYC note");
-                          fetchKyc();
+                          fetchKyc({ preserveFeedback: true });
                         }}
                       />
                       <button
@@ -2019,7 +2023,7 @@ export default function GigAdminConsole({
                           } else if (payload?.mailStatus?.reason) {
                             setKycError(`KYC approved, but email notification was not sent: ${payload.mailStatus.reason}`);
                           }
-                          fetchKyc();
+                          await fetchKyc({ preserveFeedback: true });
                         }}
                       >
                         Approve
@@ -2047,7 +2051,7 @@ export default function GigAdminConsole({
                           } else if (payload?.mailStatus?.reason) {
                             setKycError(`KYC rejected, but email notification was not sent: ${payload.mailStatus.reason}`);
                           }
-                          fetchKyc();
+                          await fetchKyc({ preserveFeedback: true });
                         }}
                       >
                         Reject
