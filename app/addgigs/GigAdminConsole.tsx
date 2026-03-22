@@ -331,6 +331,7 @@ export default function GigAdminConsole({
   const [kycRows, setKycRows] = useState<KycRow[]>([]);
   const [kycLoading, setKycLoading] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
+  const [kycNotice, setKycNotice] = useState<string | null>(null);
   const [kycNoteDraft, setKycNoteDraft] = useState<Record<string, string>>({});
   const [kycTimeline, setKycTimeline] = useState<KycRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -492,6 +493,7 @@ export default function GigAdminConsole({
   const fetchKyc = async () => {
     setKycLoading(true);
     setKycError(null);
+    setKycNotice(null);
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
@@ -1873,6 +1875,11 @@ export default function GigAdminConsole({
                 {kycError}
               </div>
             )}
+            {kycNotice && (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                {kycNotice}
+              </div>
+            )}
 
             <div className="mt-4 grid gap-3">
               {kycLoading && kycRows.length === 0 && (
@@ -1980,26 +1987,38 @@ export default function GigAdminConsole({
                           const { data } = await supabase.auth.getSession();
                           const token = data.session?.access_token;
                           if (!token) return;
-                          await fetch("/api/admin/kyc", {
+                          const res = await fetch("/api/admin/kyc", {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                             body: JSON.stringify({ id: row.id, status: row.status, adminNote: note }),
                           });
+                          const payload = await res.json().catch(() => ({}));
+                          if (!res.ok) setKycError(payload?.error || "Failed to update KYC note");
                           fetchKyc();
                         }}
                       />
                       <button
                         className="w-full rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-semibold text-emerald-700"
                         onClick={async () => {
+                          setKycError(null);
+                          setKycNotice(null);
                           const note = kycNoteDraft[row.id] ?? null;
                           const { data } = await supabase.auth.getSession();
                           const token = data.session?.access_token;
                           if (!token) return;
-                          await fetch("/api/admin/kyc", {
+                          const res = await fetch("/api/admin/kyc", {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                             body: JSON.stringify({ id: row.id, status: "approved", adminNote: note }),
                           });
+                          const payload = await res.json().catch(() => ({}));
+                          if (!res.ok) {
+                            setKycError(payload?.error || "Failed to approve KYC");
+                          } else if (payload?.mailStatus?.sent) {
+                            setKycNotice(`KYC approved and notification sent to ${payload.mailStatus.recipient}.`);
+                          } else if (payload?.mailStatus?.reason) {
+                            setKycError(`KYC approved, but email notification was not sent: ${payload.mailStatus.reason}`);
+                          }
                           fetchKyc();
                         }}
                       >
@@ -2008,16 +2027,26 @@ export default function GigAdminConsole({
                       <button
                         className="w-full rounded-full border border-rose-200 bg-rose-50 px-3 py-1 font-semibold text-rose-700"
                         onClick={async () => {
+                          setKycError(null);
+                          setKycNotice(null);
                           const reason = window.prompt("Rejection reason (optional)");
                           const note = kycNoteDraft[row.id] ?? null;
                           const { data } = await supabase.auth.getSession();
                           const token = data.session?.access_token;
                           if (!token) return;
-                          await fetch("/api/admin/kyc", {
+                          const res = await fetch("/api/admin/kyc", {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                             body: JSON.stringify({ id: row.id, status: "rejected", rejectionReason: reason ?? null, adminNote: note }),
                           });
+                          const payload = await res.json().catch(() => ({}));
+                          if (!res.ok) {
+                            setKycError(payload?.error || "Failed to reject KYC");
+                          } else if (payload?.mailStatus?.sent) {
+                            setKycNotice(`KYC rejected and notification sent to ${payload.mailStatus.recipient}.`);
+                          } else if (payload?.mailStatus?.reason) {
+                            setKycError(`KYC rejected, but email notification was not sent: ${payload.mailStatus.reason}`);
+                          }
                           fetchKyc();
                         }}
                       >

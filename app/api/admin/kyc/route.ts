@@ -36,7 +36,9 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   const from = process.env.SMTP_FROM || user;
-  if (!host || !user || !pass || !from) return;
+  if (!host || !user || !pass || !from) {
+    return { sent: false as const, reason: "SMTP is not configured for KYC notifications." };
+  }
 
   const transporter = nodemailer.createTransport({
     host,
@@ -46,6 +48,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   });
 
   await transporter.sendMail({ from, to, subject, html });
+  return { sent: true as const };
 }
 
 function appBaseUrl() {
@@ -137,6 +140,32 @@ function renderKycMailLayout({
   `;
 }
 
+async function resolveKycRecipient(
+  sb: ReturnType<typeof supabaseAdmin>,
+  userId: string,
+  workerId: string | null
+) {
+  const [{ data: profile }, { data: worker }, authUserRes] = await Promise.all([
+    sb.from("profiles").select("email,display_name").eq("id", userId).maybeSingle(),
+    workerId ? sb.from("workers").select("email,name").eq("id", workerId).maybeSingle() : Promise.resolve({ data: null as any, error: null as any }),
+    sb.auth.admin.getUserById(userId),
+  ]);
+
+  const authUser = authUserRes.data?.user ?? null;
+  const email =
+    String(profile?.email ?? "").trim() ||
+    String(worker?.email ?? "").trim() ||
+    String(authUser?.email ?? "").trim() ||
+    null;
+  const displayName =
+    String(profile?.display_name ?? "").trim() ||
+    String(worker?.name ?? "").trim() ||
+    String(authUser?.user_metadata?.name ?? authUser?.user_metadata?.full_name ?? "").trim() ||
+    "there";
+
+  return { email, displayName };
+}
+
 export async function GET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
@@ -223,11 +252,15 @@ export async function PATCH(req: Request) {
     created_at: new Date().toISOString(),
   });
 
-  // Optional email notification via SMTP
+  let mailStatus:
+    | { sent: true; recipient: string }
+    | { sent: false; reason: string; recipient?: string | null }
+    | null = null;
+
   try {
-    const { data: prof } = await sb.from("profiles").select("email,display_name").eq("id", row.user_id).maybeSingle();
-    if (prof?.email && (status === "approved" || status === "rejected")) {
-      const recipientName = String(prof.display_name ?? "there").trim() || "there";
+    const recipient = await resolveKycRecipient(sb, row.user_id, workerId);
+    if (recipient.email && (status === "approved" || status === "rejected")) {
+      const recipientName = recipient.displayName;
       const dashboardHref = `${appBaseUrl()}/browse`;
       const kycHref = `${appBaseUrl()}/browse`;
       const subject = status === "approved" ? "KYC approved for Reelencer workspace access" : "KYC review requires your attention";
@@ -263,11 +296,25 @@ export async function PATCH(req: Request) {
               ctaHref: kycHref,
               footer: "This notification was sent by Reelencer Operations. After you resubmit corrected details, the verification queue will reopen for review.",
             });
-      await sendKycEmail(prof.email, subject, html);
+      const result = await sendKycEmail(recipient.email, subject, html);
+      mailStatus = result.sent
+        ? { sent: true, recipient: recipient.email }
+        : { sent: false, reason: result.reason, recipient: recipient.email };
+    } else if (status === "approved" || status === "rejected") {
+      mailStatus = { sent: false, reason: "No recipient email was found for this worker." };
     }
-  } catch {
-    // ignore
+  } catch (mailError) {
+    mailStatus = {
+      sent: false,
+      reason: mailError instanceof Error ? mailError.message : String(mailError),
+    };
+    console.error("KYC decision email failed", {
+      kycId: row.id,
+      userId: row.user_id,
+      status,
+      error: mailError instanceof Error ? mailError.message : String(mailError),
+    });
   }
 
-  return json(200, { ok: true, workerId });
+  return json(200, { ok: true, workerId, mailStatus });
 }
