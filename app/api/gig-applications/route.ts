@@ -268,8 +268,8 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
     sb.from("workers").select("id,user_id,email,name").eq("user_id", workerCode).maybeSingle(),
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
-    sb.from("profiles").select("id,email,display_name").eq("worker_code", workerCode).maybeSingle(),
-    sb.from("profiles").select("id,email,display_name,worker_code").eq("id", workerCode).maybeSingle(),
+    sb.from("profiles").select("id,display_name,worker_code").eq("worker_code", workerCode).maybeSingle(),
+    sb.from("profiles").select("id,display_name,worker_code").eq("id", workerCode).maybeSingle(),
     sb.from("worker_kyc").select("user_id").eq("worker_id", workerCode).order("reviewed_at", { ascending: false }).limit(1).maybeSingle(),
     sb.from("gig_applications").select("worker_name,applied_at").eq("worker_code", workerCode).order("applied_at", { ascending: false }).limit(25),
   ]);
@@ -293,17 +293,14 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
 
   const [profile, authUserRes] = await Promise.all([
     worker?.user_id
-      ? sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
+      ? sb.from("profiles").select("id,display_name,worker_code").eq("id", worker.user_id).maybeSingle()
       : resolvedUserId
-        ? sb.from("profiles").select("email,display_name").eq("id", resolvedUserId).maybeSingle()
+        ? sb.from("profiles").select("id,display_name,worker_code").eq("id", resolvedUserId).maybeSingle()
       : Promise.resolve({ data: null as any, error: null as any }),
     resolvedUserId ? sb.auth.admin.getUserById(resolvedUserId) : Promise.resolve({ data: { user: null as any } }),
   ]);
   const authUser = authUserRes.data?.user ?? null;
   let to =
-    String(profile.data?.email ?? "").trim() ||
-    String(workerProfileByCode?.email ?? "").trim() ||
-    String(workerProfileById?.email ?? "").trim() ||
     String(worker?.email ?? "").trim() ||
     String(workerByUserId?.email ?? "").trim() ||
     String(decodedWorker.workerEmail ?? "").trim() ||
@@ -318,6 +315,7 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
       workerByUserId?.name ??
       siblingWorkerName ??
       authUser?.user_metadata?.name ??
+      authUser?.user_metadata?.full_name ??
       "there"
   );
 
