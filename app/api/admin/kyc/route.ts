@@ -45,6 +45,9 @@ async function sendKycEmail(to: string, subject: string, html: string) {
     "RESEND_KEY",
     "RESEND_API_TOKEN",
     "RESEND_TOKEN",
+    "RESEND_SECRET",
+    "RESEND_PRIVATE_KEY",
+    "RESEND_EMAIL_API_KEY",
     "NEXT_PUBLIC_RESEND_API_KEY",
     "NEXT_PUBLIC_RESEND_KEY",
   ]);
@@ -57,6 +60,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
 
   const resendApiKey = resendKeyMatch.value;
   const resendFrom = resendFromMatch.value || brandedFrom;
+  const visibleResendKeys = Object.keys(process.env).filter((key) => key.startsWith("RESEND"));
 
   if (resendApiKey) {
     const response = await fetch("https://api.resend.com/emails", {
@@ -126,7 +130,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   if (!host || !user || !pass || !from) {
     return {
       sent: false as const,
-      reason: `Mail delivery is not configured for KYC notifications. Resend key not found in [RESEND_API_KEY, RESEND_KEY, RESEND_API_TOKEN, RESEND_TOKEN]. Active Resend from: ${resendFromMatch.key ?? "default sender"}.`,
+      reason: `Mail delivery is not configured for KYC notifications. Resend key not found in [RESEND_API_KEY, RESEND_KEY, RESEND_API_TOKEN, RESEND_TOKEN, RESEND_SECRET, RESEND_PRIVATE_KEY, RESEND_EMAIL_API_KEY]. Runtime visible RESEND keys: ${visibleResendKeys.length ? visibleResendKeys.join(", ") : "none"}. Active Resend from: ${resendFromMatch.key ?? "default sender"}. If you recently added env vars in Vercel, redeploy is required.`,
     };
   }
 
