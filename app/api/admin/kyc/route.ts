@@ -356,38 +356,41 @@ export async function PATCH(req: Request) {
       const recipientName = recipient.displayName;
       const dashboardHref = `${appBaseUrl()}/browse`;
       const kycHref = `${appBaseUrl()}/browse`;
-      const subject = status === "approved" ? "KYC approved for Reelencer workspace access" : "KYC review requires your attention";
+      const subject =
+        status === "approved"
+          ? "Your Reelencer KYC has been approved"
+          : "Action needed: update your Reelencer KYC submission";
       const html =
         status === "approved"
           ? renderKycMailLayout({
               eyebrow: "KYC Approved",
-              title: `Workspace access is now available, ${recipientName}`,
-              intro: "Your identity verification has been approved. You can now continue into the Reelencer worker experience and access verified workspace opportunities.",
+              title: `Welcome aboard, ${recipientName}`,
+              intro: "Your identity verification has been successfully approved. Your Reelencer workspace is now unlocked, and you can continue with verified opportunities, assignments, and payout access.",
               tone: "success",
               sections: [
-                { label: "Verification status", value: "Approved by admin review" },
-                { label: "Worker ID", value: workerId || "Assigned in your profile" },
-                { label: "Next step", value: "Open your dashboard and continue browsing approved workspace gigs." },
-                { label: "Admin note", value: String(adminNote ?? "").trim() },
+                { label: "Review outcome", value: "Approved by the Reelencer verification team" },
+                { label: "Workspace ID", value: workerId || "Assigned in your profile" },
+                { label: "What you can do now", value: "Open your dashboard, explore verified gigs, and continue through the worker workflow." },
+                { label: "Team note", value: String(adminNote ?? "").trim() },
               ],
-              ctaLabel: "Open worker dashboard",
+              ctaLabel: "Open your workspace",
               ctaHref: dashboardHref,
-              footer: "This confirmation was sent by Reelencer Operations after admin verification. Your account remains active for verified workspace access.",
+              footer: "This is an automated confirmation from Reelencer Operations. Your verified account is now active for workspace access and future platform updates.",
             })
           : renderKycMailLayout({
               eyebrow: "KYC Update",
-              title: `KYC review needs an update, ${recipientName}`,
-              intro: "Your submitted identity packet was reviewed, but the verification could not be approved yet. Please review the note below and resubmit with corrected details if needed.",
+              title: `Your verification needs one more update, ${recipientName}`,
+              intro: "Your submitted KYC packet was reviewed, but it could not be approved in its current form. Please review the details below and submit an updated verification so the team can continue your approval process.",
               tone: "warning",
               sections: [
-                { label: "Verification status", value: "Review returned for correction" },
-                { label: "Reason", value: String(rejectionReason ?? "Please review your submission and upload clearer or matching documents.").trim() },
-                { label: "Admin note", value: String(adminNote ?? "").trim() },
-                { label: "Next step", value: "Open your dashboard, update the KYC details, and resubmit the verification packet." },
+                { label: "Review outcome", value: "Returned for correction by the verification team" },
+                { label: "Why this was returned", value: String(rejectionReason ?? "Please review your submission and upload clearer or matching documents.").trim() },
+                { label: "Team note", value: String(adminNote ?? "").trim() },
+                { label: "Next step", value: "Open your dashboard, update the requested details, and resubmit your verification packet." },
               ],
-              ctaLabel: "Review KYC status",
+              ctaLabel: "Review and update KYC",
               ctaHref: kycHref,
-              footer: "This notification was sent by Reelencer Operations. After you resubmit corrected details, the verification queue will reopen for review.",
+              footer: "This is an automated notification from Reelencer Operations. Once you resubmit corrected details, your verification will return to the review queue.",
             });
       const result = await sendKycEmail(recipient.email, subject, html);
       mailStatus = result.sent
