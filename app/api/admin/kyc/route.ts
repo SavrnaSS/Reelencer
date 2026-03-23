@@ -31,10 +31,39 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 }
 
 async function sendKycEmail(to: string, subject: string, html: string) {
+  const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
+  const resendFrom = String(process.env.RESEND_FROM || process.env.MAILGUN_FROM || process.env.SMTP_FROM || "Reelencer Support <support@reelencer.com>").trim();
+
+  if (resendApiKey) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: resendFrom,
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      return {
+        sent: false as const,
+        reason: body || `Resend delivery failed with status ${response.status}.`,
+      };
+    }
+
+    return { sent: true as const, provider: "resend" as const };
+  }
+
   const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
   const mailgunDomain = String(process.env.MAILGUN_DOMAIN || "").trim();
   const mailgunApiBase = String(process.env.MAILGUN_API_BASE || "https://api.mailgun.net").trim().replace(/\/+$/, "");
-  const mailgunFrom = String(process.env.MAILGUN_FROM || process.env.SMTP_FROM || "Reelencer Support <support@reelencer.com>").trim();
+  const mailgunFrom = String(process.env.MAILGUN_FROM || process.env.SMTP_FROM || resendFrom).trim();
 
   if (mailgunApiKey && mailgunDomain) {
     const params = new URLSearchParams();
