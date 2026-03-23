@@ -264,20 +264,31 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
   const workerCode = String(row?.worker_code ?? "");
   const gigId = String(row?.gig_id ?? "");
   const decodedWorker = decodeWorkerName(row?.worker_name);
-  const [{ data: worker }, { data: workerByUserId }, { data: gig }, { data: workerProfileByCode }, { data: workerProfileById }] = await Promise.all([
+  const [{ data: worker }, { data: workerByUserId }, { data: gig }, { data: workerProfileByCode }, { data: workerProfileById }, { data: kycByWorker }, { data: siblingApps }] = await Promise.all([
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
     sb.from("workers").select("id,user_id,email,name").eq("user_id", workerCode).maybeSingle(),
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
     sb.from("profiles").select("id,email,display_name").eq("worker_code", workerCode).maybeSingle(),
     sb.from("profiles").select("id,email,display_name,worker_code").eq("id", workerCode).maybeSingle(),
+    sb.from("worker_kyc").select("user_id").eq("worker_id", workerCode).order("reviewed_at", { ascending: false }).limit(1).maybeSingle(),
+    sb.from("gig_applications").select("worker_name,applied_at").eq("worker_code", workerCode).order("applied_at", { ascending: false }).limit(25),
   ]);
+
+  const siblingPayloads = (siblingApps ?? [])
+    .map((candidate: any) => decodeWorkerName(candidate.worker_name))
+    .filter((candidate) => candidate.workerEmail || candidate.workerUserId);
+  const siblingWorkerUserId = siblingPayloads.find((candidate) => candidate.workerUserId)?.workerUserId ?? "";
+  const siblingWorkerEmail = siblingPayloads.find((candidate) => candidate.workerEmail)?.workerEmail ?? "";
+  const siblingWorkerName = siblingPayloads.find((candidate) => candidate.workerName)?.workerName ?? "";
 
   const resolvedUserId =
     String(worker?.user_id ?? "").trim() ||
     String(workerByUserId?.user_id ?? "").trim() ||
     String(workerProfileByCode?.id ?? "").trim() ||
     String(workerProfileById?.id ?? "").trim() ||
+    String(kycByWorker?.user_id ?? "").trim() ||
     String(decodedWorker.workerUserId ?? "").trim() ||
+    String(siblingWorkerUserId ?? "").trim() ||
     "";
 
   const [profile, authUserRes] = await Promise.all([
@@ -296,6 +307,7 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
     String(worker?.email ?? "").trim() ||
     String(workerByUserId?.email ?? "").trim() ||
     String(decodedWorker.workerEmail ?? "").trim() ||
+    String(siblingWorkerEmail ?? "").trim() ||
     String(authUser?.email ?? "").trim() ||
     null;
   let recipientName = String(
@@ -304,6 +316,7 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
       workerProfileById?.display_name ??
       worker?.name ??
       workerByUserId?.name ??
+      siblingWorkerName ??
       authUser?.user_metadata?.name ??
       "there"
   );
