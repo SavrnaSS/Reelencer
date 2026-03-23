@@ -31,15 +31,47 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 }
 
 async function sendKycEmail(to: string, subject: string, html: string) {
+  const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
+  const mailgunDomain = String(process.env.MAILGUN_DOMAIN || "").trim();
+  const mailgunApiBase = String(process.env.MAILGUN_API_BASE || "https://api.mailgun.net").trim().replace(/\/+$/, "");
+  const mailgunFrom = String(process.env.MAILGUN_FROM || process.env.SMTP_FROM || "Reelencer Support <support@reelencer.com>").trim();
+
+  if (mailgunApiKey && mailgunDomain) {
+    const params = new URLSearchParams();
+    params.set("from", mailgunFrom);
+    params.set("to", to);
+    params.set("subject", subject);
+    params.set("html", html);
+
+    const response = await fetch(`${mailgunApiBase}/v3/${mailgunDomain}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`api:${mailgunApiKey}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      return {
+        sent: false as const,
+        reason: body || `Mailgun delivery failed with status ${response.status}.`,
+      };
+    }
+
+    return { sent: true as const, provider: "mailgun" as const };
+  }
+
   const gmailUser = String(process.env.GMAIL_IMAP_USER || "").trim();
   const gmailPass = String(process.env.GMAIL_IMAP_APP_PASSWORD || "").trim();
   const host = String(process.env.SMTP_HOST || (gmailUser && gmailPass ? "smtp.gmail.com" : "")).trim();
   const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
   const user = String(process.env.SMTP_USER || gmailUser).trim();
   const pass = String(process.env.SMTP_PASS || gmailPass).trim();
-  const from = String(process.env.SMTP_FROM || `Reelencer <${user}>`).trim();
+  const from = String(process.env.SMTP_FROM || `Reelencer Support <support@reelencer.com>`).trim();
   if (!host || !user || !pass || !from) {
-    return { sent: false as const, reason: "Mail delivery is not configured for KYC notifications." };
+    return { sent: false as const, reason: "Mail delivery is not configured for KYC notifications. Add Mailgun or SMTP credentials." };
   }
 
   const transporter = nodemailer.createTransport({
@@ -50,7 +82,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   });
 
   await transporter.sendMail({ from, to, subject, html });
-  return { sent: true as const };
+  return { sent: true as const, provider: "smtp" as const };
 }
 
 function appBaseUrl() {
