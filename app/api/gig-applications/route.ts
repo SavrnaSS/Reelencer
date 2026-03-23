@@ -35,6 +35,10 @@ type NotificationContext = {
   proceedUrl: string;
 };
 
+type MailStatus =
+  | { sent: true; recipient: string; provider?: string }
+  | { sent: false; recipient?: string | null; reason: string };
+
 function encodeWorkerName(workerName?: string | null, proposal?: ProposalPayload | null) {
   const cleanName = String(workerName ?? "").trim();
   if (!proposal) return cleanName || null;
@@ -111,7 +115,7 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
       const body = await response.text().catch(() => "");
       throw new Error(body || `Resend delivery failed with status ${response.status}.`);
     }
-    return;
+    return { provider: "resend" as const };
   }
 
   const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
@@ -140,7 +144,7 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
       const body = await response.text().catch(() => "");
       throw new Error(body || `Mailgun delivery failed with status ${response.status}.`);
     }
-    return;
+    return { provider: "mailgun" as const };
   }
 
   const gmailUser = String(process.env.GMAIL_IMAP_USER || "").trim();
@@ -150,7 +154,9 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
   const user = String(process.env.SMTP_USER || gmailUser).trim();
   const pass = String(process.env.SMTP_PASS || gmailPass).trim();
   const from = String(process.env.SMTP_FROM || brandedFrom).trim();
-  if (!host || !user || !pass || !from) return;
+  if (!host || !user || !pass || !from) {
+    throw new Error("Mail delivery is not configured for proposal notifications.");
+  }
 
   const transporter = nodemailer.createTransport({
     host,
@@ -159,6 +165,7 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
     auth: { user, pass },
   });
   await transporter.sendMail({ from, to, subject, html });
+  return { provider: "smtp" as const };
 }
 
 function appBaseUrl() {
@@ -239,21 +246,31 @@ function renderMailLayout({
 async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, row: any): Promise<{ to: string | null; context: NotificationContext | null }> {
   const workerCode = String(row?.worker_code ?? "");
   const gigId = String(row?.gig_id ?? "");
-  const [{ data: worker }, { data: gig }] = await Promise.all([
+  const [{ data: worker }, { data: gig }, { data: workerProfileByCode }] = await Promise.all([
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
+    sb.from("profiles").select("id,email,display_name").eq("worker_code", workerCode).maybeSingle(),
   ]);
 
-  const profile = worker?.user_id
-    ? await sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
-    : { data: null as any };
-  const to = String(profile.data?.email ?? worker?.email ?? "").trim() || null;
+  const [profile, authUserRes] = await Promise.all([
+    worker?.user_id
+      ? sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
+      : Promise.resolve({ data: null as any, error: null as any }),
+    worker?.user_id ? sb.auth.admin.getUserById(worker.user_id) : Promise.resolve({ data: { user: null as any } }),
+  ]);
+  const authUser = authUserRes.data?.user ?? null;
+  const to =
+    String(profile.data?.email ?? "").trim() ||
+    String(workerProfileByCode?.email ?? "").trim() ||
+    String(worker?.email ?? "").trim() ||
+    String(authUser?.email ?? "").trim() ||
+    null;
   if (!to) return { to: null, context: null };
 
   return {
     to,
     context: {
-      recipient: String(profile.data?.display_name ?? worker?.name ?? "there"),
+      recipient: String(profile.data?.display_name ?? workerProfileByCode?.display_name ?? worker?.name ?? authUser?.user_metadata?.name ?? "there"),
       gigTitle: String(gig?.title ?? "your project"),
       company: String(gig?.company ?? "Reelencer"),
       proceedUrl: `${appBaseUrl()}/proceed?gigId=${encodeURIComponent(gigId)}`,
@@ -271,8 +288,8 @@ async function sendLifecycleNotification(
     sections?: Array<{ label: string; value: string }>;
     ctaLabel?: string;
   }
-) {
-  if (!to || !context) return;
+) : Promise<MailStatus> {
+  if (!to || !context) return { sent: false, recipient: to, reason: "No recipient email was found for this application." };
   const subject = `${config.eyebrow}: ${context.gigTitle}`;
   const html = renderMailLayout({
     eyebrow: config.eyebrow,
@@ -282,7 +299,8 @@ async function sendLifecycleNotification(
     ctaLabel: config.ctaLabel ?? "Open project panel",
     ctaHref: context.proceedUrl,
   });
-  await sendDecisionEmail(to, subject, html);
+  const result = await sendDecisionEmail(to, subject, html);
+  return { sent: true, recipient: to, provider: result?.provider };
 }
 
 export async function GET(req: Request) {
@@ -352,11 +370,12 @@ export async function POST(req: Request) {
       decidedAt: data.decided_at ?? undefined,
     };
 
+    let mailStatus: MailStatus | null = null;
     try {
       const decoded = decodeWorkerName(data.worker_name);
       if (decoded.proposal) {
         const { to, context } = await resolveNotificationContext(sb, data);
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Submitted",
           title: "Your proposal has been received",
           intro: `Your proposal for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} is now queued for recruiter review.`,
@@ -367,11 +386,14 @@ export async function POST(req: Request) {
           ctaLabel: "Track proposal status",
         });
       }
-    } catch {
-      // optional notification only
+    } catch (error) {
+      mailStatus = {
+        sent: false,
+        reason: error instanceof Error ? error.message : "Unable to send proposal notification.",
+      };
     }
 
-    return NextResponse.json(responsePayload, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({ ...responsePayload, mailStatus }, { headers: NO_STORE_HEADERS });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Invalid payload" }, { status: 400, headers: NO_STORE_HEADERS });
   }
@@ -421,10 +443,11 @@ export async function PATCH(req: Request) {
     const recruiterNoteChanged =
       nextProposal.adminNote !== prevProposal.adminNote || nextProposal.adminExplanation !== prevProposal.adminExplanation;
 
+    let mailStatus: MailStatus | null = null;
     try {
       const { to, context } = await resolveNotificationContext(sb, data);
       if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Approved",
           title: "Recruiter approved your proposal",
           intro: `Your proposal for ${context?.gigTitle ?? "this role"} has been approved and moved into onboarding.`,
@@ -435,7 +458,7 @@ export async function PATCH(req: Request) {
           ctaLabel: "Open onboarding panel",
         });
       } else if (proposalStatusChanged && nextProposal.reviewStatus === "Rejected") {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Update",
           title: "Your proposal needs revision",
           intro: `Recruiter review for ${context?.gigTitle ?? "this role"} has completed and changes are required before the next round.`,
@@ -446,7 +469,7 @@ export async function PATCH(req: Request) {
           ctaLabel: "Review feedback",
         });
       } else if (whatsappLinkAdded) {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "WhatsApp Invite Issued",
           title: "Your recruiter has issued the onboarding invite",
           intro: `A WhatsApp onboarding link is now available for ${context?.gigTitle ?? "your application"}.`,
@@ -466,7 +489,7 @@ export async function PATCH(req: Request) {
           ctaLabel: "Open WhatsApp onboarding",
         });
       } else if (onboardingChanged || recruiterNoteChanged) {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Recruiter Workflow Update",
           title: "Your onboarding instructions were updated",
           intro: `New recruiter guidance is available for ${context?.gigTitle ?? "your application"}.`,
@@ -477,7 +500,7 @@ export async function PATCH(req: Request) {
           ctaLabel: "View latest instructions",
         });
       } else if (groupConfirmedNow) {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Onboarding Confirmed",
           title: "Group join confirmation recorded",
           intro: `Your onboarding confirmation for ${context?.gigTitle ?? "this role"} has been recorded successfully.`,
@@ -488,7 +511,7 @@ export async function PATCH(req: Request) {
           ctaLabel: "Track final review",
         });
       } else if ((nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus) {
-        await sendLifecycleNotification(to, context, {
+        mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: nextStatus === "Accepted" ? "Final Recruiter Decision" : "Final Recruiter Decision",
           title: nextStatus === "Accepted" ? "You have been selected to move forward" : "Recruiter review has been completed",
           intro:
@@ -508,8 +531,11 @@ export async function PATCH(req: Request) {
           ctaLabel: nextStatus === "Accepted" ? "Continue to your project" : "Review final update",
         });
       }
-    } catch {
-      // optional notification only
+    } catch (error) {
+      mailStatus = {
+        sent: false,
+        reason: error instanceof Error ? error.message : "Unable to send recruiter lifecycle notification.",
+      };
     }
 
     return NextResponse.json(
@@ -521,6 +547,7 @@ export async function PATCH(req: Request) {
         status: data.status,
         appliedAt: data.applied_at,
         decidedAt: data.decided_at ?? undefined,
+        mailStatus,
       },
       { headers: NO_STORE_HEADERS }
     );

@@ -328,6 +328,7 @@ export default function GigAdminConsole({
   const [lastSeenSubmittedAt, setLastSeenSubmittedAt] = useState<string | null>(null);
   const [assignmentActionId, setAssignmentActionId] = useState<string | null>(null);
   const [assignmentNotice, setAssignmentNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  const [applicationNotice, setApplicationNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [kycRows, setKycRows] = useState<KycRow[]>([]);
   const [kycLoading, setKycLoading] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
@@ -896,9 +897,10 @@ export default function GigAdminConsole({
       writeLS(LS_KEYS.GIG_APPS, next);
       return next;
     });
+    setApplicationNotice(null);
 
     try {
-      await fetch("/api/gig-applications", {
+      const res = await fetch("/api/gig-applications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -911,8 +913,26 @@ export default function GigAdminConsole({
           },
         }),
       });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(payload?.error || "Unable to update recruiter workflow.");
+      }
+      if (payload?.mailStatus?.sent) {
+        setApplicationNotice({
+          tone: "success",
+          text: `Worker notification sent to ${payload.mailStatus.recipient}.`,
+        });
+      } else if (payload?.mailStatus?.reason) {
+        setApplicationNotice({
+          tone: "danger",
+          text: `Worker notification was not sent: ${payload.mailStatus.reason}`,
+        });
+      }
     } catch {
-      // ignore
+      setApplicationNotice({
+        tone: "danger",
+        text: "Recruiter workflow was updated, but the notification status could not be confirmed.",
+      });
     }
   };
 
@@ -1598,6 +1618,17 @@ export default function GigAdminConsole({
             </div>
 
             <div className="mt-4 space-y-3">
+              {applicationNotice && (
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
+                    applicationNotice.tone === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {applicationNotice.text}
+                </div>
+              )}
               <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-3 sm:p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposals</div>
