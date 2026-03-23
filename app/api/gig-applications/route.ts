@@ -28,6 +28,13 @@ type ProposalPayload = {
   reviewedAt?: string;
 };
 
+type EncodedWorkerPayload = {
+  workerName?: string | null;
+  workerEmail?: string | null;
+  workerUserId?: string | null;
+  proposal?: ProposalPayload;
+};
+
 type NotificationContext = {
   recipient: string;
   gigTitle: string;
@@ -39,17 +46,23 @@ type MailStatus =
   | { sent: true; recipient: string; provider?: string }
   | { sent: false; recipient?: string | null; reason: string };
 
-function encodeWorkerName(workerName?: string | null, proposal?: ProposalPayload | null) {
+function encodeWorkerName(
+  workerName?: string | null,
+  proposal?: ProposalPayload | null,
+  extras?: { workerEmail?: string | null; workerUserId?: string | null }
+) {
   const cleanName = String(workerName ?? "").trim();
   if (!proposal) return cleanName || null;
-  const compact = JSON.stringify({
+  const compact: EncodedWorkerPayload = {
     workerName: cleanName || null,
+    workerEmail: String(extras?.workerEmail ?? "").trim() || null,
+    workerUserId: String(extras?.workerUserId ?? "").trim() || null,
     proposal,
-  });
-  return `${PROPOSAL_PREFIX}${encodeURIComponent(compact)}`;
+  };
+  return `${PROPOSAL_PREFIX}${encodeURIComponent(JSON.stringify(compact))}`;
 }
 
-function decodeWorkerName(raw: unknown): { workerName?: string; proposal?: ProposalPayload } {
+function decodeWorkerName(raw: unknown): { workerName?: string; workerEmail?: string; workerUserId?: string; proposal?: ProposalPayload } {
   const value = String(raw ?? "");
   if (!value.startsWith(PROPOSAL_PREFIX)) {
     return value ? { workerName: value } : {};
@@ -66,10 +79,14 @@ function decodeWorkerName(raw: unknown): { workerName?: string; proposal?: Propo
     }
     const parsed = JSON.parse(parsedRaw) as {
       workerName?: string | null;
+      workerEmail?: string | null;
+      workerUserId?: string | null;
       proposal?: ProposalPayload;
     };
     return {
       workerName: parsed?.workerName ?? undefined,
+      workerEmail: parsed?.workerEmail ?? undefined,
+      workerUserId: parsed?.workerUserId ?? undefined,
       proposal: parsed?.proposal ?? undefined,
     };
   } catch {
@@ -246,23 +263,33 @@ function renderMailLayout({
 async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, row: any): Promise<{ to: string | null; context: NotificationContext | null }> {
   const workerCode = String(row?.worker_code ?? "");
   const gigId = String(row?.gig_id ?? "");
+  const decodedWorker = decodeWorkerName(row?.worker_name);
   const [{ data: worker }, { data: gig }, { data: workerProfileByCode }] = await Promise.all([
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
     sb.from("profiles").select("id,email,display_name").eq("worker_code", workerCode).maybeSingle(),
   ]);
 
+  const resolvedUserId =
+    String(worker?.user_id ?? "").trim() ||
+    String(workerProfileByCode?.id ?? "").trim() ||
+    String(decodedWorker.workerUserId ?? "").trim() ||
+    "";
+
   const [profile, authUserRes] = await Promise.all([
     worker?.user_id
       ? sb.from("profiles").select("email,display_name").eq("id", worker.user_id).maybeSingle()
+      : resolvedUserId
+        ? sb.from("profiles").select("email,display_name").eq("id", resolvedUserId).maybeSingle()
       : Promise.resolve({ data: null as any, error: null as any }),
-    worker?.user_id ? sb.auth.admin.getUserById(worker.user_id) : Promise.resolve({ data: { user: null as any } }),
+    resolvedUserId ? sb.auth.admin.getUserById(resolvedUserId) : Promise.resolve({ data: { user: null as any } }),
   ]);
   const authUser = authUserRes.data?.user ?? null;
   const to =
     String(profile.data?.email ?? "").trim() ||
     String(workerProfileByCode?.email ?? "").trim() ||
     String(worker?.email ?? "").trim() ||
+    String(decodedWorker.workerEmail ?? "").trim() ||
     String(authUser?.email ?? "").trim() ||
     null;
   if (!to) return { to: null, context: null };
@@ -341,7 +368,10 @@ export async function POST(req: Request) {
       .eq("worker_code", body.workerId)
       .maybeSingle();
     const resolvedId = body.id || existingRow?.id || randomUUID();
-    const workerNameEncoded = encodeWorkerName(body.workerName, body.proposal ?? null);
+    const workerNameEncoded = encodeWorkerName(body.workerName, body.proposal ?? null, {
+      workerEmail: body.workerEmail,
+      workerUserId: body.workerUserId,
+    });
     const { data, error } = await sb
       .from("gig_applications")
       .upsert(
@@ -413,7 +443,13 @@ export async function PATCH(req: Request) {
       .eq("id", String(body.id))
       .maybeSingle();
     const shouldEncodeWorkerName = Object.prototype.hasOwnProperty.call(updates, "workerName") || Object.prototype.hasOwnProperty.call(updates, "proposal");
-    const encodedWorkerName = shouldEncodeWorkerName ? encodeWorkerName(updates.workerName, updates.proposal ?? null) : undefined;
+    const prevDecodedForEncode = decodeWorkerName(prevRow?.worker_name);
+    const encodedWorkerName = shouldEncodeWorkerName
+      ? encodeWorkerName(updates.workerName, updates.proposal ?? null, {
+          workerEmail: updates.workerEmail ?? prevDecodedForEncode.workerEmail,
+          workerUserId: updates.workerUserId ?? prevDecodedForEncode.workerUserId,
+        })
+      : undefined;
     const { data, error } = await sb
       .from("gig_applications")
       .update({

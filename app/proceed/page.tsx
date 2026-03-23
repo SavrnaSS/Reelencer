@@ -1795,13 +1795,17 @@ function ProceedPageInner() {
     setError(null);
     setSuccess(null);
     try {
+      const { data: authData } = await supabase.auth.getSession();
+      const user = authData.session?.user ?? null;
       const res = await fetch("/api/gig-applications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           gigId,
           workerId: session.workerId,
-          workerName: session.workerId,
+          workerName: displayName || session.workerId,
+          workerEmail: user?.email ?? null,
+          workerUserId: user?.id ?? null,
           status: "Pending",
           proposal: {
             pitch: resolvedPitch,
@@ -1835,6 +1839,8 @@ function ProceedPageInner() {
     setError(null);
     setSuccess(null);
     try {
+      const { data: authData } = await supabase.auth.getSession();
+      const user = authData.session?.user ?? null;
       const isInstantAccess = isEmailCreatorFlow;
       const res = await fetch("/api/gig-applications", {
         method: "POST",
@@ -1842,7 +1848,9 @@ function ProceedPageInner() {
         body: JSON.stringify({
           gigId,
           workerId: session.workerId,
-          workerName: session.workerId,
+          workerName: displayName || session.workerId,
+          workerEmail: user?.email ?? null,
+          workerUserId: user?.id ?? null,
           status: isInstantAccess ? "Accepted" : "Pending",
           proposal: {
             reviewStatus: isInstantAccess ? "Accepted" : "Pending",
