@@ -32,18 +32,31 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 
 async function sendKycEmail(to: string, subject: string, html: string) {
   const brandedFrom = "Reelencer <noreply@reelencer.com>";
-  const resendApiKey = String(
-    process.env.RESEND_API_KEY ||
-      process.env.RESEND_KEY ||
-      process.env.RESEND_API_TOKEN ||
-      process.env.RESEND_TOKEN ||
-      ""
-  ).trim();
-  const resendFrom = String(
-    process.env.RESEND_FROM ||
-      process.env.RESEND_FROM_EMAIL ||
-      brandedFrom
-  ).trim();
+  const pickFirstEnv = (keys: string[]) => {
+    for (const key of keys) {
+      const value = String(process.env[key] || "").trim();
+      if (value) return { key, value };
+    }
+    return { key: null as string | null, value: "" };
+  };
+
+  const resendKeyMatch = pickFirstEnv([
+    "RESEND_API_KEY",
+    "RESEND_KEY",
+    "RESEND_API_TOKEN",
+    "RESEND_TOKEN",
+    "NEXT_PUBLIC_RESEND_API_KEY",
+    "NEXT_PUBLIC_RESEND_KEY",
+  ]);
+  const resendFromMatch = pickFirstEnv([
+    "RESEND_FROM",
+    "RESEND_FROM_EMAIL",
+    "NEXT_PUBLIC_RESEND_FROM",
+    "NEXT_PUBLIC_RESEND_FROM_EMAIL",
+  ]);
+
+  const resendApiKey = resendKeyMatch.value;
+  const resendFrom = resendFromMatch.value || brandedFrom;
 
   if (resendApiKey) {
     const response = await fetch("https://api.resend.com/emails", {
@@ -113,7 +126,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   if (!host || !user || !pass || !from) {
     return {
       sent: false as const,
-      reason: "Mail delivery is not configured for KYC notifications. Add Resend, Mailgun, or SMTP credentials.",
+      reason: `Mail delivery is not configured for KYC notifications. Resend key not found in [RESEND_API_KEY, RESEND_KEY, RESEND_API_TOKEN, RESEND_TOKEN]. Active Resend from: ${resendFromMatch.key ?? "default sender"}.`,
     };
   }
 
