@@ -31,8 +31,20 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 }
 
 async function sendKycEmail(to: string, subject: string, html: string) {
-  const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
-  const resendFrom = String(process.env.RESEND_FROM || process.env.MAILGUN_FROM || process.env.SMTP_FROM || "Reelencer Support <support@reelencer.com>").trim();
+  const resendApiKey = String(
+    process.env.RESEND_API_KEY ||
+      process.env.RESEND_KEY ||
+      process.env.RESEND_API_TOKEN ||
+      process.env.RESEND_TOKEN ||
+      ""
+  ).trim();
+  const resendFrom = String(
+    process.env.RESEND_FROM ||
+      process.env.RESEND_FROM_EMAIL ||
+      process.env.MAILGUN_FROM ||
+      process.env.SMTP_FROM ||
+      "Reelencer Support <support@reelencer.com>"
+  ).trim();
 
   if (resendApiKey) {
     const response = await fetch("https://api.resend.com/emails", {
@@ -100,7 +112,10 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   const pass = String(process.env.SMTP_PASS || gmailPass).trim();
   const from = String(process.env.SMTP_FROM || `Reelencer Support <support@reelencer.com>`).trim();
   if (!host || !user || !pass || !from) {
-    return { sent: false as const, reason: "Mail delivery is not configured for KYC notifications. Add Mailgun or SMTP credentials." };
+    return {
+      sent: false as const,
+      reason: "Mail delivery is not configured for KYC notifications. Add Resend, Mailgun, or SMTP credentials.",
+    };
   }
 
   const transporter = nodemailer.createTransport({
