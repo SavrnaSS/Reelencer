@@ -31,6 +31,7 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 }
 
 async function sendKycEmail(to: string, subject: string, html: string) {
+  const brandedFrom = "Reelencer <noreply@reelencer.com>";
   const resendApiKey = String(
     process.env.RESEND_API_KEY ||
       process.env.RESEND_KEY ||
@@ -41,9 +42,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   const resendFrom = String(
     process.env.RESEND_FROM ||
       process.env.RESEND_FROM_EMAIL ||
-      process.env.MAILGUN_FROM ||
-      process.env.SMTP_FROM ||
-      "Reelencer Support <support@reelencer.com>"
+      brandedFrom
   ).trim();
 
   if (resendApiKey) {
@@ -75,7 +74,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
   const mailgunDomain = String(process.env.MAILGUN_DOMAIN || "").trim();
   const mailgunApiBase = String(process.env.MAILGUN_API_BASE || "https://api.mailgun.net").trim().replace(/\/+$/, "");
-  const mailgunFrom = String(process.env.MAILGUN_FROM || process.env.SMTP_FROM || resendFrom).trim();
+  const mailgunFrom = String(process.env.MAILGUN_FROM || resendFrom || brandedFrom).trim();
 
   if (mailgunApiKey && mailgunDomain) {
     const params = new URLSearchParams();
@@ -110,7 +109,7 @@ async function sendKycEmail(to: string, subject: string, html: string) {
   const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
   const user = String(process.env.SMTP_USER || gmailUser).trim();
   const pass = String(process.env.SMTP_PASS || gmailPass).trim();
-  const from = String(process.env.SMTP_FROM || `Reelencer Support <support@reelencer.com>`).trim();
+  const from = String(process.env.SMTP_FROM || brandedFrom).trim();
   if (!host || !user || !pass || !from) {
     return {
       sent: false as const,
