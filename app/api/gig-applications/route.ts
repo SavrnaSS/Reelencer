@@ -285,19 +285,45 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
     resolvedUserId ? sb.auth.admin.getUserById(resolvedUserId) : Promise.resolve({ data: { user: null as any } }),
   ]);
   const authUser = authUserRes.data?.user ?? null;
-  const to =
+  let to =
     String(profile.data?.email ?? "").trim() ||
     String(workerProfileByCode?.email ?? "").trim() ||
     String(worker?.email ?? "").trim() ||
     String(decodedWorker.workerEmail ?? "").trim() ||
     String(authUser?.email ?? "").trim() ||
     null;
+  let recipientName = String(profile.data?.display_name ?? workerProfileByCode?.display_name ?? worker?.name ?? authUser?.user_metadata?.name ?? "there");
+
+  if (!to) {
+    const listed = await sb.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    const users = listed.data?.users ?? [];
+    const workerNameNeedle = String(decodedWorker.workerName ?? worker?.name ?? "").trim().toLowerCase();
+    const workerEmailNeedle = String(worker?.email ?? decodedWorker.workerEmail ?? "").trim().toLowerCase();
+    const authCandidate =
+      users.find((candidate) => String(candidate.user_metadata?.worker_code ?? "").trim() === workerCode) ||
+      users.find((candidate) => workerEmailNeedle && String(candidate.email ?? "").trim().toLowerCase() === workerEmailNeedle) ||
+      users.find((candidate) => {
+        const candidateName = String(candidate.user_metadata?.name ?? candidate.user_metadata?.full_name ?? "").trim().toLowerCase();
+        return !!workerNameNeedle && !!candidateName && candidateName === workerNameNeedle;
+      }) ||
+      null;
+
+    if (authCandidate) {
+      to = String(authCandidate.email ?? "").trim() || null;
+      recipientName =
+        String(
+          authCandidate.user_metadata?.name ??
+            authCandidate.user_metadata?.full_name ??
+            recipientName
+        ).trim() || recipientName;
+    }
+  }
   if (!to) return { to: null, context: null };
 
   return {
     to,
     context: {
-      recipient: String(profile.data?.display_name ?? workerProfileByCode?.display_name ?? worker?.name ?? authUser?.user_metadata?.name ?? "there"),
+      recipient: recipientName,
       gigTitle: String(gig?.title ?? "your project"),
       company: String(gig?.company ?? "Reelencer"),
       proceedUrl: `${appBaseUrl()}/proceed?gigId=${encodeURIComponent(gigId)}`,
