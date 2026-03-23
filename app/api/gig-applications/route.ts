@@ -264,15 +264,19 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
   const workerCode = String(row?.worker_code ?? "");
   const gigId = String(row?.gig_id ?? "");
   const decodedWorker = decodeWorkerName(row?.worker_name);
-  const [{ data: worker }, { data: gig }, { data: workerProfileByCode }] = await Promise.all([
+  const [{ data: worker }, { data: workerByUserId }, { data: gig }, { data: workerProfileByCode }, { data: workerProfileById }] = await Promise.all([
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
+    sb.from("workers").select("id,user_id,email,name").eq("user_id", workerCode).maybeSingle(),
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
     sb.from("profiles").select("id,email,display_name").eq("worker_code", workerCode).maybeSingle(),
+    sb.from("profiles").select("id,email,display_name,worker_code").eq("id", workerCode).maybeSingle(),
   ]);
 
   const resolvedUserId =
     String(worker?.user_id ?? "").trim() ||
+    String(workerByUserId?.user_id ?? "").trim() ||
     String(workerProfileByCode?.id ?? "").trim() ||
+    String(workerProfileById?.id ?? "").trim() ||
     String(decodedWorker.workerUserId ?? "").trim() ||
     "";
 
@@ -288,11 +292,21 @@ async function resolveNotificationContext(sb: ReturnType<typeof supabaseAdmin>, 
   let to =
     String(profile.data?.email ?? "").trim() ||
     String(workerProfileByCode?.email ?? "").trim() ||
+    String(workerProfileById?.email ?? "").trim() ||
     String(worker?.email ?? "").trim() ||
+    String(workerByUserId?.email ?? "").trim() ||
     String(decodedWorker.workerEmail ?? "").trim() ||
     String(authUser?.email ?? "").trim() ||
     null;
-  let recipientName = String(profile.data?.display_name ?? workerProfileByCode?.display_name ?? worker?.name ?? authUser?.user_metadata?.name ?? "there");
+  let recipientName = String(
+    profile.data?.display_name ??
+      workerProfileByCode?.display_name ??
+      workerProfileById?.display_name ??
+      worker?.name ??
+      workerByUserId?.name ??
+      authUser?.user_metadata?.name ??
+      "there"
+  );
 
   if (!to) {
     const listed = await sb.auth.admin.listUsers({ page: 1, perPage: 1000 });
