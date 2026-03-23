@@ -32,35 +32,34 @@ async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: stri
 
 async function sendKycEmail(to: string, subject: string, html: string) {
   const brandedFrom = "Reelencer <noreply@reelencer.com>";
-  const pickFirstEnv = (keys: string[]) => {
-    for (const key of keys) {
-      const value = String(process.env[key] || "").trim();
-      if (value) return { key, value };
-    }
-    return { key: null as string | null, value: "" };
-  };
+  const resendEnvCandidates = [
+    { key: "RESEND_API_KEY", value: String(process.env.RESEND_API_KEY || "").trim() },
+    { key: "RESEND_KEY", value: String(process.env.RESEND_KEY || "").trim() },
+    { key: "RESEND_API_TOKEN", value: String(process.env.RESEND_API_TOKEN || "").trim() },
+    { key: "RESEND_TOKEN", value: String(process.env.RESEND_TOKEN || "").trim() },
+    { key: "RESEND_SECRET", value: String(process.env.RESEND_SECRET || "").trim() },
+    { key: "RESEND_PRIVATE_KEY", value: String(process.env.RESEND_PRIVATE_KEY || "").trim() },
+    { key: "RESEND_EMAIL_API_KEY", value: String(process.env.RESEND_EMAIL_API_KEY || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_API_KEY", value: String(process.env.NEXT_PUBLIC_RESEND_API_KEY || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_KEY", value: String(process.env.NEXT_PUBLIC_RESEND_KEY || "").trim() },
+  ] as const;
+  const resendFromCandidates = [
+    { key: "RESEND_FROM", value: String(process.env.RESEND_FROM || "").trim() },
+    { key: "RESEND_FROM_EMAIL", value: String(process.env.RESEND_FROM_EMAIL || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_FROM", value: String(process.env.NEXT_PUBLIC_RESEND_FROM || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_FROM_EMAIL", value: String(process.env.NEXT_PUBLIC_RESEND_FROM_EMAIL || "").trim() },
+  ] as const;
 
-  const resendKeyMatch = pickFirstEnv([
-    "RESEND_API_KEY",
-    "RESEND_KEY",
-    "RESEND_API_TOKEN",
-    "RESEND_TOKEN",
-    "RESEND_SECRET",
-    "RESEND_PRIVATE_KEY",
-    "RESEND_EMAIL_API_KEY",
-    "NEXT_PUBLIC_RESEND_API_KEY",
-    "NEXT_PUBLIC_RESEND_KEY",
-  ]);
-  const resendFromMatch = pickFirstEnv([
-    "RESEND_FROM",
-    "RESEND_FROM_EMAIL",
-    "NEXT_PUBLIC_RESEND_FROM",
-    "NEXT_PUBLIC_RESEND_FROM_EMAIL",
-  ]);
+  const resendKeyMatch =
+    resendEnvCandidates.find((candidate) => candidate.value) ?? ({ key: null, value: "" } as const);
+  const resendFromMatch =
+    resendFromCandidates.find((candidate) => candidate.value) ?? ({ key: null, value: "" } as const);
 
   const resendApiKey = resendKeyMatch.value;
   const resendFrom = resendFromMatch.value || brandedFrom;
-  const visibleResendKeys = Object.keys(process.env).filter((key) => key.startsWith("RESEND"));
+  const visibleResendKeys = resendEnvCandidates
+    .filter((candidate) => candidate.value)
+    .map((candidate) => candidate.key);
 
   if (resendApiKey) {
     const response = await fetch("https://api.resend.com/emails", {
