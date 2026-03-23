@@ -74,11 +74,82 @@ function decodeWorkerName(raw: unknown): { workerName?: string; proposal?: Propo
 }
 
 async function sendDecisionEmail(to: string, subject: string, html: string) {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user;
+  const brandedFrom = "Reelencer <noreply@reelencer.com>";
+
+  const resendEnvCandidates = [
+    { key: "RESEND_API_KEY", value: String(process.env.RESEND_API_KEY || "").trim() },
+    { key: "RESEND_KEY", value: String(process.env.RESEND_KEY || "").trim() },
+    { key: "RESEND_API_TOKEN", value: String(process.env.RESEND_API_TOKEN || "").trim() },
+    { key: "RESEND_TOKEN", value: String(process.env.RESEND_TOKEN || "").trim() },
+    { key: "RESEND_SECRET", value: String(process.env.RESEND_SECRET || "").trim() },
+    { key: "RESEND_PRIVATE_KEY", value: String(process.env.RESEND_PRIVATE_KEY || "").trim() },
+    { key: "RESEND_EMAIL_API_KEY", value: String(process.env.RESEND_EMAIL_API_KEY || "").trim() },
+  ] as const;
+  const resendFromCandidates = [
+    { key: "RESEND_FROM", value: String(process.env.RESEND_FROM || "").trim() },
+    { key: "RESEND_FROM_EMAIL", value: String(process.env.RESEND_FROM_EMAIL || "").trim() },
+  ] as const;
+
+  const resendKey = resendEnvCandidates.find((candidate) => candidate.value)?.value || "";
+  const resendFrom = resendFromCandidates.find((candidate) => candidate.value)?.value || brandedFrom;
+
+  if (resendKey) {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: resendFrom,
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(body || `Resend delivery failed with status ${response.status}.`);
+    }
+    return;
+  }
+
+  const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
+  const mailgunDomain = String(process.env.MAILGUN_DOMAIN || "").trim();
+  const mailgunApiBase = String(process.env.MAILGUN_API_BASE || "https://api.mailgun.net")
+    .trim()
+    .replace(/\/+$/, "");
+  const mailgunFrom = String(process.env.MAILGUN_FROM || resendFrom || brandedFrom).trim();
+
+  if (mailgunApiKey && mailgunDomain) {
+    const params = new URLSearchParams();
+    params.set("from", mailgunFrom);
+    params.set("to", to);
+    params.set("subject", subject);
+    params.set("html", html);
+
+    const response = await fetch(`${mailgunApiBase}/v3/${mailgunDomain}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`api:${mailgunApiKey}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(body || `Mailgun delivery failed with status ${response.status}.`);
+    }
+    return;
+  }
+
+  const gmailUser = String(process.env.GMAIL_IMAP_USER || "").trim();
+  const gmailPass = String(process.env.GMAIL_IMAP_APP_PASSWORD || "").trim();
+  const host = String(process.env.SMTP_HOST || (gmailUser && gmailPass ? "smtp.gmail.com" : "")).trim();
+  const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
+  const user = String(process.env.SMTP_USER || gmailUser).trim();
+  const pass = String(process.env.SMTP_PASS || gmailPass).trim();
+  const from = String(process.env.SMTP_FROM || brandedFrom).trim();
   if (!host || !user || !pass || !from) return;
 
   const transporter = nodemailer.createTransport({
@@ -374,7 +445,27 @@ export async function PATCH(req: Request) {
           ],
           ctaLabel: "Review feedback",
         });
-      } else if (whatsappLinkAdded || onboardingChanged || recruiterNoteChanged) {
+      } else if (whatsappLinkAdded) {
+        await sendLifecycleNotification(to, context, {
+          eyebrow: "WhatsApp Invite Issued",
+          title: "Your recruiter has issued the onboarding invite",
+          intro: `A WhatsApp onboarding link is now available for ${context?.gigTitle ?? "your application"}.`,
+          sections: [
+            {
+              label: "Current stage",
+              value: "Your proposal has moved into recruiter onboarding and is waiting for you to open the latest instructions.",
+            },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
+            {
+              label: "What to do now",
+              value:
+                String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() ||
+                "Open your project panel, review the invite, and complete the onboarding steps shared by the recruiter.",
+            },
+          ],
+          ctaLabel: "Open WhatsApp onboarding",
+        });
+      } else if (onboardingChanged || recruiterNoteChanged) {
         await sendLifecycleNotification(to, context, {
           eyebrow: "Recruiter Workflow Update",
           title: "Your onboarding instructions were updated",
@@ -382,7 +473,6 @@ export async function PATCH(req: Request) {
           sections: [
             { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
             { label: "Next steps", value: String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() },
-            { label: "WhatsApp invite", value: whatsappLinkAdded ? "A WhatsApp onboarding link has been issued in your project panel." : "" },
           ],
           ctaLabel: "View latest instructions",
         });
@@ -399,22 +489,23 @@ export async function PATCH(req: Request) {
         });
       } else if ((nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus) {
         await sendLifecycleNotification(to, context, {
-          eyebrow: nextStatus === "Accepted" ? "Application Approved" : "Application Update",
-          title: nextStatus === "Accepted" ? "Final approval confirmed" : "Application closed",
+          eyebrow: nextStatus === "Accepted" ? "Final Recruiter Decision" : "Final Recruiter Decision",
+          title: nextStatus === "Accepted" ? "You have been selected to move forward" : "Recruiter review has been completed",
           intro:
             nextStatus === "Accepted"
-              ? `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has cleared final review.`
-              : `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has been closed after review.`,
+              ? `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has cleared the final recruiter review.`
+              : `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has completed final recruiter review.`,
           sections: [
             {
-              label: "Summary",
+              label: "Decision summary",
               value:
                 nextStatus === "Accepted"
-                  ? "Continue in your project or workspace panel to begin execution and follow any remaining handoff steps."
-                  : "Review the final notes in your project panel for recruiter context and any next actions.",
+                  ? "You are now approved to continue. Open your project panel to review the next handoff steps and begin the workflow."
+                  : "This application has not been moved forward. Open your project panel to review the latest recruiter context and any closing notes.",
             },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
           ],
-          ctaLabel: nextStatus === "Accepted" ? "Continue workflow" : "Open project panel",
+          ctaLabel: nextStatus === "Accepted" ? "Continue to your project" : "Review final update",
         });
       }
     } catch {
