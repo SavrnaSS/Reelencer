@@ -95,7 +95,7 @@ function decodeWorkerName(raw: unknown): { workerName?: string; workerEmail?: st
 }
 
 async function sendDecisionEmail(to: string, subject: string, html: string) {
-  const brandedFrom = "Reelencer <noreply@reelencer.com>";
+  const brandedFrom = "Reelencer Support <support@reelencer.com>";
 
   const resendEnvCandidates = [
     { key: "RESEND_API_KEY", value: String(process.env.RESEND_API_KEY || "").trim() },
@@ -109,6 +109,8 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
   const resendFromCandidates = [
     { key: "RESEND_FROM", value: String(process.env.RESEND_FROM || "").trim() },
     { key: "RESEND_FROM_EMAIL", value: String(process.env.RESEND_FROM_EMAIL || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_FROM", value: String(process.env.NEXT_PUBLIC_RESEND_FROM || "").trim() },
+    { key: "NEXT_PUBLIC_RESEND_FROM_EMAIL", value: String(process.env.NEXT_PUBLIC_RESEND_FROM_EMAIL || "").trim() },
   ] as const;
 
   const resendKey = resendEnvCandidates.find((candidate) => candidate.value)?.value || "";
@@ -170,7 +172,7 @@ async function sendDecisionEmail(to: string, subject: string, html: string) {
   const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
   const user = String(process.env.SMTP_USER || gmailUser).trim();
   const pass = String(process.env.SMTP_PASS || gmailPass).trim();
-  const from = String(process.env.SMTP_FROM || brandedFrom).trim();
+  const from = brandedFrom;
   if (!host || !user || !pass || !from) {
     throw new Error("Mail delivery is not configured for proposal notifications.");
   }
