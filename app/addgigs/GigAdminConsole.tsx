@@ -354,6 +354,8 @@ export default function GigAdminConsole({
   const [kycLastSyncAt, setKycLastSyncAt] = useState<string | null>(null);
   const [selectedGigId, setSelectedGigId] = useState<string | "All">("All");
   const [applicationStatusFilter, setApplicationStatusFilter] = useState<ApplicationStatus | "All">("All");
+  const [applicationQueueQuery, setApplicationQueueQuery] = useState("");
+  const [applicationQueueSort, setApplicationQueueSort] = useState<"latest" | "oldest" | "worker_asc" | "gig_asc">("latest");
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
   const [selectedApplicationIds, setSelectedApplicationIds] = useState<string[]>([]);
   const [bulkApplicationActionId, setBulkApplicationActionId] = useState<string | null>(null);
@@ -565,15 +567,43 @@ export default function GigAdminConsole({
     if (selectedGigId === "All") return apps;
     return apps.filter((app) => app.gigId === selectedGigId);
   }, [apps, selectedGigId]);
-  const filteredApps = useMemo(() => {
-    if (applicationStatusFilter === "All") return appsForGig;
-    return appsForGig.filter((app) => app.status === applicationStatusFilter);
-  }, [applicationStatusFilter, appsForGig]);
   const gigById = useMemo(() => {
     const map = new Map<string, Gig>();
     gigs.forEach((gig) => map.set(String(gig.id), gig));
     return map;
   }, [gigs]);
+  const filteredApps = useMemo(() => {
+    const statusScoped =
+      applicationStatusFilter === "All" ? appsForGig : appsForGig.filter((app) => app.status === applicationStatusFilter);
+    const query = applicationQueueQuery.trim().toLowerCase();
+    const queryScoped = !query
+      ? statusScoped
+      : statusScoped.filter((app) => {
+          const gig = gigById.get(String(app.gigId));
+          return [
+            app.workerName,
+            app.workerId,
+            app.proposal?.pitch,
+            app.proposal?.approach,
+            gig?.title,
+            gig?.company,
+          ]
+            .map((value) => String(value ?? "").toLowerCase())
+            .some((value) => value.includes(query));
+        });
+    const sorted = [...queryScoped];
+    sorted.sort((a, b) => {
+      if (applicationQueueSort === "oldest") return new Date(a.appliedAt).getTime() - new Date(b.appliedAt).getTime();
+      if (applicationQueueSort === "worker_asc") return String(a.workerName ?? a.workerId).localeCompare(String(b.workerName ?? b.workerId));
+      if (applicationQueueSort === "gig_asc") {
+        const aGig = String(gigById.get(String(a.gigId))?.title ?? a.gigId);
+        const bGig = String(gigById.get(String(b.gigId))?.title ?? b.gigId);
+        return aGig.localeCompare(bGig);
+      }
+      return new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime();
+    });
+    return sorted;
+  }, [applicationQueueQuery, applicationQueueSort, applicationStatusFilter, appsForGig, gigById]);
   const proposalApps = useMemo(
     () =>
       apps.filter(
@@ -2376,6 +2406,30 @@ export default function GigAdminConsole({
                         </div>
                         <div className="rounded-2xl border border-[#d7e2da] bg-[#f7fbf5] p-3">
                           <div className="flex flex-col gap-3">
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+                              <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">
+                                Search queue
+                                <input
+                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900 placeholder:text-slate-400"
+                                  value={applicationQueueQuery}
+                                  onChange={(e) => setApplicationQueueQuery(e.target.value)}
+                                  placeholder="Worker, project, company, or proposal text"
+                                />
+                              </label>
+                              <label className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">
+                                Sort by
+                                <select
+                                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-900"
+                                  value={applicationQueueSort}
+                                  onChange={(e) => setApplicationQueueSort(e.target.value as typeof applicationQueueSort)}
+                                >
+                                  <option value="latest">Latest first</option>
+                                  <option value="oldest">Oldest first</option>
+                                  <option value="worker_asc">Worker name</option>
+                                  <option value="gig_asc">Project title</option>
+                                </select>
+                              </label>
+                            </div>
                             <div className="flex flex-wrap items-center gap-2">
                               <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700">
                                 <input
