@@ -118,6 +118,21 @@ const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"
 const PAYOUTS: PayoutType[] = ["Per task", "Per post", "Monthly"];
 const STATUSES: GigStatus[] = ["Open", "Paused", "Closed"];
 const GIG_TYPES: GigType[] = ["Email Creator", "Workspace", "Project", "Content Posting", "Custom"];
+type BulkReviewDraft = {
+  adminNote: string;
+  adminExplanation: string;
+  whatsappLink: string;
+  onboardingSteps: string;
+};
+
+const DEFAULT_BULK_REVIEW_DRAFT: BulkReviewDraft = {
+  adminNote: "Your proposal has been approved. Review the onboarding instructions below and join the recruiter coordination channel to continue.",
+  adminExplanation:
+    "The selected applications have cleared recruiter review. Workers should join the provided communication channel, complete the onboarding checklist, and wait for the next execution update inside their project feed.",
+  whatsappLink: "",
+  onboardingSteps:
+    "1. Open the recruiter group link.\n2. Join the group using your active WhatsApp account.\n3. Send a short intro message with your worker ID and timezone.\n4. Read the onboarding checklist carefully.\n5. Wait for the recruiter confirmation before starting execution.",
+};
 
 function normalizeGigType(raw?: string) {
   const value = String(raw ?? "")
@@ -304,7 +319,7 @@ function makeId() {
   return `GIG-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
-export type GigAdminView = "create-new-gig" | "kyc-review" | "credential-submissions";
+export type GigAdminView = "create-new-gig" | "applications" | "kyc-review" | "credential-submissions";
 
 export default function GigAdminConsole({
   view = "create-new-gig",
@@ -338,6 +353,10 @@ export default function GigAdminConsole({
   const [loading, setLoading] = useState(true);
   const [kycLastSyncAt, setKycLastSyncAt] = useState<string | null>(null);
   const [selectedGigId, setSelectedGigId] = useState<string | "All">("All");
+  const [applicationStatusFilter, setApplicationStatusFilter] = useState<ApplicationStatus | "All">("All");
+  const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
+  const [selectedApplicationIds, setSelectedApplicationIds] = useState<string[]>([]);
+  const [bulkApplicationActionId, setBulkApplicationActionId] = useState<string | null>(null);
   const [editingGig, setEditingGig] = useState<Gig | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [mediaUploading, setMediaUploading] = useState(false);
@@ -345,6 +364,7 @@ export default function GigAdminConsole({
   const [proposalReviewDraft, setProposalReviewDraft] = useState<
     Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
   >({});
+  const [bulkReviewDraft, setBulkReviewDraft] = useState<BulkReviewDraft>({ ...DEFAULT_BULK_REVIEW_DRAFT });
 
   const [form, setForm] = useState({
     title: "",
@@ -541,10 +561,14 @@ export default function GigAdminConsole({
     };
   }, []);
 
-  const filteredApps = useMemo(() => {
+  const appsForGig = useMemo(() => {
     if (selectedGigId === "All") return apps;
     return apps.filter((app) => app.gigId === selectedGigId);
   }, [apps, selectedGigId]);
+  const filteredApps = useMemo(() => {
+    if (applicationStatusFilter === "All") return appsForGig;
+    return appsForGig.filter((app) => app.status === applicationStatusFilter);
+  }, [applicationStatusFilter, appsForGig]);
   const gigById = useMemo(() => {
     const map = new Map<string, Gig>();
     gigs.forEach((gig) => map.set(String(gig.id), gig));
@@ -565,6 +589,43 @@ export default function GigAdminConsole({
       ),
     [apps]
   );
+  const applicationStatusCounts = useMemo(() => {
+    const counts: Record<ApplicationStatus, number> = {
+      Applied: 0,
+      Pending: 0,
+      Accepted: 0,
+      Rejected: 0,
+      Withdrawn: 0,
+    };
+    for (const app of appsForGig) {
+      counts[app.status] = (counts[app.status] ?? 0) + 1;
+    }
+    return counts;
+  }, [appsForGig]);
+  const selectedApplication = useMemo(() => {
+    if (!filteredApps.length) return null;
+    return filteredApps.find((app) => app.id === selectedApplicationId) ?? filteredApps[0];
+  }, [filteredApps, selectedApplicationId]);
+  const selectedFilteredApplications = useMemo(
+    () => filteredApps.filter((app) => selectedApplicationIds.includes(app.id)),
+    [filteredApps, selectedApplicationIds]
+  );
+  const allFilteredSelected = filteredApps.length > 0 && filteredApps.every((app) => selectedApplicationIds.includes(app.id));
+
+  useEffect(() => {
+    if (!filteredApps.length) {
+      setSelectedApplicationId(null);
+      return;
+    }
+    if (!selectedApplicationId || !filteredApps.some((app) => app.id === selectedApplicationId)) {
+      setSelectedApplicationId(filteredApps[0].id);
+    }
+  }, [filteredApps, selectedApplicationId]);
+
+  useEffect(() => {
+    const validIds = new Set(filteredApps.map((app) => app.id));
+    setSelectedApplicationIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [filteredApps]);
 
   const validateForm = () => {
     if (!form.title.trim()) return "Title is required.";
@@ -944,6 +1005,58 @@ export default function GigAdminConsole({
     await persistApplicationReview(app, review, status);
   };
 
+  const toggleApplicationSelection = (appId: string) => {
+    setSelectedApplicationIds((prev) => (prev.includes(appId) ? prev.filter((id) => id !== appId) : [...prev, appId]));
+  };
+
+  const toggleSelectAllFilteredApplications = () => {
+    const filteredIds = filteredApps.map((app) => app.id);
+    if (!filteredIds.length) return;
+    setSelectedApplicationIds((prev) => {
+      const allSelected = filteredIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !filteredIds.includes(id));
+      }
+      const next = new Set(prev);
+      filteredIds.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+  };
+
+  const selectApplicationsByStatus = (status: ApplicationStatus) => {
+    const targetIds = filteredApps.filter((app) => app.status === status).map((app) => app.id);
+    setSelectedApplicationIds(targetIds);
+  };
+
+  const invertFilteredApplicationSelection = () => {
+    const current = new Set(selectedApplicationIds);
+    setSelectedApplicationIds(filteredApps.map((app) => app.id).filter((id) => !current.has(id)));
+  };
+
+  const runBulkApplicationAction = async (
+    status: ApplicationStatus,
+    review?: BulkReviewDraft
+  ) => {
+    const targets = filteredApps.filter((app) => selectedApplicationIds.includes(app.id));
+    if (!targets.length) {
+      setApplicationNotice({ tone: "danger", text: "Select one or more applications before running a bulk action." });
+      return;
+    }
+    setBulkApplicationActionId(`${status}:${Date.now()}`);
+    try {
+      for (const app of targets) {
+        await persistApplicationReview(app, review, status);
+      }
+      setSelectedApplicationIds([]);
+      setApplicationNotice({
+        tone: "success",
+        text: `${targets.length} application${targets.length === 1 ? "" : "s"} updated to ${status.toLowerCase()} in bulk.`,
+      });
+    } finally {
+      setBulkApplicationActionId(null);
+    }
+  };
+
   const updateAssignment = async (
     assignment: Assignment,
     status: string,
@@ -1107,10 +1220,290 @@ export default function GigAdminConsole({
     }
   };
 
+  const selectedApplicationPanel = selectedApplication
+    ? (() => {
+        const app = selectedApplication;
+        const relatedGig = gigById.get(String(app.gigId));
+        const isProjectProposal = isProjectStyleGig(relatedGig?.gigType);
+        const draft = proposalReviewDraft[app.id] ?? {
+          adminNote: app.proposal?.adminNote ?? "",
+          adminExplanation: app.proposal?.adminExplanation ?? "",
+          whatsappLink: app.proposal?.whatsappLink ?? "",
+          onboardingSteps: app.proposal?.onboardingSteps ?? "",
+        };
+
+        return (
+          <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="flex flex-col gap-4 border-b border-slate-200 pb-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Selected submission</div>
+                <div className="mt-2 break-words text-2xl font-semibold text-slate-900">{app.workerName ?? app.workerId}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {relatedGig?.title ?? app.gigId} • {relatedGig?.company ?? "Reelencer"}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Applied {new Date(app.appliedAt).toLocaleDateString()}</span>
+                  {app.decidedAt && (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                      Reviewed {new Date(app.decidedAt).toLocaleDateString()}
+                    </span>
+                  )}
+                  {relatedGig?.gigType && (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">{formatGigTypeLabel(relatedGig.gigType)}</span>
+                  )}
+                </div>
+              </div>
+              <span
+                className={`self-start rounded-full border px-3 py-1 text-xs font-semibold ${
+                  app.status === "Accepted"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : app.status === "Rejected"
+                      ? "border-rose-200 bg-rose-50 text-rose-700"
+                      : "border-slate-200 bg-slate-50 text-slate-600"
+                }`}
+              >
+                {app.status}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+              <div className="space-y-4">
+                {app.proposal && (
+                  <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposal</div>
+                      {app.proposal.reviewStatus && (
+                        <span className="rounded-full border border-[#d4dfd7] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#4d665c]">
+                          {app.proposal.reviewStatus}
+                        </span>
+                      )}
+                    </div>
+                    {app.proposal.pitch && (
+                      <div className="mt-3 text-sm leading-6 text-slate-700">
+                        <span className="font-semibold text-slate-900">{isProjectProposal ? "Cover letter:" : "Pitch:"}</span> {app.proposal.pitch}
+                      </div>
+                    )}
+                    {app.proposal.approach && !isProjectProposal && (
+                      <div className="mt-3 text-sm leading-6 text-slate-700">
+                        <span className="font-semibold text-slate-900">Approach:</span> {app.proposal.approach}
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                      {app.proposal.timeline && (
+                        <span className="rounded-full border border-[#d4dfd7] bg-white px-2 py-1 text-[#4d665c]">
+                          {isProjectProposal ? "Estimated hours" : "Timeline"}: {app.proposal.timeline}
+                        </span>
+                      )}
+                      {app.proposal.budget && (
+                        <span className="rounded-full border border-[#d4dfd7] bg-white px-2 py-1 text-[#4d665c]">
+                          {isProjectProposal ? "Hourly price" : "Budget note"}: {app.proposal.budget}
+                        </span>
+                      )}
+                      {app.proposal.submittedAt && (
+                        <span className="rounded-full border border-[#d4dfd7] bg-white px-2 py-1 text-[#4d665c]">
+                          Submitted: {new Date(app.proposal.submittedAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    {app.proposal.portfolio && !isProjectProposal && (
+                      <div className="mt-3 text-sm leading-6 text-slate-700">
+                        <span className="font-semibold text-slate-900">Portfolio:</span> {app.proposal.portfolio}
+                      </div>
+                    )}
+                    {app.proposal.onboardingSteps && (
+                      <div className="mt-3 text-sm leading-6 text-slate-700">
+                        <span className="font-semibold text-slate-900">Post-onboarding steps:</span> {app.proposal.onboardingSteps}
+                      </div>
+                    )}
+                    {app.proposal.reviewedAt && (
+                      <div className="mt-3 text-[11px] text-slate-500">Reviewed: {new Date(app.proposal.reviewedAt).toLocaleString()}</div>
+                    )}
+                    {app.proposal.groupJoinedConfirmed && (
+                      <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                        Worker confirmed WhatsApp group joined
+                        {app.proposal.groupJoinedConfirmedAt ? ` (${new Date(app.proposal.groupJoinedConfirmedAt).toLocaleString()})` : ""}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-[11px] font-semibold text-slate-600">
+                    Admin note
+                    <input
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                      value={draft.adminNote}
+                      onChange={(e) =>
+                        setProposalReviewDraft((prev) => ({
+                          ...prev,
+                          [app.id]: { ...(prev[app.id] ?? draft), adminNote: e.target.value },
+                        }))
+                      }
+                      onBlur={(e) =>
+                        persistApplicationReview(
+                          app,
+                          { ...(proposalReviewDraft[app.id] ?? draft), adminNote: e.target.value },
+                          app.status
+                        )
+                      }
+                      placeholder="Short status note for the worker feed"
+                    />
+                  </label>
+                  <label className="text-[11px] font-semibold text-slate-600">
+                    WhatsApp group link
+                    <input
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                      value={draft.whatsappLink}
+                      onChange={(e) =>
+                        setProposalReviewDraft((prev) => ({
+                          ...prev,
+                          [app.id]: { ...(prev[app.id] ?? draft), whatsappLink: e.target.value },
+                        }))
+                      }
+                      onBlur={(e) =>
+                        persistApplicationReview(
+                          app,
+                          { ...(proposalReviewDraft[app.id] ?? draft), whatsappLink: e.target.value },
+                          app.status
+                        )
+                      }
+                      placeholder="https://chat.whatsapp.com/..."
+                    />
+                  </label>
+                </div>
+                <label className="block text-[11px] font-semibold text-slate-600">
+                  Post-onboarding steps
+                  <textarea
+                    className="mt-1 h-28 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                    value={draft.onboardingSteps}
+                    onChange={(e) =>
+                      setProposalReviewDraft((prev) => ({
+                        ...prev,
+                        [app.id]: { ...(prev[app.id] ?? draft), onboardingSteps: e.target.value },
+                      }))
+                    }
+                    onBlur={(e) =>
+                      persistApplicationReview(
+                        app,
+                        { ...(proposalReviewDraft[app.id] ?? draft), onboardingSteps: e.target.value },
+                        app.status
+                      )
+                    }
+                    placeholder="After joining group: submit intro message, share worker ID, confirm timezone, and wait for admin checklist."
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold text-slate-600">
+                  Admin explanation
+                  <textarea
+                    className="mt-1 h-28 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                    value={draft.adminExplanation}
+                    onChange={(e) =>
+                      setProposalReviewDraft((prev) => ({
+                        ...prev,
+                        [app.id]: { ...(prev[app.id] ?? draft), adminExplanation: e.target.value },
+                      }))
+                    }
+                    onBlur={(e) =>
+                      persistApplicationReview(
+                        app,
+                        { ...(proposalReviewDraft[app.id] ?? draft), adminExplanation: e.target.value },
+                        app.status
+                      )
+                    }
+                    placeholder="Explain next steps, reason, or onboarding guidance."
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Review controls</div>
+                  <div className="mt-3 grid gap-3">
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Current state</div>
+                      <div className="mt-2 text-xl font-semibold text-slate-900">{app.status}</div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {app.status === "Accepted"
+                          ? "Candidate has been moved into onboarding."
+                          : app.status === "Rejected"
+                            ? "Candidate is waiting for a revised submission."
+                            : "Review is still in progress."}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Communication readiness</div>
+                      <div className="mt-2 text-base font-semibold text-slate-900">
+                        {draft.whatsappLink.trim() ? "Invite prepared" : "Invite not issued"}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {draft.whatsappLink.trim()
+                          ? "Worker will be notified when the recruiter update is published."
+                          : "Add onboarding communication before moving the candidate deeper into the workflow."}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Bulk action pattern</div>
+                      <div className="mt-2 text-sm leading-6 text-slate-600">
+                        Save recruiter note, explanation, and onboarding details here, then publish the correct status to sync the worker feed and mail updates.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
+                        updateApplication(app, "Pending", {
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
+                    >
+                      Mark pending
+                    </button>
+                    <button
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700"
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
+                        updateApplication(app, "Accepted", {
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700"
+                      onClick={() => {
+                        const latest = proposalReviewDraft[app.id] ?? draft;
+                        updateApplication(app, "Rejected", {
+                          adminNote: latest.adminNote,
+                          adminExplanation: latest.adminExplanation,
+                          whatsappLink: latest.whatsappLink,
+                          onboardingSteps: latest.onboardingSteps,
+                        });
+                      }}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()
+    : null;
+
   return (
     <div className="ops-dashboard-skin min-h-screen bg-slate-50 text-slate-900">
       <div className="sticky top-0 z-40 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-start justify-between gap-3 px-4 py-4 sm:px-5 sm:py-6">
+        <div className={`mx-auto flex w-full flex-wrap items-start justify-between gap-3 px-4 py-4 sm:px-5 sm:py-6 ${view === "applications" ? "max-w-[92rem]" : "max-w-6xl"}`}>
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#1f4f43] text-white font-black">R</div>
             <div>
@@ -1135,7 +1528,7 @@ export default function GigAdminConsole({
         </div>
       </div>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-5 sm:py-8">
+      <main className={`mx-auto w-full px-4 py-6 sm:px-5 sm:py-8 ${view === "applications" ? "max-w-[92rem]" : "max-w-6xl"}`}>
         <section className="mb-6">
           <div className="flex w-full items-center gap-2 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <Link
@@ -1145,6 +1538,14 @@ export default function GigAdminConsole({
               }`}
             >
               Create new gig
+            </Link>
+            <Link
+              href="/addgigs/applications"
+              className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition ${
+                view === "applications" ? "bg-[#1f4f43] text-white" : "text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              Applications
             </Link>
             <Link
               href="/addgigs/kyc-review"
@@ -1533,7 +1934,7 @@ export default function GigAdminConsole({
           </div>
         </section>
 
-        <section className="mt-10 grid gap-6 lg:grid-cols-[1fr_1fr]">
+        <section className="mt-10">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 text-sm font-semibold text-slate-900">Gig listings</div>
@@ -1596,28 +1997,130 @@ export default function GigAdminConsole({
               ))}
             </div>
           </div>
+            </section>
+          </>
+        )}
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-900">Applications</div>
-                <div className="text-xs text-slate-500">Review and approve applicants.</div>
-              </div>
-              <select
-                className="w-full min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 sm:w-auto"
-                value={selectedGigId}
-                onChange={(e) => setSelectedGigId(e.target.value as string)}
-              >
-                <option value="All">All gigs</option>
-                {gigs.map((gig) => (
-                  <option key={gig.id} value={gig.id}>
-                    {gig.title}
-                  </option>
-                ))}
-              </select>
-            </div>
+        {view === "applications" && (
+          <>
+            <section className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+              <aside className="space-y-5 lg:sticky lg:top-28 lg:self-start">
+                <div className="overflow-hidden rounded-[28px] border border-[#d5dfd6] bg-[linear-gradient(180deg,#f7fbf8,#eef4ef)] shadow-[0_24px_60px_rgba(31,79,67,0.08)]">
+                  <div className="border-b border-[#d8e3db] px-5 py-5">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#6f877d]">Applications desk</div>
+                    <div className="mt-2 text-2xl font-semibold leading-tight text-[#203a33]">Bulk recruiter review</div>
+                    <div className="mt-2 text-sm leading-6 text-[#5f766e]">
+                      A dedicated command surface for screening, onboarding, and final hiring decisions across all gigs.
+                    </div>
+                  </div>
+                  <div className="space-y-3 px-5 py-5">
+                    <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f877d]">
+                      Focus queue
+                      <select
+                        className="mt-2 w-full rounded-2xl border border-[#c9d7ce] bg-white px-3 py-3 text-sm text-slate-700 shadow-sm"
+                        value={selectedGigId}
+                        onChange={(e) => setSelectedGigId(e.target.value as string)}
+                      >
+                        <option value="All">All gigs</option>
+                        {gigs.map((gig) => (
+                          <option key={gig.id} value={gig.id}>
+                            {gig.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Live queue</div>
+                        <div className="mt-2 text-2xl font-semibold text-[#203a33]">{filteredApps.length}</div>
+                        <div className="mt-1 text-[11px] text-[#70857d]">records in focus</div>
+                      </div>
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Approval rate</div>
+                        <div className="mt-2 text-2xl font-semibold text-[#203a33]">
+                          {appsForGig.length > 0 ? `${Math.round((applicationStatusCounts.Accepted / appsForGig.length) * 100)}%` : "0%"}
+                        </div>
+                        <div className="mt-1 text-[11px] text-[#70857d]">accepted so far</div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Queue discipline</div>
+                      <div className="mt-2 text-sm leading-6 text-[#556a62]">
+                        Finalize recruiter note, onboarding direction, and communication channel before publishing a status change to the worker.
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-[#d3dfd7] bg-[#1f4f43] px-4 py-4 text-white">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">Operations pulse</div>
+                      <div className="mt-3 space-y-2 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-white/75">Awaiting review</span>
+                          <span className="font-semibold">{applicationStatusCounts.Pending + applicationStatusCounts.Applied}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-white/75">Need correction</span>
+                          <span className="font-semibold">{applicationStatusCounts.Rejected}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-white/75">Submitted proposals</span>
+                          <span className="font-semibold">{proposalApps.length}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </aside>
 
-            <div className="mt-4 space-y-3">
+              <div className="space-y-6">
+                <div className="overflow-hidden rounded-[32px] border border-[#d7e0d8] bg-white shadow-[0_24px_70px_rgba(15,43,34,0.08)]">
+                  <div className="border-b border-[#e0e7e1] bg-[linear-gradient(135deg,#f6faf7,#eef5ef)] px-5 py-5 sm:px-7">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-[#6f877d]">Recruiter operations</div>
+                      <div className="mt-2 max-w-4xl text-3xl font-semibold tracking-tight text-[#203a33] sm:text-4xl">Applications command center</div>
+                      <div className="mt-3 max-w-3xl text-sm leading-6 text-[#5c7169]">
+                        Review applicant quality, publish recruiter guidance, issue onboarding links, and move high-intent workers through the queue without leaving this desk.
+                      </div>
+                    </div>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        { label: "Live applications", value: appsForGig.length, tint: "bg-sky-50 text-sky-800" },
+                        { label: "Pending review", value: applicationStatusCounts.Pending + applicationStatusCounts.Applied, tint: "bg-amber-50 text-amber-800" },
+                        { label: "Approved", value: applicationStatusCounts.Accepted, tint: "bg-emerald-50 text-emerald-800" },
+                        { label: "Corrections", value: applicationStatusCounts.Rejected, tint: "bg-rose-50 text-rose-700" },
+                      ].map((item) => (
+                        <div key={item.label} className="rounded-2xl border border-[#d7e2da] bg-white px-4 py-4">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#778983]">{item.label}</div>
+                          <div className="mt-3 flex items-end justify-between gap-3">
+                            <div className="text-3xl font-semibold text-[#203a33]">{item.value}</div>
+                            <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${item.tint}`}>Live</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid gap-4 px-5 py-5 sm:px-7 lg:grid-cols-3">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Decision throughput</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{applicationStatusCounts.Accepted + applicationStatusCounts.Rejected}</div>
+                      <div className="mt-1 text-sm text-slate-500">Applications already reviewed in this queue.</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Onboarding ready</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">
+                        {appsForGig.filter((app) => app.proposal?.whatsappLink?.trim()).length}
+                      </div>
+                      <div className="mt-1 text-sm text-slate-500">Applications with a prepared recruiter communication channel.</div>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Selected queue scope</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{selectedGigId === "All" ? "All gigs" : "Focused"}</div>
+                      <div className="mt-1 text-sm text-slate-500">
+                        {selectedGigId === "All" ? "Reviewing applications across every active marketplace listing." : "Filtering review activity to one gig."}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <section className="space-y-4">
               {applicationNotice && (
                 <div
                   className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
@@ -1629,251 +2132,333 @@ export default function GigAdminConsole({
                   {applicationNotice.text}
                 </div>
               )}
-              <div className="rounded-2xl border border-[#d4dfd7] bg-[#f7fbf5] p-3 sm:p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposals</div>
-                  <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2 py-0.5 text-[11px] font-semibold text-[#2f6655]">
-                    {proposalApps.length}
-                  </span>
-                </div>
-                {proposalApps.length === 0 ? (
-                  <div className="mt-2 text-xs text-[#6f877d]">
-                    No proposal received yet.
-                  </div>
-                ) : (
-                  <div className="mt-2 space-y-2">
-                    {proposalApps.map((app) => (
-                      <div key={`proposal-${app.id}`} className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="text-xs font-semibold text-slate-800">{app.workerName ?? app.workerId}</div>
-                          <div className="text-[11px] text-slate-500">Gig: {app.gigId}</div>
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-600 line-clamp-2">{app.proposal?.pitch || app.proposal?.approach || "Proposal submitted"}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
-              {filteredApps.length === 0 && (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-xs text-slate-500">
-                  No applications yet.
-                </div>
-              )}
-              {filteredApps.map((app) => (
-                <div key={app.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
-                  {(() => {
-                    const relatedGig = gigById.get(String(app.gigId));
-                    const isProjectProposal = isProjectStyleGig(relatedGig?.gigType);
-                    const draft = proposalReviewDraft[app.id] ?? {
-                      adminNote: app.proposal?.adminNote ?? "",
-                      adminExplanation: app.proposal?.adminExplanation ?? "",
-                      whatsappLink: app.proposal?.whatsappLink ?? "",
-                      onboardingSteps: app.proposal?.onboardingSteps ?? "",
-                    };
-                    return (
-                      <>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="break-words text-sm font-semibold text-slate-900">{app.workerName ?? app.workerId}</div>
-                      <div className="mt-1 text-xs text-slate-500">Gig: {app.gigId}</div>
-                    </div>
-                    <span className="self-start rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600">
-                      {app.status}
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span>Applied {new Date(app.appliedAt).toLocaleDateString()}</span>
-                    {app.decidedAt && <span>• Reviewed {new Date(app.decidedAt).toLocaleDateString()}</span>}
-                  </div>
-                  {app.proposal && (
-                    <div className="mt-3 rounded-xl border border-[#d4dfd7] bg-white p-3">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6f877d]">Submitted proposal</div>
-                      {app.proposal.pitch && (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <span className="font-semibold text-slate-700">{isProjectProposal ? "Cover letter:" : "Pitch:"}</span> {app.proposal.pitch}
-                        </div>
-                      )}
-                      {app.proposal.approach && !isProjectProposal && (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <span className="font-semibold text-slate-700">Approach:</span> {app.proposal.approach}
-                        </div>
-                      )}
-                      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-                        {app.proposal.timeline && (
-                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
-                            {isProjectProposal ? "Estimated hours" : "Timeline"}: {app.proposal.timeline}
-                          </span>
-                        )}
-                        {app.proposal.budget && (
-                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
-                            {isProjectProposal ? "Hourly price" : "Budget note"}: {app.proposal.budget}
-                          </span>
-                        )}
-                        {app.proposal.submittedAt && (
-                          <span className="rounded-full border border-[#d4dfd7] bg-[#f7fbf5] px-2 py-1 text-[#4d665c]">
-                            Submitted: {new Date(app.proposal.submittedAt).toLocaleString()}
-                          </span>
-                        )}
+                  <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">Review queue filters</div>
+                        <div className="mt-1 text-xs text-slate-500">Use status filters to process applications in batches without losing context.</div>
                       </div>
-                      {app.proposal.portfolio && !isProjectProposal && (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <span className="font-semibold text-slate-700">Portfolio:</span> {app.proposal.portfolio}
+                      <div className="flex flex-wrap gap-2">
+                        {(["All", "Pending", "Accepted", "Rejected", "Applied", "Withdrawn"] as const).map((status) => {
+                          const count = status === "All" ? appsForGig.length : applicationStatusCounts[status as ApplicationStatus];
+                          const active = applicationStatusFilter === status;
+                          return (
+                            <button
+                              key={status}
+                              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                                active
+                                  ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
+                                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                              }`}
+                              onClick={() => setApplicationStatusFilter(status)}
+                            >
+                              {status} ({count})
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border border-[#d4dfd7] bg-[#f7fbf5] p-4 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Bulk action studio</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">
+                          {selectedApplicationIds.length} selected from the filtered queue
                         </div>
-                      )}
-                      {app.proposal.onboardingSteps && (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <span className="font-semibold text-slate-700">Post-onboarding steps:</span> {app.proposal.onboardingSteps}
+                        <div className="mt-1 text-xs leading-5 text-slate-500">
+                          Apply recruiter notes and status decisions across the current filtered set without opening each application one by one.
                         </div>
-                      )}
-                      {app.proposal.reviewedAt && (
-                        <div className="mt-2 text-[11px] text-slate-500">Reviewed: {new Date(app.proposal.reviewedAt).toLocaleString()}</div>
-                      )}
-                      {app.proposal.groupJoinedConfirmed && (
-                        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                          Worker confirmed WhatsApp group joined
-                          {app.proposal.groupJoinedConfirmedAt ? ` (${new Date(app.proposal.groupJoinedConfirmedAt).toLocaleString()})` : ""}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-400"
+                          onClick={toggleSelectAllFilteredApplications}
+                        >
+                          {allFilteredSelected ? "Clear filtered selection" : "Select filtered queue"}
+                        </button>
+                        <button
+                          className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-400"
+                          onClick={() => setSelectedApplicationIds([])}
+                        >
+                          Clear selection
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                        onClick={() => selectApplicationsByStatus("Pending")}
+                      >
+                        Pending only
+                      </button>
+                      <button
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                        onClick={() => selectApplicationsByStatus("Accepted")}
+                      >
+                        Accepted only
+                      </button>
+                      <button
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                        onClick={() => selectApplicationsByStatus("Rejected")}
+                      >
+                        Rejected only
+                      </button>
+                      <button
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                        onClick={invertFilteredApplicationSelection}
+                      >
+                        Invert selection
+                      </button>
+                      <button
+                        className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-[11px] font-semibold text-[#2f6655] hover:border-[#9fc3b1]"
+                        onClick={() => setBulkReviewDraft({ ...DEFAULT_BULK_REVIEW_DRAFT, whatsappLink: bulkReviewDraft.whatsappLink })}
+                      >
+                        Restore default copy
+                      </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Selected total</div>
+                        <div className="mt-2 text-2xl font-semibold text-[#203a33]">{selectedFilteredApplications.length}</div>
+                      </div>
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Selected pending</div>
+                        <div className="mt-2 text-2xl font-semibold text-[#203a33]">
+                          {selectedFilteredApplications.filter((app) => app.status === "Pending" || app.status === "Applied").length}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Selected approved</div>
+                        <div className="mt-2 text-2xl font-semibold text-[#203a33]">
+                          {selectedFilteredApplications.filter((app) => app.status === "Accepted").length}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                      <div className="xl:col-span-2 rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">One-step onboarding template</div>
+                        <div className="mt-2 text-sm leading-6 text-slate-600">
+                          Standard onboarding copy is preloaded below. For the common flow, the admin only needs to paste the recruiter WhatsApp link and run the bulk approval action.
+                        </div>
+                      </div>
+                      <label className="text-[11px] font-semibold text-slate-600">
+                        Bulk admin note
+                        <input
+                          className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                          value={bulkReviewDraft.adminNote}
+                          onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, adminNote: e.target.value }))}
+                          placeholder="Short worker-facing note"
+                        />
+                      </label>
+                      <label className="text-[11px] font-semibold text-slate-600">
+                        Bulk WhatsApp link
+                        <input
+                          className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                          value={bulkReviewDraft.whatsappLink}
+                          onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, whatsappLink: e.target.value }))}
+                          placeholder="https://chat.whatsapp.com/..."
+                        />
+                      </label>
+                      <label className="text-[11px] font-semibold text-slate-600">
+                        Bulk post-onboarding steps
+                        <textarea
+                          className="mt-1 h-24 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                          value={bulkReviewDraft.onboardingSteps}
+                          onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, onboardingSteps: e.target.value }))}
+                          placeholder="Shared onboarding instruction for the selected workers."
+                        />
+                      </label>
+                      <label className="text-[11px] font-semibold text-slate-600">
+                        Bulk admin explanation
+                        <textarea
+                          className="mt-1 h-24 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                          value={bulkReviewDraft.adminExplanation}
+                          onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, adminExplanation: e.target.value }))}
+                          placeholder="Internal or worker-facing explanation for the selected group."
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => runBulkApplicationAction("Pending", bulkReviewDraft)}
+                        disabled={!selectedApplicationIds.length || !!bulkApplicationActionId}
+                      >
+                        {bulkApplicationActionId?.startsWith("Pending:") ? "Updating..." : "Bulk mark pending"}
+                      </button>
+                      <button
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => runBulkApplicationAction("Accepted", bulkReviewDraft)}
+                        disabled={!selectedApplicationIds.length || !!bulkApplicationActionId}
+                      >
+                        {bulkApplicationActionId?.startsWith("Accepted:") ? "Approving..." : "Bulk approve"}
+                      </button>
+                      <button
+                        className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => runBulkApplicationAction("Rejected", bulkReviewDraft)}
+                        disabled={!selectedApplicationIds.length || !!bulkApplicationActionId}
+                      >
+                        {bulkApplicationActionId?.startsWith("Rejected:") ? "Rejecting..." : "Bulk reject"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {filteredApps.length === 0 ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                      No applications match the current review filters.
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
+                      <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm">
+                    <div className="px-2 pb-3">
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Application queue</div>
+                            <div className="mt-1 text-sm font-semibold text-slate-900">{filteredApps.length} active records</div>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                            Live sync
+                          </span>
+                        </div>
+                        <div className="rounded-2xl border border-[#d7e2da] bg-[#f7fbf5] p-3">
+                          <div className="flex flex-col gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={allFilteredSelected}
+                                  onChange={toggleSelectAllFilteredApplications}
+                                  className="h-4 w-4 rounded border-slate-300 text-[#1f4f43] focus:ring-[#1f4f43]"
+                                />
+                                Select all in queue
+                              </label>
+                              <button
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-slate-300"
+                                onClick={() => selectApplicationsByStatus("Pending")}
+                              >
+                                Select pending
+                              </button>
+                              <button
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-slate-300"
+                                onClick={() => selectApplicationsByStatus("Accepted")}
+                              >
+                                Select accepted
+                              </button>
+                              <button
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-slate-300"
+                                onClick={() => selectApplicationsByStatus("Rejected")}
+                              >
+                                Select rejected
+                              </button>
+                              <button
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-slate-300"
+                                onClick={invertFilteredApplicationSelection}
+                              >
+                                Invert
+                              </button>
+                              <button
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:border-slate-300"
+                                onClick={() => setSelectedApplicationIds([])}
+                              >
+                                Clear
+                              </button>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                              <div className="rounded-2xl border border-[#d7e2da] bg-white px-3 py-3">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Selected</div>
+                                <div className="mt-1 text-xl font-semibold text-[#203a33]">{selectedFilteredApplications.length}</div>
+                              </div>
+                              <div className="rounded-2xl border border-[#d7e2da] bg-white px-3 py-3">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Pending slice</div>
+                                <div className="mt-1 text-xl font-semibold text-[#203a33]">
+                                  {selectedFilteredApplications.filter((app) => app.status === "Pending" || app.status === "Applied").length}
+                                </div>
+                              </div>
+                              <div className="rounded-2xl border border-[#d7e2da] bg-white px-3 py-3">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Approved slice</div>
+                                <div className="mt-1 text-xl font-semibold text-[#203a33]">
+                                  {selectedFilteredApplications.filter((app) => app.status === "Accepted").length}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
+                      {filteredApps.map((app) => {
+                        const relatedGig = gigById.get(String(app.gigId));
+                        const active = selectedApplication?.id === app.id;
+                        const checked = selectedApplicationIds.includes(app.id);
+                        return (
+                          <div
+                            key={app.id}
+                            className={`rounded-2xl border px-3 py-3 transition ${
+                              active
+                                ? "border-[#bcd6c9] bg-[#f7fbf5] shadow-sm"
+                                : "border-transparent bg-slate-50 hover:border-slate-200 hover:bg-white"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleApplicationSelection(app.id)}
+                                    className="h-4 w-4 rounded border-slate-300 text-[#1f4f43] focus:ring-[#1f4f43]"
+                                  />
+                                  <button
+                                    className="truncate text-left text-sm font-semibold text-slate-900"
+                                    onClick={() => setSelectedApplicationId(app.id)}
+                                  >
+                                    {app.workerName ?? app.workerId}
+                                  </button>
+                                </div>
+                                <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{relatedGig?.title ?? app.gigId}</div>
+                              </div>
+                              <span
+                                className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                                  app.status === "Accepted"
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    : app.status === "Rejected"
+                                      ? "border-rose-200 bg-rose-50 text-rose-700"
+                                      : "border-slate-200 bg-white text-slate-600"
+                                }`}
+                              >
+                                {app.status}
+                              </span>
+                            </div>
+                            <div className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-600">
+                              {app.proposal?.pitch || app.proposal?.approach || "Proposal submitted"}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                              <span>{new Date(app.appliedAt).toLocaleDateString()}</span>
+                              {app.decidedAt && <span>Updated {new Date(app.decidedAt).toLocaleDateString()}</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                      </div>
+
+                      {selectedApplicationPanel ? (
+                        selectedApplicationPanel
+                      ) : (
+                        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-12 text-center text-sm text-slate-500">
+                            Select an application from the queue to open the recruiter review workspace.
+                          </div>
                         </div>
                       )}
                     </div>
                   )}
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <label className="text-[11px] font-semibold text-slate-600">
-                      Admin note
-                      <input
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                        value={draft.adminNote}
-                        onChange={(e) =>
-                          setProposalReviewDraft((prev) => ({
-                            ...prev,
-                            [app.id]: { ...(prev[app.id] ?? draft), adminNote: e.target.value },
-                          }))
-                        }
-                        onBlur={(e) =>
-                          persistApplicationReview(
-                            app,
-                            { ...(proposalReviewDraft[app.id] ?? draft), adminNote: e.target.value },
-                            app.status
-                          )
-                        }
-                        placeholder="Short status note for worker feed"
-                      />
-                    </label>
-                    <label className="text-[11px] font-semibold text-slate-600">
-                      WhatsApp group link
-                      <input
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                        value={draft.whatsappLink}
-                        onChange={(e) =>
-                          setProposalReviewDraft((prev) => ({
-                            ...prev,
-                            [app.id]: { ...(prev[app.id] ?? draft), whatsappLink: e.target.value },
-                          }))
-                        }
-                        onBlur={(e) =>
-                          persistApplicationReview(
-                            app,
-                            { ...(proposalReviewDraft[app.id] ?? draft), whatsappLink: e.target.value },
-                            app.status
-                          )
-                        }
-                        placeholder="https://chat.whatsapp.com/..."
-                      />
-                    </label>
-                  </div>
-                  <label className="mt-2 block text-[11px] font-semibold text-slate-600">
-                    Post-onboarding steps
-                    <textarea
-                      className="mt-1 h-16 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                      value={draft.onboardingSteps}
-                      onChange={(e) =>
-                        setProposalReviewDraft((prev) => ({
-                          ...prev,
-                          [app.id]: { ...(prev[app.id] ?? draft), onboardingSteps: e.target.value },
-                        }))
-                      }
-                      onBlur={(e) =>
-                        persistApplicationReview(
-                          app,
-                          { ...(proposalReviewDraft[app.id] ?? draft), onboardingSteps: e.target.value },
-                          app.status
-                        )
-                      }
-                      placeholder="After joining group: submit intro message, share worker ID, confirm timezone, and wait for admin checklist."
-                    />
-                  </label>
-                  <label className="mt-2 block text-[11px] font-semibold text-slate-600">
-                    Admin explanation
-                    <textarea
-                      className="mt-1 h-16 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                      value={draft.adminExplanation}
-                      onChange={(e) =>
-                        setProposalReviewDraft((prev) => ({
-                          ...prev,
-                          [app.id]: { ...(prev[app.id] ?? draft), adminExplanation: e.target.value },
-                        }))
-                      }
-                      onBlur={(e) =>
-                        persistApplicationReview(
-                          app,
-                          { ...(proposalReviewDraft[app.id] ?? draft), adminExplanation: e.target.value },
-                          app.status
-                        )
-                      }
-                      placeholder="Explain next steps, reason, or onboarding guidance."
-                    />
-                  </label>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
-                      onClick={() => {
-                        const latest = proposalReviewDraft[app.id] ?? draft;
-                        updateApplication(app, "Pending", {
-                          adminNote: latest.adminNote,
-                          adminExplanation: latest.adminExplanation,
-                          whatsappLink: latest.whatsappLink,
-                          onboardingSteps: latest.onboardingSteps,
-                        });
-                      }}
-                    >
-                      Mark pending
-                    </button>
-                    <button
-                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
-                      onClick={() => {
-                        const latest = proposalReviewDraft[app.id] ?? draft;
-                        updateApplication(app, "Accepted", {
-                          adminNote: latest.adminNote,
-                          adminExplanation: latest.adminExplanation,
-                          whatsappLink: latest.whatsappLink,
-                          onboardingSteps: latest.onboardingSteps,
-                        });
-                      }}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700"
-                      onClick={() => {
-                        const latest = proposalReviewDraft[app.id] ?? draft;
-                        updateApplication(app, "Rejected", {
-                          adminNote: latest.adminNote,
-                          adminExplanation: latest.adminExplanation,
-                          whatsappLink: latest.whatsappLink,
-                          onboardingSteps: latest.onboardingSteps,
-                        });
-                      }}
-                    >
-                      Reject
-                    </button>
-                  </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              ))}
-            </div>
-          </div>
+                </section>
+              </div>
             </section>
           </>
         )}

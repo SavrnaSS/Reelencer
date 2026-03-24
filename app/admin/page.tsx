@@ -3529,6 +3529,12 @@ function AdminConsole() {
                         Credential submissions
                       </a>
                       <a
+                        href="/addgigs/applications"
+                        className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                      >
+                        Applications
+                      </a>
+                      <a
                         href="/browse"
                         className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
                       >
