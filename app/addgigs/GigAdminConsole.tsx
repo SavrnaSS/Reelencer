@@ -2182,7 +2182,7 @@ export default function GigAdminConsole({
                   </div>
 
                   <div className="rounded-3xl border border-[#d4dfd7] bg-[#f7fbf5] p-4 shadow-sm">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
                       <div className="min-w-0">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Bulk action studio</div>
                         <div className="mt-1 text-sm font-semibold text-slate-900">
@@ -2192,7 +2192,7 @@ export default function GigAdminConsole({
                           Apply recruiter notes and status decisions across the current filtered set without opening each application one by one.
                         </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 xl:justify-end">
                         <button
                           className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-400"
                           onClick={toggleSelectAllFilteredApplications}
@@ -2207,37 +2207,48 @@ export default function GigAdminConsole({
                         </button>
                       </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
-                        onClick={() => selectApplicationsByStatus("Pending")}
-                      >
-                        Pending only
-                      </button>
-                      <button
-                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
-                        onClick={() => selectApplicationsByStatus("Accepted")}
-                      >
-                        Accepted only
-                      </button>
-                      <button
-                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
-                        onClick={() => selectApplicationsByStatus("Rejected")}
-                      >
-                        Rejected only
-                      </button>
-                      <button
-                        className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
-                        onClick={invertFilteredApplicationSelection}
-                      >
-                        Invert selection
-                      </button>
-                      <button
-                        className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-[11px] font-semibold text-[#2f6655] hover:border-[#9fc3b1]"
-                        onClick={() => setBulkReviewDraft({ ...DEFAULT_BULK_REVIEW_DRAFT, whatsappLink: bulkReviewDraft.whatsappLink })}
-                      >
-                        Restore default copy
-                      </button>
+                    <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">Selection shortcuts</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                            onClick={() => selectApplicationsByStatus("Pending")}
+                          >
+                            Pending only
+                          </button>
+                          <button
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                            onClick={() => selectApplicationsByStatus("Accepted")}
+                          >
+                            Accepted only
+                          </button>
+                          <button
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                            onClick={() => selectApplicationsByStatus("Rejected")}
+                          >
+                            Rejected only
+                          </button>
+                          <button
+                            className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                            onClick={invertFilteredApplicationSelection}
+                          >
+                            Invert selection
+                          </button>
+                          <button
+                            className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-3 py-1.5 text-[11px] font-semibold text-[#2f6655] hover:border-[#9fc3b1]"
+                            onClick={() => setBulkReviewDraft({ ...DEFAULT_BULK_REVIEW_DRAFT, whatsappLink: bulkReviewDraft.whatsappLink })}
+                          >
+                            Restore default copy
+                          </button>
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">Publish mode</div>
+                        <div className="mt-2 text-sm leading-6 text-slate-600">
+                          Use the prepared template below to push a recruiter update or complete a bulk status action.
+                        </div>
+                      </div>
                     </div>
                     <div className="mt-4 grid gap-3 sm:grid-cols-3">
                       <div className="rounded-2xl border border-[#d3dfd7] bg-white px-3 py-3">
@@ -2257,8 +2268,8 @@ export default function GigAdminConsole({
                         </div>
                       </div>
                     </div>
-                    <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                      <div className="xl:col-span-2 rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                    <div className="mt-4 grid gap-3 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="2xl:col-span-2 rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
                         <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#70857d]">One-step onboarding template</div>
                         <div className="mt-2 text-sm leading-6 text-slate-600">
                           Standard onboarding copy is preloaded below. For the common flow, the admin only needs to paste the recruiter WhatsApp link and run the bulk approval action.
@@ -2272,7 +2283,7 @@ export default function GigAdminConsole({
                           </span>
                         </div>
                       </div>
-                      <label className="text-[11px] font-semibold text-slate-600">
+                      <label className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4 text-[11px] font-semibold text-slate-600">
                         Bulk admin note
                         <input
                           className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
@@ -2281,7 +2292,7 @@ export default function GigAdminConsole({
                           placeholder="Short worker-facing note"
                         />
                       </label>
-                      <label className="text-[11px] font-semibold text-slate-600">
+                      <label className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4 text-[11px] font-semibold text-slate-600">
                         Bulk WhatsApp link
                         <input
                           className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
@@ -2290,19 +2301,19 @@ export default function GigAdminConsole({
                           placeholder="https://chat.whatsapp.com/..."
                         />
                       </label>
-                      <label className="text-[11px] font-semibold text-slate-600">
+                      <label className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4 text-[11px] font-semibold text-slate-600">
                         Bulk post-onboarding steps
                         <textarea
-                          className="mt-1 h-24 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                          className="mt-1 h-32 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
                           value={bulkReviewDraft.onboardingSteps}
                           onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, onboardingSteps: e.target.value }))}
                           placeholder="Shared onboarding instruction for the selected workers."
                         />
                       </label>
-                      <label className="text-[11px] font-semibold text-slate-600">
+                      <label className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4 text-[11px] font-semibold text-slate-600">
                         Bulk admin explanation
                         <textarea
-                          className="mt-1 h-24 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
+                          className="mt-1 h-32 w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900"
                           value={bulkReviewDraft.adminExplanation}
                           onChange={(e) => setBulkReviewDraft((prev) => ({ ...prev, adminExplanation: e.target.value }))}
                           placeholder="Internal or worker-facing explanation for the selected group."

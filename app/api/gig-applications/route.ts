@@ -201,20 +201,32 @@ function escapeHtml(value: string) {
     .replace(/'/g, "&#039;");
 }
 
+function formatMailText(value: string) {
+  return escapeHtml(value).replace(/\n/g, "<br />");
+}
+
 function renderMailLayout({
   eyebrow,
   title,
   intro,
   sections,
+  highlights,
   ctaLabel,
   ctaHref,
+  secondaryCtaLabel,
+  secondaryCtaHref,
+  footer,
 }: {
   eyebrow: string;
   title: string;
   intro: string;
   sections?: Array<{ label: string; value: string }>;
+  highlights?: Array<{ label: string; value: string }>;
   ctaLabel: string;
   ctaHref: string;
+  secondaryCtaLabel?: string;
+  secondaryCtaHref?: string;
+  footer?: string;
 }) {
   const sectionHtml = (sections ?? [])
     .filter((section) => section.value.trim())
@@ -223,9 +235,22 @@ function renderMailLayout({
         <tr>
           <td style="padding:0 0 14px 0;">
             <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7b8f84;font-weight:700;">${escapeHtml(section.label)}</div>
-            <div style="margin-top:6px;font-size:15px;line-height:1.6;color:#2f4b3f;">${escapeHtml(section.value)}</div>
+            <div style="margin-top:6px;font-size:15px;line-height:1.6;color:#2f4b3f;">${formatMailText(section.value)}</div>
           </td>
         </tr>
+      `
+    )
+    .join("");
+  const highlightsHtml = (highlights ?? [])
+    .filter((item) => item.value.trim())
+    .map(
+      (item) => `
+        <td style="padding:0 10px 10px 0;">
+          <div style="min-width:160px;border:1px solid #dfe8dc;border-radius:18px;background:#fbfdfb;padding:14px 16px;">
+            <div style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#7b8f84;font-weight:800;">${escapeHtml(item.label)}</div>
+            <div style="margin-top:6px;font-size:16px;line-height:1.45;color:#203a33;font-weight:700;">${formatMailText(item.value)}</div>
+          </div>
+        </td>
       `
     )
     .join("");
@@ -239,20 +264,22 @@ function renderMailLayout({
               <div style="padding:28px 28px 18px;background:linear-gradient(180deg,#f8faf7 0%,#edf5ef 100%);border-bottom:1px solid #dfe8dc;">
                 <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#6f877d;font-weight:800;">${escapeHtml(eyebrow)}</div>
                 <div style="margin-top:10px;font-size:30px;line-height:1.15;font-weight:800;color:#1d3f33;">${escapeHtml(title)}</div>
-                <div style="margin-top:12px;font-size:16px;line-height:1.7;color:#496257;">${escapeHtml(intro)}</div>
+                <div style="margin-top:12px;font-size:16px;line-height:1.7;color:#496257;">${formatMailText(intro)}</div>
               </div>
               <div style="padding:26px 28px;">
+                ${highlightsHtml ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 18px 0;border-collapse:collapse;"><tr>${highlightsHtml}</tr></table>` : ""}
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
                   ${sectionHtml}
                   <tr>
                     <td style="padding-top:8px;">
                       <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#1f4f43;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;">${escapeHtml(ctaLabel)}</a>
+                      ${secondaryCtaLabel && secondaryCtaHref ? `<a href="${escapeHtml(secondaryCtaHref)}" style="display:inline-block;margin-left:10px;padding:14px 22px;border-radius:999px;border:1px solid #d4dfd7;background:#ffffff;color:#31584b;text-decoration:none;font-size:14px;font-weight:700;">${escapeHtml(secondaryCtaLabel)}</a>` : ""}
                     </td>
                   </tr>
                 </table>
               </div>
               <div style="padding:18px 28px 26px;font-size:13px;line-height:1.7;color:#71887c;border-top:1px solid #edf3eb;background:#fbfdfb;">
-                This update was sent by Reelencer Operations. You can continue the full workflow from your registered dashboard.
+                ${formatMailText(footer || "This update was sent by Reelencer Operations. Continue the workflow from your registered dashboard for the latest recruiter status, onboarding actions, and project instructions.")}
               </div>
             </div>
           </td>
@@ -366,7 +393,12 @@ async function sendLifecycleNotification(
     title: string;
     intro: string;
     sections?: Array<{ label: string; value: string }>;
+    highlights?: Array<{ label: string; value: string }>;
     ctaLabel?: string;
+    ctaHref?: string;
+    secondaryCtaLabel?: string;
+    secondaryCtaHref?: string;
+    footer?: string;
   }
 ) : Promise<MailStatus> {
   if (!to || !context) return { sent: false, recipient: to, reason: "No recipient email was found for this application." };
@@ -376,8 +408,12 @@ async function sendLifecycleNotification(
     title: config.title,
     intro: config.intro,
     sections: config.sections,
+    highlights: config.highlights,
     ctaLabel: config.ctaLabel ?? "Open project panel",
-    ctaHref: context.proceedUrl,
+    ctaHref: config.ctaHref ?? context.proceedUrl,
+    secondaryCtaLabel: config.secondaryCtaLabel,
+    secondaryCtaHref: config.secondaryCtaHref,
+    footer: config.footer,
   });
   const result = await sendDecisionEmail(to, subject, html);
   return { sent: true, recipient: to, provider: result?.provider };
@@ -460,13 +496,17 @@ export async function POST(req: Request) {
         const { to, context } = await resolveNotificationContext(sb, data);
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Submitted",
-          title: "Your proposal has been received",
-          intro: `Your proposal for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} is now queued for recruiter review.`,
-          sections: [
-            { label: "Current stage", value: "Recruiter review is pending. Updates will be published in your project panel and sent by email when the workflow advances." },
-            { label: "Next step", value: "Wait for recruiter guidance, onboarding instructions, or a final decision." },
+          title: `Your proposal was received, ${context?.recipient ?? "there"}`,
+          intro: `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} is now in the recruiter review queue.`,
+          highlights: [
+            { label: "Review state", value: "Queued for recruiter review" },
+            { label: "Company", value: context?.company ?? "Reelencer" },
           ],
-          ctaLabel: "Track proposal status",
+          sections: [
+            { label: "What happens next", value: "Recruiter review is pending. You will receive a dashboard update and an email the moment onboarding instructions or a final decision are published." },
+            { label: "What you need to do now", value: "No action is required at this stage. Keep your registered email active and monitor your project panel for recruiter guidance." },
+          ],
+          ctaLabel: "Track application status",
         });
       }
     } catch (error) {
@@ -538,36 +578,51 @@ export async function PATCH(req: Request) {
       if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Approved",
-          title: "Recruiter approved your proposal",
-          intro: `Your proposal for ${context?.gigTitle ?? "this role"} has been approved and moved into onboarding.`,
+          title: "Your proposal has moved into onboarding",
+          intro: `Recruiter review for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} is complete. You are now approved to continue to the onboarding stage.`,
+          highlights: [
+            { label: "Decision", value: "Approved" },
+            { label: "Stage", value: "Onboarding unlocked" },
+          ],
           sections: [
-            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Approval confirmed. Continue to the next onboarding checkpoint." },
-            { label: "Next steps", value: String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() || "Open your project panel to review the onboarding workflow and recruiter instructions." },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Your proposal has been approved. Continue to the next onboarding checkpoint." },
+            { label: "Operational guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Open your project panel to review the latest onboarding plan and recruiter expectations." },
+            { label: "Next actions", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the onboarding instructions, join the assigned communication channel if provided, and wait for the recruiter handoff." },
           ],
           ctaLabel: "Open onboarding panel",
+          secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+          secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
         });
       } else if (proposalStatusChanged && nextProposal.reviewStatus === "Rejected") {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Update",
-          title: "Your proposal needs revision",
-          intro: `Recruiter review for ${context?.gigTitle ?? "this role"} has completed and changes are required before the next round.`,
+          title: "Your proposal needs an update",
+          intro: `Recruiter review for ${context?.gigTitle ?? "this role"} has completed and the current submission has not been cleared for the next stage.`,
+          highlights: [
+            { label: "Decision", value: "Changes required" },
+            { label: "Current stage", value: "Revision pending" },
+          ],
           sections: [
             { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Review the latest notes in your project panel." },
-            { label: "Guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Submit a stronger revision after addressing the current feedback." },
+            { label: "Guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Review the recruiter guidance carefully and return with a stronger revision if the role remains open." },
           ],
           ctaLabel: "Review feedback",
         });
       } else if (whatsappLinkAdded) {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "WhatsApp Invite Issued",
-          title: "Your recruiter has issued the onboarding invite",
-          intro: `A WhatsApp onboarding link is now available for ${context?.gigTitle ?? "your application"}.`,
+          title: "Your onboarding channel is ready",
+          intro: `A recruiter coordination link has been issued for ${context?.gigTitle ?? "your application"}. Open it to continue onboarding.`,
+          highlights: [
+            { label: "Channel", value: "WhatsApp onboarding" },
+            { label: "Status", value: "Invite issued" },
+          ],
           sections: [
             {
               label: "Current stage",
-              value: "Your proposal has moved into recruiter onboarding and is waiting for you to open the latest instructions.",
+              value: "Your application has moved into recruiter onboarding and is waiting for you to join the issued communication channel.",
             },
-            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Join the coordination channel and follow the recruiter onboarding instructions." },
             {
               label: "What to do now",
               value:
@@ -576,23 +631,37 @@ export async function PATCH(req: Request) {
             },
           ],
           ctaLabel: "Open WhatsApp onboarding",
+          ctaHref: nextProposal.whatsappLink?.trim() || context?.proceedUrl,
+          secondaryCtaLabel: "Open project panel",
+          secondaryCtaHref: context?.proceedUrl,
         });
       } else if (onboardingChanged || recruiterNoteChanged) {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Recruiter Workflow Update",
-          title: "Your onboarding instructions were updated",
-          intro: `New recruiter guidance is available for ${context?.gigTitle ?? "your application"}.`,
+          title: "Your recruiter instructions were updated",
+          intro: `A new operational update has been published for ${context?.gigTitle ?? "your application"}. Review the refreshed guidance before you continue.`,
+          highlights: [
+            { label: "Update type", value: "Workflow refresh" },
+            { label: "Recommended action", value: "Review latest instructions" },
+          ],
           sections: [
-            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
-            { label: "Next steps", value: String(nextProposal.adminExplanation ?? nextProposal.onboardingSteps ?? "").trim() },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "A recruiter update is available in your project panel." },
+            { label: "Next steps", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the latest onboarding checklist and wait for the next recruiter checkpoint." },
+            { label: "Additional explanation", value: String(nextProposal.adminExplanation ?? "").trim() },
           ],
           ctaLabel: "View latest instructions",
+          secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+          secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
         });
       } else if (groupConfirmedNow) {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Onboarding Confirmed",
-          title: "Group join confirmation recorded",
-          intro: `Your onboarding confirmation for ${context?.gigTitle ?? "this role"} has been recorded successfully.`,
+          title: "Your onboarding confirmation has been recorded",
+          intro: `Your join confirmation for ${context?.gigTitle ?? "this role"} has been registered successfully. Recruiter final review is still in progress.`,
+          highlights: [
+            { label: "Confirmation", value: "Recorded" },
+            { label: "Next stage", value: "Final recruiter review" },
+          ],
           sections: [
             { label: "Current stage", value: "Recruiter final review remains in progress. You will be notified once the final decision is published." },
             { label: "Confirmed at", value: String(nextProposal.groupJoinedConfirmedAt ?? "").trim() },
@@ -601,12 +670,16 @@ export async function PATCH(req: Request) {
         });
       } else if ((nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus) {
         mailStatus = await sendLifecycleNotification(to, context, {
-          eyebrow: nextStatus === "Accepted" ? "Final Recruiter Decision" : "Final Recruiter Decision",
+          eyebrow: "Final Recruiter Decision",
           title: nextStatus === "Accepted" ? "You have been selected to move forward" : "Recruiter review has been completed",
           intro:
             nextStatus === "Accepted"
               ? `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has cleared the final recruiter review.`
               : `Your application for ${context?.gigTitle ?? "this role"} at ${context?.company ?? "Reelencer"} has completed final recruiter review.`,
+          highlights: [
+            { label: "Final outcome", value: nextStatus === "Accepted" ? "Moved forward" : "Closed" },
+            { label: "Project", value: context?.gigTitle ?? "Application" },
+          ],
           sections: [
             {
               label: "Decision summary",
