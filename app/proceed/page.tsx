@@ -137,6 +137,42 @@ function parseProceedPayoutAmount(raw: unknown) {
   return match ? Number(match[0]) : 0;
 }
 
+function parseOnboardingChecklist(text: string) {
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^\d+[\).\s-]*/, "").trim())
+    .filter(Boolean);
+}
+
+function OnboardingChecklist({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
+  const items = parseOnboardingChecklist(text);
+  if (!items.length) return null;
+
+  return (
+    <div className={`space-y-2 ${className}`.trim()}>
+      {items.map((item, idx) => (
+        <div
+          key={`${idx}-${item}`}
+          className="flex items-start gap-3 rounded-xl border border-[#d9e6dc] bg-[#fbfdfb] px-3 py-3"
+        >
+          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#edf5ef] text-xs font-semibold text-[#2f6655]">
+            {idx + 1}
+          </span>
+          <span className="text-sm leading-7 text-[#4d5563]">{item}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function isContentPostingGigType(gig: Pick<Gig, "gigType">) {
   const raw = String(gig.gigType ?? "")
     .trim()
@@ -3073,8 +3109,11 @@ function ProceedPageInner() {
                           </div>
                         )}
                         {application?.proposal?.onboardingSteps?.trim() && (
-                          <div className="rounded-[1.25rem] border border-[#e8edf0] bg-white px-4 py-3.5 text-sm leading-7 text-[#4d5563] shadow-sm">
-                            <span className="font-semibold text-[#2c3038]">Onboarding:</span> {application.proposal.onboardingSteps}
+                          <div className="rounded-[1.25rem] border border-[#e8edf0] bg-white px-4 py-3.5 shadow-sm">
+                            <div className="text-sm font-semibold text-[#2c3038]">Onboarding</div>
+                            <div className="mt-3">
+                              <OnboardingChecklist text={application.proposal.onboardingSteps} />
+                            </div>
                           </div>
                         )}
                       </div>
@@ -3182,11 +3221,16 @@ function ProceedPageInner() {
                             </div>
                           )}
                           <div className="flex flex-col gap-3 border-t border-[#d9e8dd] px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
-                            <div className="text-sm text-[#587062]">
-                              {application?.proposal?.onboardingSteps?.trim() ||
-                                (isContentPostingFlow
-                                  ? "Complete recruiter coordination, confirm group participation, and move into the daily posting workspace handoff."
-                                  : "Follow recruiter instructions, complete coordination setup, and prepare for execution handoff.")}
+                            <div className="min-w-0 flex-1">
+                              {application?.proposal?.onboardingSteps?.trim() ? (
+                                <OnboardingChecklist text={application.proposal.onboardingSteps} />
+                              ) : (
+                                <div className="text-sm text-[#587062]">
+                                  {isContentPostingFlow
+                                    ? "Complete recruiter coordination, confirm group participation, and move into the daily posting workspace handoff."
+                                    : "Follow recruiter instructions, complete coordination setup, and prepare for execution handoff."}
+                                </div>
+                              )}
                             </div>
                             <div className="flex flex-col gap-2 sm:flex-row">
                               {adminWhatsappLink && (
@@ -3711,9 +3755,17 @@ function ProceedPageInner() {
                     </div>
                   )}
                 </div>
-                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-2 text-sm text-[#355d50]">
-                  <span className="font-semibold text-[#294b40]">Next Steps:</span>{" "}
-                  {application?.proposal?.onboardingSteps?.trim() || "Complete WhatsApp onboarding, confirm group participation, then wait for the final admin decision."}
+                <div className="rounded-xl border border-[#d4dfd7] bg-white px-3 py-3 text-sm text-[#355d50]">
+                  <div className="font-semibold text-[#294b40]">Next Steps</div>
+                  <div className="mt-3">
+                    {application?.proposal?.onboardingSteps?.trim() ? (
+                      <OnboardingChecklist text={application.proposal.onboardingSteps} />
+                    ) : (
+                      <div className="text-sm leading-7 text-[#355d50]">
+                        Complete WhatsApp onboarding, confirm group participation, then wait for the final admin decision.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
