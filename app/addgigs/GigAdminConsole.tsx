@@ -1057,6 +1057,26 @@ export default function GigAdminConsole({
     }
   };
 
+  const runBulkApplicationInstructionPush = async (review: BulkReviewDraft) => {
+    const targets = filteredApps.filter((app) => selectedApplicationIds.includes(app.id));
+    if (!targets.length) {
+      setApplicationNotice({ tone: "danger", text: "Select one or more applications before publishing recruiter instructions." });
+      return;
+    }
+    setBulkApplicationActionId(`Notify:${Date.now()}`);
+    try {
+      for (const app of targets) {
+        await persistApplicationReview(app, review, app.status);
+      }
+      setApplicationNotice({
+        tone: "success",
+        text: `Latest recruiter instructions were published to ${targets.length} selected application${targets.length === 1 ? "" : "s"}.`,
+      });
+    } finally {
+      setBulkApplicationActionId(null);
+    }
+  };
+
   const updateAssignment = async (
     assignment: Assignment,
     status: string,
@@ -2243,6 +2263,14 @@ export default function GigAdminConsole({
                         <div className="mt-2 text-sm leading-6 text-slate-600">
                           Standard onboarding copy is preloaded below. For the common flow, the admin only needs to paste the recruiter WhatsApp link and run the bulk approval action.
                         </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                          <span className="rounded-full border border-[#d3dfd7] bg-[#f7fbf5] px-3 py-1.5 font-semibold text-[#2f6655]">
+                            One tap update
+                          </span>
+                          <span>
+                            Publish the latest admin note, WhatsApp link, onboarding steps, and explanation to all selected workers without changing their current review status.
+                          </span>
+                        </div>
                       </div>
                       <label className="text-[11px] font-semibold text-slate-600">
                         Bulk admin note
@@ -2282,6 +2310,13 @@ export default function GigAdminConsole({
                       </label>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-4 py-2 text-xs font-semibold text-[#2f6655] disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => runBulkApplicationInstructionPush(bulkReviewDraft)}
+                        disabled={!selectedApplicationIds.length || !!bulkApplicationActionId}
+                      >
+                        {bulkApplicationActionId?.startsWith("Notify:") ? "Publishing..." : "Push update to selected"}
+                      </button>
                       <button
                         className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => runBulkApplicationAction("Pending", bulkReviewDraft)}
