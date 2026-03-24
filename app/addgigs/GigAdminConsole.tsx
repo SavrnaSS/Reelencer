@@ -937,7 +937,8 @@ export default function GigAdminConsole({
   const persistApplicationReview = async (
     app: GigApplication,
     review?: { adminNote?: string; adminExplanation?: string; whatsappLink?: string; onboardingSteps?: string },
-    statusOverride?: ApplicationStatus
+    statusOverride?: ApplicationStatus,
+    options?: { notificationMode?: "whatsapp_invite" | "workflow_update" }
   ) => {
     const status = statusOverride ?? app.status;
     const decidedAt = new Date().toISOString();
@@ -971,6 +972,7 @@ export default function GigAdminConsole({
             decidedAt,
             workerName: app.workerName ?? app.workerId,
             proposal: nextProposal,
+            notificationMode: options?.notificationMode,
           },
         }),
       });
@@ -1066,7 +1068,9 @@ export default function GigAdminConsole({
     setBulkApplicationActionId(`Notify:${Date.now()}`);
     try {
       for (const app of targets) {
-        await persistApplicationReview(app, review, app.status);
+        await persistApplicationReview(app, review, app.status, {
+          notificationMode: review.whatsappLink.trim() ? "whatsapp_invite" : "workflow_update",
+        });
       }
       setApplicationNotice({
         tone: "success",

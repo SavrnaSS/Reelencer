@@ -565,6 +565,7 @@ export async function PATCH(req: Request) {
     const prevProposal = prevDecoded.proposal ?? {};
     const nextStatus = String(data.status ?? "");
     const prevStatus = String(prevRow?.status ?? "");
+    const explicitNotificationMode = String(updates.notificationMode ?? "").trim();
     const proposalStatusChanged = String(nextProposal.reviewStatus ?? "") !== String(prevProposal.reviewStatus ?? "");
     const whatsappLinkAdded = !!nextProposal.whatsappLink?.trim() && nextProposal.whatsappLink !== prevProposal.whatsappLink;
     const onboardingChanged = !!nextProposal.onboardingSteps?.trim() && nextProposal.onboardingSteps !== prevProposal.onboardingSteps;
@@ -575,7 +576,52 @@ export async function PATCH(req: Request) {
     let mailStatus: MailStatus | null = null;
     try {
       const { to, context } = await resolveNotificationContext(sb, data);
-      if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
+      if (explicitNotificationMode === "whatsapp_invite") {
+        mailStatus = await sendLifecycleNotification(to, context, {
+          eyebrow: "WhatsApp Invite Issued",
+          title: "Your onboarding channel is ready",
+          intro: `A recruiter coordination link has been issued for ${context?.gigTitle ?? "your application"}. Open it to continue onboarding.`,
+          highlights: [
+            { label: "Channel", value: "WhatsApp onboarding" },
+            { label: "Status", value: "Invite issued" },
+          ],
+          sections: [
+            {
+              label: "Current stage",
+              value: "Your application has moved into recruiter onboarding and is waiting for you to join the issued communication channel.",
+            },
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Join the coordination channel and follow the recruiter onboarding instructions." },
+            {
+              label: "What to do now",
+              value:
+                String(nextProposal.onboardingSteps ?? nextProposal.adminExplanation ?? "").trim() ||
+                "Open your project panel, review the invite, and complete the onboarding steps shared by the recruiter.",
+            },
+          ],
+          ctaLabel: "Open WhatsApp onboarding",
+          ctaHref: nextProposal.whatsappLink?.trim() || context?.proceedUrl,
+          secondaryCtaLabel: "Open project panel",
+          secondaryCtaHref: context?.proceedUrl,
+        });
+      } else if (explicitNotificationMode === "workflow_update") {
+        mailStatus = await sendLifecycleNotification(to, context, {
+          eyebrow: "Recruiter Workflow Update",
+          title: "Your recruiter instructions were updated",
+          intro: `A new operational update has been published for ${context?.gigTitle ?? "your application"}. Review the refreshed guidance before you continue.`,
+          highlights: [
+            { label: "Update type", value: "Workflow refresh" },
+            { label: "Recommended action", value: "Review latest instructions" },
+          ],
+          sections: [
+            { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "A recruiter update is available in your project panel." },
+            { label: "Next steps", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the latest onboarding checklist and wait for the next recruiter checkpoint." },
+            { label: "Additional explanation", value: String(nextProposal.adminExplanation ?? "").trim() },
+          ],
+          ctaLabel: "View latest instructions",
+          secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+          secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
+        });
+      } else if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
         mailStatus = await sendLifecycleNotification(to, context, {
           eyebrow: "Proposal Approved",
           title: "Your proposal has moved into onboarding",
