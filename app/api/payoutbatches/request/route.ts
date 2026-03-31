@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { buildPayoutReadiness, type KycStatus } from "@/lib/payoutReadiness";
 
 const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -8,6 +9,15 @@ const NO_STORE_HEADERS = {
 };
 
 const MIN_PAYOUT_REQUEST_INR = 1000;
+
+async function getUserId(req: Request) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+  const token = authHeader.slice("Bearer ".length);
+  const { data, error } = await supabaseAdmin().auth.getUser(token);
+  if (error || !data?.user?.id) return null;
+  return data.user.id;
+}
 
 function startOfWeek(d: Date) {
   const day = d.getDay(); // 0=Sun
@@ -24,22 +34,41 @@ function startOfMonth(d: Date) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const workerId = String(body.workerId ?? "").trim();
-    if (!workerId) {
-      return NextResponse.json({ error: "workerId is required" }, { status: 400, headers: NO_STORE_HEADERS });
+    const userId = await getUserId(req);
+    if (!userId) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401, headers: NO_STORE_HEADERS });
     }
 
+    const body = await req.json();
+    const requestedWorkerId = String(body.workerId ?? "").trim();
+
     const sb = supabaseAdmin();
+    const [profileRes, workerRes, kycRes] = await Promise.all([
+      sb.from("profiles").select("id,worker_code").eq("id", userId).maybeSingle(),
+      sb.from("workers").select("id").eq("user_id", userId).maybeSingle(),
+      sb
+        .from("worker_kyc")
+        .select("status,rejection_reason")
+        .eq("user_id", userId)
+        .order("submitted_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
 
-    const resolveWorkerUuid = async (id: string) => {
-      if (!id.startsWith("WKR-")) return id;
-      const { data, error } = await sb.from("profiles").select("id").eq("worker_code", id).maybeSingle();
-      if (error || !data?.id) return id;
-      return String(data.id);
-    };
+    if (profileRes.error) {
+      return NextResponse.json({ error: profileRes.error.message }, { status: 500, headers: NO_STORE_HEADERS });
+    }
 
-    const workerUuid = await resolveWorkerUuid(workerId);
+    const workerUuid = userId;
+    const workerAliases = new Set<string>(
+      [userId, String(profileRes.data?.worker_code ?? ""), String(workerRes.data?.id ?? "")]
+        .map((value) => value.trim())
+        .filter(Boolean)
+    );
+
+    if (requestedWorkerId && !workerAliases.has(requestedWorkerId)) {
+      return NextResponse.json({ error: "Worker mismatch for payout request" }, { status: 403, headers: NO_STORE_HEADERS });
+    }
 
     const { data: upiRow } = await sb
       .from("upi_configs")
@@ -47,20 +76,12 @@ export async function POST(req: Request) {
       .eq("worker_id", workerUuid)
       .maybeSingle();
 
-    if (!upiRow?.verified) {
-      return NextResponse.json({ error: "UPI not verified" }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-
     const { data: existingBatch } = await sb
       .from("payout_batches")
       .select("id,status,notes")
       .eq("worker_id", workerUuid)
       .in("status", ["Draft", "Processing"])
       .maybeSingle();
-
-    if (existingBatch?.status === "Processing") {
-      return NextResponse.json({ error: "Pending payout request already exists" }, { status: 409, headers: NO_STORE_HEADERS });
-    }
 
     const { data: accountsRaw } = await sb.from("accounts").select("id,handle");
     const handleById = new Map<string, string>((accountsRaw ?? []).map((a: any) => [String(a.id), String(a.handle ?? "")]));
@@ -90,15 +111,10 @@ export async function POST(req: Request) {
       rewardINR: Number(it.reward_inr ?? it.rewardINR ?? 0),
     }));
 
-    if (!approvedItems.length) {
-      return NextResponse.json({ error: "No approved items to payout" }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-
     const approvedIds = approvedItems.map((i) => i.id);
-    const { data: paidItems } = await sb
-      .from("payout_items")
-      .select("work_item_id,status")
-      .in("work_item_id", approvedIds);
+    const { data: paidItems } = approvedIds.length
+      ? await sb.from("payout_items").select("work_item_id,status").in("work_item_id", approvedIds)
+      : { data: [] as any[] };
 
     const alreadyIncluded = new Set<string>(
       (paidItems ?? [])
@@ -107,19 +123,29 @@ export async function POST(req: Request) {
     );
     const eligible = approvedItems.filter((it) => !alreadyIncluded.has(it.id));
 
-    if (!eligible.length) {
-      return NextResponse.json({ error: "All approved items already in payout batches" }, { status: 400, headers: NO_STORE_HEADERS });
-    }
-
     const eligibleTotal = eligible.reduce((sum, item) => sum + Number(item.rewardINR ?? 0), 0);
-    if (eligibleTotal < MIN_PAYOUT_REQUEST_INR) {
+    const kycStatus = String(kycRes.data?.status ?? "none") as KycStatus;
+    const payoutReadiness = buildPayoutReadiness({
+      kycStatus,
+      kycRejectionReason: String(kycRes.data?.rejection_reason ?? "").trim() || null,
+      upiVerified: Boolean(upiRow?.verified),
+      hasActiveBatch: Boolean(existingBatch?.id),
+      eligibleItemCount: eligible.length,
+      eligibleAmount: eligibleTotal,
+      minimumAmount: MIN_PAYOUT_REQUEST_INR,
+    });
+
+    if (!payoutReadiness.ready) {
       return NextResponse.json(
         {
-          error: `Minimum ${MIN_PAYOUT_REQUEST_INR} INR in approved earnings is required before requesting payout`,
+          error: payoutReadiness.primaryBlocker?.detail || "Payout request is blocked",
+          code: payoutReadiness.primaryBlocker?.code ?? "blocked",
+          blockers: payoutReadiness.blockers,
           minimumRequired: MIN_PAYOUT_REQUEST_INR,
           eligibleAmount: eligibleTotal,
+          kycStatus,
         },
-        { status: 400, headers: NO_STORE_HEADERS }
+        { status: payoutReadiness.primaryBlocker?.code === "active_batch" ? 409 : 400, headers: NO_STORE_HEADERS }
       );
     }
 

@@ -61,6 +61,8 @@ export async function GET(req: Request) {
         address: data.address,
         idType: data.id_type,
         idNumber: data.id_number,
+        idDocPath: data.id_doc_path,
+        selfiePath: data.selfie_path,
       },
     },
     { headers: NO_STORE_HEADERS }

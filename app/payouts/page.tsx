@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
 
 type Role = "Admin" | "Worker";
 type AuthSession = { role: Role; workerId?: string; at: string };
@@ -44,6 +45,11 @@ type UpiConfig = {
   verifiedAt?: string;
   payoutSchedule: UpiSchedule;
   payoutDay: PayoutDay;
+};
+
+type KycResponse = {
+  status?: KycStatus;
+  rejectionReason?: string | null;
 };
 
 type PayoutItem = {
@@ -280,6 +286,8 @@ export default function PayoutsPage() {
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [metrics, setMetrics] = useState<WorkerMetrics | null>(null);
   const [upi, setUpi] = useState<UpiConfig | null>(null);
+  const [kycStatus, setKycStatus] = useState<KycStatus>("none");
+  const [kycRejectionReason, setKycRejectionReason] = useState<string | null>(null);
   const [batches, setBatches] = useState<PayoutBatch[]>([]);
   const [requesting, setRequesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -315,11 +323,14 @@ export default function PayoutsPage() {
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      const [metricsResult, batchesResult, upiResult, assignmentsResult] = await Promise.allSettled([
+      const [metricsResult, batchesResult, upiResult, kycResult, assignmentsResult] = await Promise.allSettled([
         fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
         fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
         token
           ? fetch("/api/upi", { method: "GET", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+          : Promise.resolve(null),
+        token
+          ? fetch("/api/kyc", { method: "GET", headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
           : Promise.resolve(null),
         fetch(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`, { method: "GET", cache: "no-store" }),
       ]);
@@ -397,6 +408,18 @@ export default function PayoutsPage() {
         }
       } else if (upiResult.status === "rejected") {
         issues.push("UPI status");
+      }
+
+      if (kycResult.status === "fulfilled" && kycResult.value) {
+        if (kycResult.value.ok) {
+          const kycJson = (await kycResult.value.json().catch(() => ({}))) as KycResponse;
+          setKycStatus((kycJson.status ?? "none") as KycStatus);
+          setKycRejectionReason(kycJson.rejectionReason ?? null);
+        } else {
+          issues.push("KYC status");
+        }
+      } else if (kycResult.status === "rejected") {
+        issues.push("KYC status");
       }
 
       setLastUpdatedAt(new Date().toLocaleTimeString());
@@ -494,29 +517,42 @@ export default function PayoutsPage() {
   const pendingPayouts = metrics?.money?.pending ?? 0;
   const paidBatches = useMemo(() => batches.filter((batch) => batch.status === "Paid").length, [batches]);
   const processingBatch = useMemo(() => batches.find((batch) => batch.status === "Processing" || batch.status === "Draft") ?? null, [batches]);
+  const kycMeta = useMemo(() => describeKycStatus(kycStatus, kycRejectionReason), [kycStatus, kycRejectionReason]);
+  const payoutReadiness = useMemo(
+    () =>
+      buildPayoutReadiness({
+        kycStatus,
+        kycRejectionReason,
+        upiVerified: Boolean(upi?.verified),
+        hasActiveBatch: Boolean(processingBatch),
+        eligibleItemCount: approvedEarnings > 0 ? 1 : 0,
+        eligibleAmount: approvedEarnings,
+        minimumAmount: MIN_PAYOUT_REQUEST_INR,
+      }),
+    [approvedEarnings, kycStatus, kycRejectionReason, processingBatch, upi?.verified]
+  );
   const totalPaidAmount = useMemo(
     () => batches.filter((batch) => batch.status === "Paid").reduce((sum, batch) => sum + batchTotal(batch), 0),
     [batches]
   );
-  const requestBlockedReason = !upi?.verified
-    ? "Verify UPI in workspace before requesting payout."
-    : processingBatch
-      ? "A payout batch is already active."
-      : approvedEarnings < MIN_PAYOUT_REQUEST_INR
-        ? `A minimum approved earnings balance of ${formatINR(MIN_PAYOUT_REQUEST_INR)} is required before a payout request can be submitted.`
-        : approvedEarnings <= 0
-          ? "No approved earnings are available yet."
-          : null;
+  const requestBlockedReason = payoutReadiness.primaryBlocker?.detail ?? null;
   const thresholdGap = Math.max(0, MIN_PAYOUT_REQUEST_INR - approvedEarnings);
 
   const requestPayout = async () => {
     if (!workerId) return;
+    if (!payoutReadiness.ready) {
+      setNotice({ tone: "danger", text: payoutReadiness.primaryBlocker?.detail || "Payout request is blocked." });
+      return;
+    }
     setRequesting(true);
     setNotice(null);
     try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Not authenticated");
       const res = await fetch("/api/payoutbatches/request", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ workerId }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -712,6 +748,11 @@ export default function PayoutsPage() {
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-[#1c3e33]">Current payout readiness</div>
                 <div className="mt-5 space-y-3 text-sm text-[#5c7368]">
                   <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">KYC status</div>
+                    <div className="mt-2 text-base font-semibold text-[#274537]">{kycMeta.label}</div>
+                    <div className="mt-1 text-sm text-[#617166]">{kycMeta.description}</div>
+                  </div>
+                  <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-3">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">UPI status</div>
                     <div className="mt-2 text-base font-semibold text-[#274537]">{upi?.verified ? "Verified" : "Not verified"}</div>
                     <div className="mt-1 text-sm text-[#617166]">
@@ -746,7 +787,7 @@ export default function PayoutsPage() {
                   <button
                     type="button"
                     onClick={requestPayout}
-                    disabled={requesting || !workerId || !!requestBlockedReason}
+                    disabled={requesting || !workerId || !payoutReadiness.ready}
                     className="inline-flex items-center justify-center rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#2d6b5a] disabled:opacity-50"
                   >
                     {requesting ? "Requesting..." : "Request payout"}
@@ -762,8 +803,23 @@ export default function PayoutsPage() {
                   >
                     {upiEditorOpen ? "Close UPI manager" : "Manage payout UPI"}
                   </button>
+                  {kycStatus !== "approved" && (
+                    <Link href="/workspace" className="inline-flex items-center justify-center rounded-full border border-[#c9d3c4] bg-white px-5 py-2.5 text-sm font-semibold text-[#284b3e] transition hover:border-[#a9bbb1]">
+                      Open KYC in workspace
+                    </Link>
+                  )}
                 </div>
                 {requestBlockedReason && <div className="mt-3 text-sm font-medium text-[#6a7f73]">{requestBlockedReason}</div>}
+                {payoutReadiness.blockers.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    {payoutReadiness.blockers.map((blocker) => (
+                      <div key={blocker.code} className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">{blocker.title}</div>
+                        <div className="mt-1 text-sm text-amber-900">{blocker.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {upiEditorOpen && (
                   <div className="mt-5 rounded-[1.4rem] border border-[#d9e4de] bg-[#f7fbf8] p-4">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">

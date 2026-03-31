@@ -1,6 +1,7 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { buildPayoutReadiness, describeKycStatus } from "@/lib/payoutReadiness";
 
 /**
  * Worker Marketplace (List-only) — Production-ready, backend-ready, hydration-safe
@@ -977,6 +978,19 @@ export default function MarketplaceWorkerPage() {
         }
         setKycStatus(payload.status);
         setKycRejection(payload.rejectionReason ?? null);
+        if (payload.profile) {
+          setKycForm((prev) => ({
+            ...prev,
+            legalName: String(payload.profile.legalName ?? prev.legalName ?? ""),
+            dob: String(payload.profile.dob ?? prev.dob ?? ""),
+            phone: String(payload.profile.phone ?? prev.phone ?? ""),
+            address: String(payload.profile.address ?? prev.address ?? ""),
+            idType: String(payload.profile.idType ?? prev.idType ?? ""),
+            idNumber: String(payload.profile.idNumber ?? prev.idNumber ?? ""),
+            idDocPath: String(payload.profile.idDocPath ?? prev.idDocPath ?? ""),
+            selfiePath: String(payload.profile.selfiePath ?? prev.selfiePath ?? ""),
+          }));
+        }
         if (payload.status === "approved" && payload.workerId && !session.workerId) {
           const next = { ...session, workerId: payload.workerId };
           setSession(next);
@@ -1417,6 +1431,20 @@ export default function MarketplaceWorkerPage() {
   const eligiblePayoutTotal = useMemo(() => eligiblePayoutItems.reduce((sum, it) => sum + it.rewardINR, 0), [eligiblePayoutItems]);
   const hasProcessingPayout = useMemo(() => payoutBatches.some((b) => b.status === "Processing"), [payoutBatches]);
   const hasDraftPayout = useMemo(() => payoutBatches.some((b) => b.status === "Draft"), [payoutBatches]);
+  const kycMeta = useMemo(() => describeKycStatus(kycStatus, kycRejection), [kycStatus, kycRejection]);
+  const payoutReadiness = useMemo(
+    () =>
+      buildPayoutReadiness({
+        kycStatus,
+        kycRejectionReason: kycRejection,
+        upiVerified: upi.verified,
+        hasActiveBatch: hasProcessingPayout || hasDraftPayout,
+        eligibleItemCount: eligiblePayoutItems.length,
+        eligibleAmount: eligiblePayoutTotal,
+        minimumAmount: MIN_PAYOUT_REQUEST_INR,
+      }),
+    [kycStatus, kycRejection, upi.verified, hasProcessingPayout, hasDraftPayout, eligiblePayoutItems.length, eligiblePayoutTotal]
+  );
   const processingEta = useMemo(() => {
     const hit = payoutBatches.find((b) => b.status === "Processing");
     const note = hit?.notes?.find((n) => String(n).startsWith("ETA:"));
@@ -1626,22 +1654,33 @@ export default function MarketplaceWorkerPage() {
     showUpiNotice("success", "UPI verified and saved.");
   }, [upi, effectiveWorkerId, isWorkerAuthed, showUpiNotice]);
 
+  const submitKyc = useCallback(async () => {
+    setKycLoading(true);
+    setKycError(null);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Not authenticated");
+      const res = await fetch("/api/kyc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(kycForm),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload?.error || "Submission failed");
+      setKycStatus("pending");
+      setKycRejection(null);
+    } catch (e: any) {
+      setKycError(e?.message || "Submission failed");
+    } finally {
+      setKycLoading(false);
+    }
+  }, [kycForm]);
+
   const requestPayout = useCallback(async () => {
     if (!isWorkerAuthed) return;
-    if (!upi.verified) {
-      showPayoutNotice("danger", "Verify UPI before requesting payout.");
-      return;
-    }
-    if (hasProcessingPayout) {
-      showPayoutNotice("danger", "You already have a pending payout request.");
-      return;
-    }
-    if (!eligiblePayoutItems.length) {
-      showPayoutNotice("danger", "No approved items available for payout.");
-      return;
-    }
-    if (eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR) {
-      showPayoutNotice("danger", `Minimum ${formatINR(MIN_PAYOUT_REQUEST_INR)} approved earnings required before requesting payout.`);
+    if (!payoutReadiness.ready) {
+      showPayoutNotice("danger", payoutReadiness.primaryBlocker?.detail || "Payout request is blocked.");
       return;
     }
 
@@ -1655,7 +1694,7 @@ export default function MarketplaceWorkerPage() {
     }
     showPayoutNotice("success", "Payout request submitted.");
     loadFromApi();
-  }, [isWorkerAuthed, upi.verified, hasProcessingPayout, eligiblePayoutItems.length, eligiblePayoutTotal, effectiveWorkerId, showPayoutNotice, loadFromApi]);
+  }, [isWorkerAuthed, payoutReadiness, effectiveWorkerId, showPayoutNotice, loadFromApi]);
 
   const autoPayoutKey = useMemo(() => {
     const now = istNow();
@@ -1675,15 +1714,13 @@ export default function MarketplaceWorkerPage() {
   }, [upi.payoutSchedule, upi.payoutDay]);
 
   useEffect(() => {
-    if (!isWorkerAuthed || !upi.verified) return;
-    if (hasProcessingPayout) return;
+    if (!isWorkerAuthed || !payoutReadiness.ready) return;
     if (!autoPayoutKey) return;
-    if (eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR) return;
     const lastKey = readLS<string | null>(LS_KEYS.PAYOUTS + ":auto", null);
     if (lastKey === autoPayoutKey) return;
     writeLS(LS_KEYS.PAYOUTS + ":auto", autoPayoutKey);
     requestPayout();
-  }, [isWorkerAuthed, upi.verified, hasProcessingPayout, autoPayoutKey, eligiblePayoutTotal, requestPayout]);
+  }, [isWorkerAuthed, payoutReadiness.ready, autoPayoutKey, requestPayout]);
 
   const currentDraftBatch = useMemo(() => payoutBatches.find((b) => b.status === "Draft") ?? null, [payoutBatches]);
   const myBatches = useMemo(() => payoutBatches.slice().sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1)), [payoutBatches]);
@@ -1704,6 +1741,208 @@ export default function MarketplaceWorkerPage() {
   const selfieStep2Done = !!selfiePreview || !!selfieFile || !!kycForm.selfiePath;
   const selfieStep3Done = !!kycForm.selfiePath;
   const selfieActiveStep = !selfieStep1Done ? 1 : !selfieStep2Done ? 2 : !selfieStep3Done ? 3 : 0;
+  const renderKycManagementPanel = () => (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-[#d9e4de] bg-[#f7fbf8] px-4 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#738476]">KYC status</div>
+            <div className="mt-1 text-lg font-semibold text-[#234538]">{kycMeta.label}</div>
+            <div className="mt-1 text-sm leading-6 text-[#617166]">{kycMeta.description}</div>
+          </div>
+          <span
+            className={cx(
+              "rounded-full px-3 py-1 text-xs font-semibold",
+              kycMeta.tone === "success"
+                ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                : kycMeta.tone === "warn"
+                  ? "border border-amber-200 bg-amber-50 text-amber-700"
+                  : kycMeta.tone === "danger"
+                    ? "border border-rose-200 bg-rose-50 text-rose-700"
+                    : "border border-slate-200 bg-white text-slate-600"
+            )}
+          >
+            {kycMeta.label}
+          </span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-[#d9e4de] bg-white px-3 py-1.5 text-[#617166]">Workspace access remains active</span>
+          <span className="rounded-full border border-[#d9e4de] bg-white px-3 py-1.5 text-[#617166]">Payout release requires approved KYC</span>
+        </div>
+        {kycStatus === "pending" && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={loadFromApi}>
+              <Icon name="refresh" />
+              Refresh KYC status
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {kycError && <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{kycError}</div>}
+
+      {kycStatus !== "pending" && (
+        <>
+          <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Identity profile</div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+                  Legal name
+                  <input
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
+                    value={kycForm.legalName}
+                    onChange={(e) => setKycForm((p) => ({ ...p, legalName: e.target.value }))}
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">
+                  Date of birth
+                  <div className="mt-2 rounded-xl border border-slate-300 bg-white p-3 sm:p-2.5">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <select className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900" value={dobParts.day} onChange={(e) => updateDobPart("day", e.target.value)}>
+                        <option value="">Day</option>
+                        {dobDayOptions.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                      </select>
+                      <select className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900" value={dobParts.month} onChange={(e) => updateDobPart("month", e.target.value)}>
+                        <option value="">Month</option>
+                        {dobMonthOptions.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select className="col-span-2 min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900 sm:col-span-1" value={dobParts.year} onChange={(e) => updateDobPart("year", e.target.value)}>
+                        <option value="">Year</option>
+                        {dobYearOptions.map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mt-2 text-[11px] leading-4 text-slate-500 sm:leading-5">Accepted format: DD/MM/YYYY • Minimum age: 18</div>
+                  </div>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">
+                  Phone
+                  <input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900" value={kycForm.phone} onChange={(e) => setKycForm((p) => ({ ...p, phone: e.target.value }))} />
+                </label>
+                <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+                  Address
+                  <input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900" value={kycForm.address} onChange={(e) => setKycForm((p) => ({ ...p, address: e.target.value }))} />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">
+                  ID type
+                  <select className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900" value={kycForm.idType} onChange={(e) => setKycForm((p) => ({ ...p, idType: e.target.value }))}>
+                    <option value="">Select</option>
+                    <option value="Passport">Passport</option>
+                    <option value="Driver License">Driver License</option>
+                    <option value="National ID">National ID</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">
+                  ID number
+                  <input className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900" value={kycForm.idNumber} onChange={(e) => setKycForm((p) => ({ ...p, idNumber: e.target.value }))} />
+                </label>
+                <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
+                  ID document (front)
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      await uploadKycFile("id_doc", file);
+                    }}
+                  />
+                  {kycForm.idDocPath && <div className="mt-1 text-[11px] text-emerald-600">Uploaded</div>}
+                </label>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Selfie verification</div>
+              <div className="mt-4 rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 sm:p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Live capture required</div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cameraOn ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                      {cameraOn ? "Camera live" : "Camera off"}
+                    </span>
+                    {cameraOn ? (
+                      <button type="button" className="text-xs font-semibold text-slate-600 hover:text-slate-900" onClick={stopCamera}>
+                        Stop camera
+                      </button>
+                    ) : (
+                      <button type="button" className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]" onClick={startCamera}>
+                        Start camera
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3">
+                  <div className={`rounded-lg border px-2.5 py-2 ${selfieStep1Done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : selfieActiveStep === 1 ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"}`}>Step 1: Start camera</div>
+                  <div className={`rounded-lg border px-2.5 py-2 ${selfieStep2Done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : selfieActiveStep === 2 ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"}`}>Step 2: Capture selfie</div>
+                  <div className={`rounded-lg border px-2.5 py-2 ${selfieStep3Done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : selfieActiveStep === 3 ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]" : "border-slate-200 bg-white text-slate-500"}`}>Step 3: Upload</div>
+                </div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                    <div className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Live feed</div>
+                    <video ref={videoRef} className={`h-40 w-full object-cover ${cameraOn ? "block" : "hidden"}`} playsInline />
+                    {!cameraOn && <div className="flex h-40 items-center justify-center text-xs text-slate-400">Camera preview</div>}
+                  </div>
+                  <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                    <div className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Captured image</div>
+                    {selfiePreview ? <img src={selfiePreview} alt="Selfie preview" className="h-40 w-full object-cover" /> : <div className="flex h-40 items-center justify-center text-xs text-slate-400">No selfie captured</div>}
+                  </div>
+                </div>
+
+                {cameraError && <div className="mt-2 text-xs font-semibold text-rose-600">{cameraError}</div>}
+                {kycForm.selfiePath && <div className="mt-2 text-[11px] font-semibold text-emerald-600">Selfie uploaded successfully</div>}
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button type="button" className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60" onClick={startCamera} disabled={cameraOn}>
+                    Start live camera
+                  </button>
+                  <button type="button" className="rounded-md bg-[#1f4f43] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60" onClick={captureSelfie} disabled={!cameraOn}>
+                    Capture selfie
+                  </button>
+                  <button type="button" className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60" onClick={async () => {
+                    if (!selfieFile) return;
+                    await uploadKycFile("selfie", selfieFile);
+                  }} disabled={!selfieFile || kycLoading}>
+                    Upload selfie
+                  </button>
+                  <button type="button" className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300" onClick={() => {
+                    setSelfiePreview(null);
+                    setKycForm((p) => ({ ...p, selfiePath: "" }));
+                    setSelfieFile(null);
+                  }}>
+                    Retake
+                  </button>
+                </div>
+                <canvas ref={canvasRef} className="hidden" />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
+            <div className="text-xs text-slate-600">Review every field before submitting. Workspace stays available, but payouts stay locked until admin approval.</div>
+            <button className="rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60" disabled={kycLoading} onClick={submitKyc}>
+              {kycLoading ? "Submitting..." : "Submit KYC"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   /** If not hydrated, render safe shell */
   if (!hydrated) {
@@ -1728,384 +1967,6 @@ export default function MarketplaceWorkerPage() {
 
   if (!kycLoaded) {
     return <div className="min-h-screen bg-slate-50" />;
-  }
-
-  if (kycStatus !== "approved") {
-    return (
-      <div className="min-h-screen bg-[#eef4ea]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,#dce9de,transparent_45%)]" />
-        <div className="relative mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
-          <div className="rounded-3xl border border-slate-200 bg-white/95 p-5 shadow-xl shadow-slate-200/70 backdrop-blur sm:p-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Identity verification</div>
-                <div className="mt-1 text-xl font-semibold text-slate-900 sm:text-2xl">Complete KYC to access Workspace</div>
-                <div className="mt-2 text-sm text-slate-600">
-                  Workspace gigs require identity verification before access is granted.
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
-                  Secure onboarding
-                </span>
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                  Admin reviewed
-                </span>
-              </div>
-            </div>
-
-            {kycStatus === "pending" && (
-              <div className="mt-5 rounded-2xl border border-[#bcd6c9] bg-gradient-to-br from-[#edf5ef] to-[#f6faf4] p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-base font-semibold text-[#2f6655]">KYC submitted. Pending admin review.</div>
-                  <span className="rounded-full border border-[#bcd6c9] bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
-                    In review
-                  </span>
-                </div>
-                <div className="mt-2 text-sm text-slate-600">
-                  Your verification packet is queued. You can keep browsing restricted previews while review is in progress.
-                </div>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                    1. Identity details submitted
-                  </div>
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                    2. Documents uploaded
-                  </div>
-                  <div className="rounded-xl border border-[#bcd6c9] bg-white px-3 py-2 text-xs font-semibold text-[#2f6655]">
-                    3. Admin verification in progress
-                  </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-600">
-                    Typical review window: 10-30 mins
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:border-slate-400"
-                    onClick={() => window.location.reload()}
-                  >
-                    Refresh status
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {kycStatus === "rejected" && (
-              <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-                KYC rejected{kycRejection ? `: ${kycRejection}` : "."} Please resubmit with correct details.
-              </div>
-            )}
-
-            {kycError && (
-              <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
-                {kycError}
-              </div>
-            )}
-
-            {kycStatus !== "pending" && (
-              <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_1fr]">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Profile details</div>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
-                      Legal name
-                      <input
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        value={kycForm.legalName}
-                        onChange={(e) => setKycForm((p) => ({ ...p, legalName: e.target.value }))}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Date of birth
-                      <div className="mt-2 rounded-xl border border-slate-300 bg-white p-3 sm:p-2.5">
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          <select
-                            className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900"
-                            value={dobParts.day}
-                            onChange={(e) => updateDobPart("day", e.target.value)}
-                          >
-                            <option value="">Day</option>
-                            {dobDayOptions.map((d) => (
-                              <option key={d} value={d}>
-                                {d}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            className="min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900"
-                            value={dobParts.month}
-                            onChange={(e) => updateDobPart("month", e.target.value)}
-                          >
-                            <option value="">Month</option>
-                            {dobMonthOptions.map((m) => (
-                              <option key={m.value} value={m.value}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            className="col-span-2 min-w-0 w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2.5 text-sm text-slate-900 sm:col-span-1"
-                            value={dobParts.year}
-                            onChange={(e) => updateDobPart("year", e.target.value)}
-                          >
-                            <option value="">Year</option>
-                            {dobYearOptions.map((y) => (
-                              <option key={y} value={y}>
-                                {y}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="mt-2 text-[11px] leading-4 text-slate-500 sm:leading-5">Accepted format: DD/MM/YYYY • Minimum age: 18</div>
-                      </div>
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      Phone
-                      <input
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        value={kycForm.phone}
-                        onChange={(e) => setKycForm((p) => ({ ...p, phone: e.target.value }))}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
-                      Address
-                      <input
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        value={kycForm.address}
-                        onChange={(e) => setKycForm((p) => ({ ...p, address: e.target.value }))}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      ID type
-                      <select
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        value={kycForm.idType}
-                        onChange={(e) => setKycForm((p) => ({ ...p, idType: e.target.value }))}
-                      >
-                        <option value="">Select</option>
-                        <option value="Passport">Passport</option>
-                        <option value="Driver License">Driver License</option>
-                        <option value="National ID">National ID</option>
-                      </select>
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600">
-                      ID number
-                      <input
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        value={kycForm.idNumber}
-                        onChange={(e) => setKycForm((p) => ({ ...p, idNumber: e.target.value }))}
-                      />
-                    </label>
-                    <label className="text-xs font-semibold text-slate-600 sm:col-span-2">
-                      ID document (front)
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          setKycLoading(true);
-                          setKycError(null);
-                          try {
-                            const { data } = await supabase.auth.getSession();
-                            const token = data.session?.access_token;
-                            if (!token) throw new Error("Not authenticated");
-                            const fd = new FormData();
-                            fd.append("file", file);
-                            fd.append("kind", "id_doc");
-                            const res = await fetch("/api/kyc/upload", {
-                              method: "POST",
-                              headers: { Authorization: `Bearer ${token}` },
-                              body: fd,
-                            });
-                            const payload = await res.json().catch(() => ({}));
-                            if (!res.ok) throw new Error(payload?.error || "Upload failed");
-                            setKycForm((p) => ({ ...p, idDocPath: payload.path }));
-                          } catch (err: any) {
-                            setKycError(err?.message || "Upload failed");
-                          } finally {
-                            setKycLoading(false);
-                          }
-                        }}
-                      />
-                      {kycForm.idDocPath && <div className="mt-1 text-[11px] text-emerald-600">Uploaded</div>}
-                    </label>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-                  <label className="text-xs font-semibold text-slate-600">
-                    Selfie verification
-                    <div className="mt-2 rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-3 sm:p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Live capture required</div>
-                        <div className="flex items-center gap-2">
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${cameraOn ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
-                            {cameraOn ? "Camera live" : "Camera off"}
-                          </span>
-                          {cameraOn ? (
-                            <button type="button" className="text-xs font-semibold text-slate-600 hover:text-slate-900" onClick={stopCamera}>
-                              Stop camera
-                            </button>
-                          ) : (
-                            <button type="button" className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]" onClick={startCamera}>
-                              Start camera
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3">
-                        <div
-                          className={`rounded-lg border px-2.5 py-2 ${
-                            selfieStep1Done
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : selfieActiveStep === 1
-                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-                                : "border-slate-200 bg-white text-slate-500"
-                          }`}
-                        >
-                          <span className="font-semibold">Step 1:</span> Start camera
-                          <span className="ml-1 text-[10px]">{selfieStep1Done ? "Done" : selfieActiveStep === 1 ? "Active" : "Pending"}</span>
-                        </div>
-                        <div
-                          className={`rounded-lg border px-2.5 py-2 ${
-                            selfieStep2Done
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : selfieActiveStep === 2
-                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-                                : "border-slate-200 bg-white text-slate-500"
-                          }`}
-                        >
-                          <span className="font-semibold">Step 2:</span> Capture selfie
-                          <span className="ml-1 text-[10px]">{selfieStep2Done ? "Done" : selfieActiveStep === 2 ? "Active" : "Pending"}</span>
-                        </div>
-                        <div
-                          className={`rounded-lg border px-2.5 py-2 ${
-                            selfieStep3Done
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : selfieActiveStep === 3
-                                ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
-                                : "border-slate-200 bg-white text-slate-500"
-                          }`}
-                        >
-                          <span className="font-semibold">Step 3:</span> Upload
-                          <span className="ml-1 text-[10px]">{selfieStep3Done ? "Done" : selfieActiveStep === 3 ? "Active" : "Pending"}</span>
-                        </div>
-                      </div>
-                      <div className="mt-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600">
-                        {selfieActiveStep === 1 && "Next action: turn on live camera to begin verification."}
-                        {selfieActiveStep === 2 && "Next action: capture a clear selfie with your face fully visible."}
-                        {selfieActiveStep === 3 && "Next action: upload captured selfie to complete this verification block."}
-                        {selfieActiveStep === 0 && "Selfie verification steps completed. You can submit KYC."}
-                      </div>
-
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                          <div className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Live feed</div>
-                          <video ref={videoRef} className={`h-40 w-full object-cover ${cameraOn ? "block" : "hidden"}`} playsInline />
-                          {!cameraOn && <div className="flex h-40 items-center justify-center text-xs text-slate-400">Camera preview</div>}
-                        </div>
-                        <div className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                          <div className="absolute left-2 top-2 z-10 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Captured image</div>
-                          {selfiePreview ? (
-                            <img src={selfiePreview} alt="Selfie preview" className="h-40 w-full object-cover" />
-                          ) : (
-                            <div className="flex h-40 items-center justify-center text-xs text-slate-400">No selfie captured</div>
-                          )}
-                        </div>
-                      </div>
-
-                      {cameraError && <div className="mt-2 text-xs font-semibold text-rose-600">{cameraError}</div>}
-                      {kycForm.selfiePath && <div className="mt-2 text-[11px] font-semibold text-emerald-600">Selfie uploaded successfully</div>}
-
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <button
-                          type="button"
-                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60"
-                          onClick={startCamera}
-                          disabled={cameraOn}
-                        >
-                          Start live camera
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md bg-[#1f4f43] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
-                          onClick={captureSelfie}
-                          disabled={!cameraOn}
-                        >
-                          Capture selfie
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 disabled:opacity-60"
-                          onClick={async () => {
-                            if (!selfieFile) return;
-                            await uploadKycFile("selfie", selfieFile);
-                          }}
-                          disabled={!selfieFile || kycLoading}
-                        >
-                          Upload selfie
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300"
-                          onClick={() => {
-                            setSelfiePreview(null);
-                            setKycForm((p) => ({ ...p, selfiePath: "" }));
-                            setSelfieFile(null);
-                          }}
-                        >
-                          Retake
-                        </button>
-                      </div>
-                      <canvas ref={canvasRef} className="hidden" />
-                    </div>
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {kycStatus !== "pending" && (
-              <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4">
-                <div className="text-xs text-slate-600">Review all details before submitting. Incorrect information may delay approval.</div>
-                <button
-                  className="rounded-full bg-[#1f4f43] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d6b5a] disabled:opacity-60"
-                  disabled={kycLoading}
-                  onClick={async () => {
-                    setKycLoading(true);
-                    setKycError(null);
-                    try {
-                      const { data } = await supabase.auth.getSession();
-                      const token = data.session?.access_token;
-                      if (!token) throw new Error("Not authenticated");
-                      const res = await fetch("/api/kyc", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                        body: JSON.stringify(kycForm),
-                      });
-                      const payload = await res.json().catch(() => ({}));
-                      if (!res.ok) throw new Error(payload?.error || "Submission failed");
-                      setKycStatus("pending");
-                    } catch (e: any) {
-                      setKycError(e?.message || "Submission failed");
-                    } finally {
-                      setKycLoading(false);
-                    }
-                  }}
-                >
-                  Submit KYC
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -2259,6 +2120,7 @@ export default function MarketplaceWorkerPage() {
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <Chip tone="info" className="max-w-[240px] sm:max-w-[320px]">Worker: {me?.name ?? effectiveWorkerId}</Chip>
                   <Chip tone="neutral">Accounts: {assignedAccountsCount}</Chip>
+                  <Chip tone={kycMeta.tone}>KYC: {kycMeta.label}</Chip>
                   {!upi.verified ? <Chip tone="warn">UPI pending</Chip> : <Chip tone="success">UPI verified</Chip>}
                   {loadError ? <Chip tone="warn" className="max-w-[280px] sm:max-w-[360px]">{loadError}</Chip> : <Chip tone="neutral">Live sync</Chip>}
                 </div>
@@ -2308,6 +2170,28 @@ export default function MarketplaceWorkerPage() {
 
           {/* Body */}
           <main className="mx-auto max-w-[1400px] px-3 py-5 sm:px-6 sm:py-6 lg:px-8">
+            {kycStatus !== "approved" && (
+              <div className="mb-6 rounded-[1.6rem] border border-[#d5dfd6] bg-white/90 p-4 shadow-lg shadow-[#d6dfd2]/35">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6f877d]">Compliance access update</div>
+                    <div className="mt-1 text-xl font-semibold tracking-tight text-[#1c3e33]">Workspace is open. Payout requests are now gated by KYC approval.</div>
+                    <div className="mt-2 max-w-3xl text-sm leading-6 text-[#5c7368]">{kycMeta.description}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => setActiveSection("Payouts")}>
+                      <Icon name="wallet" />
+                      Open payout compliance
+                    </Button>
+                    <Button variant="secondary" onClick={() => setActiveSection("UPI")}>
+                      <Icon name="settings" />
+                      Check UPI setup
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* OPERATIONS */}
             {activeSection === "Operations" && (
               <>
@@ -2378,18 +2262,34 @@ export default function MarketplaceWorkerPage() {
                     />
 
                     <Card
-                      title="UPI & readiness"
-                      subtitle="UPI verification is required for payout processing."
-                      right={upi.verified ? <Chip tone="success">Verified</Chip> : <Chip tone="warn">Not verified</Chip>}
+                      title="Payout compliance"
+                      subtitle="KYC, UPI, and earnings readiness are managed independently from workspace access."
+                      right={payoutReadiness.ready ? <Chip tone="success">Ready</Chip> : <Chip tone="warn">Blocked</Chip>}
                     >
                       <div className="space-y-3 text-sm text-slate-700">
-                        <Row label="UPI ID" value={upi.upiId || "—"} />
-                        <Row label="Schedule" value={`${upi.payoutSchedule} • ${upi.payoutDay}`} />
+                        <Row label="KYC" value={kycMeta.label} />
+                        <Row label="UPI" value={upi.verified ? "Verified" : "Pending"} />
+                        <Row label="Eligible amount" value={formatINR(eligiblePayoutTotal)} />
                         <div className="h-px bg-slate-200" />
-                        <Button variant="secondary" onClick={() => setActiveSection("UPI")}>
-                          <Icon name="settings" />
-                          Configure UPI
-                        </Button>
+                        {payoutReadiness.primaryBlocker ? (
+                          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                            {payoutReadiness.primaryBlocker.detail}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
+                            All payout checks are clear. You can request the next payout cycle.
+                          </div>
+                        )}
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="secondary" onClick={() => setActiveSection("Payouts")}>
+                            <Icon name="wallet" />
+                            Open payouts
+                          </Button>
+                          <Button variant="secondary" onClick={() => setActiveSection("UPI")}>
+                            <Icon name="settings" />
+                            Configure UPI
+                          </Button>
+                        </div>
                       </div>
                     </Card>
 
@@ -2676,6 +2576,10 @@ export default function MarketplaceWorkerPage() {
                         <div className="mt-1">Only Admin can approve/reject. Your job is to submit correct proof.</div>
                       </div>
                       <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-xs font-extrabold text-slate-600">KYC gating</div>
+                        <div className="mt-1">Workers can use workspace before KYC approval, but payout requests are locked until KYC is approved.</div>
+                      </div>
+                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
                         <div className="text-xs font-extrabold text-slate-600">UPI gating</div>
                         <div className="mt-1">Payout “Paid” status requires verified UPI.</div>
                       </div>
@@ -2721,6 +2625,9 @@ export default function MarketplaceWorkerPage() {
                   <div className="col-span-12 lg:col-span-4 space-y-6">
                     <Card title="Request payout" subtitle="Submit a payout request for approved work.">
                       <div className="space-y-3 text-sm text-slate-700">
+                        <Row label="Compliance state" value={payoutReadiness.ready ? "Ready" : "Blocked"} />
+                        <Row label="KYC review" value={kycMeta.label} />
+                        <Row label="UPI verification" value={upi.verified ? "Verified" : "Pending"} />
                         <Row label="Eligible items" value={String(eligiblePayoutItems.length)} />
                         <Row label="Pending request" value={hasProcessingPayout ? "Processing" : hasDraftPayout ? "Draft" : "No"} />
                         <Row label="Auto payout schedule" value={`${upi.payoutSchedule} • ${upi.payoutDay}`} />
@@ -2734,16 +2641,20 @@ export default function MarketplaceWorkerPage() {
                         <Button
                           variant="primary"
                           onClick={requestPayout}
-                          disabled={!eligiblePayoutItems.length || !upi.verified || hasProcessingPayout || eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR}
+                          disabled={!payoutReadiness.ready}
                         >
                           <Icon name="wallet" />
                           Request payout
                         </Button>
                       </div>
-                      {!upi.verified && <div className="mt-2 text-xs text-amber-700">Verify UPI before requesting payout.</div>}
-                      {upi.verified && eligiblePayoutTotal < MIN_PAYOUT_REQUEST_INR && (
-                        <div className="mt-2 text-xs text-amber-700">
-                          Minimum approved earnings of {formatINR(MIN_PAYOUT_REQUEST_INR)} is required. You need {formatINR(Math.max(0, MIN_PAYOUT_REQUEST_INR - eligiblePayoutTotal))} more to open a payout request.
+                      {payoutReadiness.blockers.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          {payoutReadiness.blockers.map((blocker) => (
+                            <div key={blocker.code} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+                              <div className="text-xs font-extrabold uppercase tracking-[0.14em] text-amber-700">{blocker.title}</div>
+                              <div className="mt-1 text-xs text-amber-800">{blocker.detail}</div>
+                            </div>
+                          ))}
                         </div>
                       )}
                       {payoutNotice && (
@@ -2764,6 +2675,12 @@ export default function MarketplaceWorkerPage() {
                         </div>
                       )}
                     </Card>
+
+                    {kycStatus !== "approved" && (
+                      <Card title="KYC compliance center" subtitle="Manage the verification packet that now gates payout requests.">
+                        {renderKycManagementPanel()}
+                      </Card>
+                    )}
 
                     <Card title="Notes" subtitle="Operational clarity.">
                       <div className="space-y-3 text-sm text-slate-700">
