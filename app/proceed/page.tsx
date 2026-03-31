@@ -864,7 +864,6 @@ function ProceedPageInner() {
       return;
     }
     const currentWorkerId = session?.workerId;
-    if (!currentWorkerId) return;
 
     let alive = true;
 
@@ -885,6 +884,11 @@ function ProceedPageInner() {
         setGig(match ?? null);
         if (!match) {
           setError("This project is no longer available.");
+          setLoading(false);
+          return;
+        }
+
+        if (!currentWorkerId) {
           setLoading(false);
           return;
         }
