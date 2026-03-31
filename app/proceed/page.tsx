@@ -872,6 +872,7 @@ function ProceedPageInner() {
       setError(null);
       setApplication(null);
       setApplicationStatus(null);
+      const resolvedWorkerId = currentWorkerId;
 
       // Load gig
       try {
@@ -887,13 +888,12 @@ function ProceedPageInner() {
           setLoading(false);
           return;
         }
-
-        if (!currentWorkerId) {
+        if (!resolvedWorkerId) {
           setLoading(false);
           return;
         }
 
-        const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(currentWorkerId)}`, {
+        const appRes = await fetch(`/api/gig-applications?workerId=${encodeURIComponent(resolvedWorkerId)}`, {
           method: "GET",
           cache: "no-store",
         });
@@ -928,7 +928,11 @@ function ProceedPageInner() {
 
       // Get/create assignment + initial inbox
       try {
-        await ensureAssignment(gigId, currentWorkerId);
+        if (!resolvedWorkerId) {
+          setLoading(false);
+          return;
+        }
+        await ensureAssignment(gigId, resolvedWorkerId);
       } catch (err: any) {
         if (alive) setError("Unable to open this project workspace right now. Please retry in a moment.");
       }
