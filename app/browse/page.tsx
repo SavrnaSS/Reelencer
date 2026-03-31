@@ -1336,11 +1336,6 @@ export default function BrowsePage() {
                               {formatGigTypeLabel(gig.gigType)}
                             </span>
                           )}
-                          {spotlight.pinned && spotlight.pinLabel && (
-                            <span className="rounded-full border border-[#d4dfd7] bg-white px-2.5 py-1 text-xs font-medium text-[#355c4f] sm:px-3 sm:text-sm">
-                              {spotlight.pinLabel}
-                            </span>
-                          )}
                           {kycLocked && (
                             <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-xs font-semibold text-[#2f6655] sm:px-3 sm:text-sm">
                               Mini KYC required
