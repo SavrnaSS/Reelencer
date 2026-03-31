@@ -126,9 +126,9 @@ type BulkReviewDraft = {
 };
 
 const DEFAULT_BULK_REVIEW_DRAFT: BulkReviewDraft = {
-  adminNote: "Your proposal has been approved. Review the onboarding instructions below and join the recruiter coordination channel to continue.",
+  adminNote: "Review the onboarding instructions below and join the recruiter coordination channel to continue.",
   adminExplanation:
-    "The selected applications have cleared recruiter review. Workers should join the provided communication channel, complete the onboarding checklist, and wait for the next execution update inside their project feed.",
+    "Complete the onboarding checklist, and wait for the next execution update inside their project feed.",
   whatsappLink: "",
   onboardingSteps:
     "1. Open the recruiter group link.\n2. Join the group using your active WhatsApp account.\n3. Send a short intro message with your worker ID and timezone.\n4. Read the onboarding checklist carefully.\n5. Wait for the recruiter confirmation before starting execution.",
