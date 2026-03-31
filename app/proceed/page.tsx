@@ -1124,7 +1124,17 @@ function ProceedPageInner() {
     const raw = String(projectMeta.kyc_required ?? "true").trim().toLowerCase();
     return !["false", "0", "no", "off"].includes(raw);
   }, [projectMeta.kyc_required]);
-  const shouldBlockForKyc = session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
+  const shouldBlockForKyc = !!session?.workerId && session?.role === "Worker" && kycRequiredForGig && kycStatus !== "approved";
+  const loginRedirectHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (gigId) params.set("gigId", gigId);
+    if (gigTypeHint) params.set("gigType", gigTypeHint);
+    const proceedHref = `/proceed${params.toString() ? `?${params.toString()}` : ""}`;
+    return `/login?next=${encodeURIComponent(proceedHref)}`;
+  }, [gigId, gigTypeHint]);
+  const redirectToLogin = React.useCallback(() => {
+    window.location.replace(loginRedirectHref);
+  }, [loginRedirectHref]);
   const marketplaceProfileLabel = useMemo(
     () => String(displayName || session?.workerId || session?.role || "Account").trim() || "Account",
     [displayName, session?.role, session?.workerId]
@@ -1810,7 +1820,11 @@ function ProceedPageInner() {
   };
 
   const submitCustomProposal = async () => {
-    if (!gigId || !session?.workerId) return;
+    if (!gigId) return;
+    if (!session?.workerId) {
+      redirectToLogin();
+      return;
+    }
     const resolvedPitch = proposalPitch.trim();
     const resolvedApproach = isProjectStyleFlow ? proposalPitch.trim() : proposalApproach.trim();
     const resolvedTimeline = proposalTimeline.trim();
@@ -1870,7 +1884,11 @@ function ProceedPageInner() {
   };
 
   const submitStandardProposal = async () => {
-    if (!gigId || !session?.workerId) return;
+    if (!gigId) return;
+    if (!session?.workerId) {
+      redirectToLogin();
+      return;
+    }
     setProposalSaving(true);
     setError(null);
     setSuccess(null);
@@ -2127,16 +2145,6 @@ function ProceedPageInner() {
     );
   }
 
-  if (!session?.workerId) {
-    return (
-      <div className="min-h-screen bg-[#eef4ea] text-slate-900 flex items-center justify-center">
-        <div className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] p-8 shadow-sm text-sm text-slate-600">
-          Please sign in to proceed.
-        </div>
-      </div>
-    );
-  }
-
   if (!gig) {
     return (
       <div className="min-h-screen bg-[#eef4ea] text-slate-900 flex items-center justify-center px-5">
@@ -2240,46 +2248,55 @@ function ProceedPageInner() {
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <div className="relative" data-profile-menu>
-                <button
-                  ref={menuButtonRef}
-                  className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
-                  onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+              {!session?.workerId ? (
+                <Link
+                  href={loginRedirectHref}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:px-5 sm:text-sm"
                 >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1f4f43] text-xs font-bold text-white sm:h-9 sm:w-9 sm:text-sm">
-                    {displayName.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="max-w-[5rem] truncate text-xs text-slate-700 sm:hidden">{marketplaceProfileLabel}</span>
-                  <span className="hidden max-w-[12rem] truncate text-sm text-slate-700 sm:block">{displayName}</span>
-                  <span className="text-slate-400">▾</span>
-                </button>
-                {menuOpen &&
-                  typeof document !== "undefined" &&
-                  createPortal(
-                    <>
-                      <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/30 md:hidden">
+                  Sign in to apply
+                </Link>
+              ) : (
+                <div className="relative" data-profile-menu>
+                  <button
+                    ref={menuButtonRef}
+                    className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:gap-2 sm:px-3 sm:py-2 sm:text-xs"
+                    onClick={() => (menuOpen ? closeMenu() : setMenuOpen(true))}
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1f4f43] text-xs font-bold text-white sm:h-9 sm:w-9 sm:text-sm">
+                      {displayName.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="max-w-[5rem] truncate text-xs text-slate-700 sm:hidden">{marketplaceProfileLabel}</span>
+                    <span className="hidden max-w-[12rem] truncate text-sm text-slate-700 sm:block">{displayName}</span>
+                    <span className="text-slate-400">▾</span>
+                  </button>
+                  {menuOpen &&
+                    typeof document !== "undefined" &&
+                    createPortal(
+                      <>
+                        <div className="fixed inset-0 z-[9990] flex items-stretch justify-end bg-slate-900/30 md:hidden">
+                          <div
+                            data-profile-menu-panel
+                            className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl transition-all duration-200 ease-out ${
+                              menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
+                            }`}
+                          >
+                            {renderProfileMenu(false)}
+                          </div>
+                        </div>
                         <div
                           data-profile-menu-panel
-                          className={`fixed right-0 top-0 bottom-0 z-[9991] flex w-[88vw] max-w-[420px] flex-col rounded-none border-l border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl transition-all duration-200 ease-out ${
-                            menuClosing ? "animate-[slideOutRight_160ms_ease-in]" : "animate-[slideInRight_200ms_ease-out]"
+                          className={`fixed z-[9991] hidden rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
+                            menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
                           }`}
+                          style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left, width: menuAnchor.width, maxWidth: "calc(100vw - 2rem)" } : { top: 80, right: 24, width: "28rem", maxWidth: "calc(100vw - 2rem)" }}
                         >
-                          {renderProfileMenu(false)}
+                          {renderProfileMenu(true)}
                         </div>
-                      </div>
-                      <div
-                        data-profile-menu-panel
-                        className={`fixed z-[9991] hidden rounded-[1.6rem] border border-[#d4dccf] bg-[#f8faf7] text-slate-900 shadow-2xl backdrop-blur-xl md:block ${
-                          menuClosing ? "animate-[slideUp_160ms_ease-in]" : "animate-[slideDown_200ms_ease-out]"
-                        }`}
-                        style={menuAnchor ? { top: menuAnchor.top, left: menuAnchor.left, width: menuAnchor.width, maxWidth: "calc(100vw - 2rem)" } : { top: 80, right: 24, width: "28rem", maxWidth: "calc(100vw - 2rem)" }}
-                      >
-                        {renderProfileMenu(true)}
-                      </div>
-                    </>,
-                    document.body
-                  )}
-              </div>
+                      </>,
+                      document.body
+                    )}
+                </div>
+              )}
             </div>
           </div>
         </header>
