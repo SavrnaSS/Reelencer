@@ -24,6 +24,9 @@ type Gig = {
   requirements: string[];
   status: GigStatus;
   postedAt: string;
+  browsePinned?: boolean;
+  browsePinRank?: number | null;
+  browsePinLabel?: string;
 };
 
 type GigApplication = {
@@ -285,6 +288,57 @@ function readProjectFieldsFromRequirements(requirements: string[]) {
   };
 }
 
+type BrowseSpotlightConfig = {
+  pinned: boolean;
+  pinRank: number | null;
+  pinLabel: string;
+};
+
+function readBrowseSpotlightConfig(requirements: string[]): BrowseSpotlightConfig {
+  const meta = requirements
+    .filter((item) => item.toLowerCase().startsWith("meta::"))
+    .reduce<Record<string, string>>((acc, item) => {
+      const clean = item.replace(/^meta::/i, "");
+      const sep = clean.indexOf("=");
+      if (sep > 0) {
+        const key = clean.slice(0, sep).trim().toLowerCase();
+        const value = clean.slice(sep + 1).trim();
+        if (key && value) acc[key] = value;
+      }
+      return acc;
+    }, {});
+  const rank = Number.parseInt(meta.browse_pin_rank ?? "", 10);
+  return {
+    pinned: ["true", "1", "yes", "on"].includes((meta.browse_pinned ?? "false").toLowerCase()),
+    pinRank: Number.isFinite(rank) && rank > 0 ? rank : null,
+    pinLabel: meta.browse_pin_label ?? "",
+  };
+}
+
+function mergeBrowseSpotlightConfig(
+  requirements: string[],
+  updates: Partial<{ pinned: boolean; pinRank: number | null; pinLabel: string }>
+) {
+  const current = readBrowseSpotlightConfig(requirements);
+  const nextPinned = updates.pinned ?? current.pinned;
+  const rawRank = updates.pinRank ?? current.pinRank;
+  const nextRank = typeof rawRank === "number" && Number.isFinite(rawRank) && rawRank > 0 ? Math.min(rawRank, 6) : null;
+  const nextLabel = (updates.pinLabel ?? current.pinLabel).trim();
+  const base = requirements.filter((item) => {
+    const lower = item.toLowerCase();
+    return (
+      !lower.startsWith("meta::browse_pinned=") &&
+      !lower.startsWith("meta::browse_pin_rank=") &&
+      !lower.startsWith("meta::browse_pin_label=")
+    );
+  });
+  if (!nextPinned) return base;
+  base.push("Meta::browse_pinned=true");
+  if (nextRank) base.push(`Meta::browse_pin_rank=${nextRank}`);
+  if (nextLabel) base.push(`Meta::browse_pin_label=${nextLabel}`);
+  return base;
+}
+
 function readLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
@@ -364,9 +418,11 @@ export default function GigAdminConsole({
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const [proposalReviewDraft, setProposalReviewDraft] = useState<
-    Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
+      Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
   >({});
   const [bulkReviewDraft, setBulkReviewDraft] = useState<BulkReviewDraft>({ ...DEFAULT_BULK_REVIEW_DRAFT });
+  const [browseControlSavingId, setBrowseControlSavingId] = useState<string | null>(null);
+  const [browseControlNotice, setBrowseControlNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
 
   const [form, setForm] = useState({
     title: "",
@@ -963,6 +1019,96 @@ export default function GigAdminConsole({
       // ignore
     }
   };
+
+  const pinnedGigs = useMemo(
+    () =>
+      gigs
+        .map((gig) => ({ gig, spotlight: readBrowseSpotlightConfig(gig.requirements) }))
+        .filter((entry) => entry.spotlight.pinned)
+        .sort((a, b) => {
+          const rankA = a.spotlight.pinRank ?? 999;
+          const rankB = b.spotlight.pinRank ?? 999;
+          if (rankA !== rankB) return rankA - rankB;
+          if (a.gig.status !== b.gig.status) {
+            const statusOrder = { Open: 0, Paused: 1, Closed: 2 } as const;
+            return statusOrder[a.gig.status] - statusOrder[b.gig.status];
+          }
+          return a.gig.title.localeCompare(b.gig.title);
+        }),
+    [gigs]
+  );
+
+  const getNextBrowsePinRank = useCallback(() => {
+    const used = new Set(
+      gigs
+        .map((gig) => readBrowseSpotlightConfig(gig.requirements).pinRank)
+        .filter((value): value is number => typeof value === "number" && value > 0)
+    );
+    for (let index = 1; index <= 6; index += 1) {
+      if (!used.has(index)) return index;
+    }
+    return 6;
+  }, [gigs]);
+
+  const updateGigBrowseSpotlight = useCallback(
+    async (gig: Gig, updates: Partial<{ pinned: boolean; pinRank: number | null; pinLabel: string }>) => {
+      const nextRequirements = mergeBrowseSpotlightConfig(gig.requirements, updates);
+      setBrowseControlSavingId(gig.id);
+      setBrowseControlNotice(null);
+      setGigs((prev) => {
+        const next = prev.map((item) =>
+          item.id === gig.id
+            ? {
+                ...item,
+                requirements: nextRequirements,
+                ...readBrowseSpotlightConfig(nextRequirements),
+              }
+            : item
+        );
+        writeLS(LS_KEYS.GIGS, next);
+        return next;
+      });
+      try {
+        const res = await fetch("/api/gigs", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: gig.id, updates: { requirements: nextRequirements } }),
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => null);
+          throw new Error(payload?.error || "Failed to update browse spotlight controls.");
+        }
+        setBrowseControlNotice({
+          tone: "success",
+          text: updates.pinned === false ? "Gig removed from Browse spotlight." : "Browse spotlight settings updated.",
+        });
+      } catch (error) {
+        setBrowseControlNotice({
+          tone: "danger",
+          text: error instanceof Error ? error.message : "Failed to update Browse spotlight controls.",
+        });
+      } finally {
+        setBrowseControlSavingId(null);
+      }
+    },
+    []
+  );
+
+  const toggleGigPinned = useCallback(
+    async (gig: Gig) => {
+      const spotlight = readBrowseSpotlightConfig(gig.requirements);
+      if (spotlight.pinned) {
+        await updateGigBrowseSpotlight(gig, { pinned: false, pinRank: null, pinLabel: "" });
+        return;
+      }
+      await updateGigBrowseSpotlight(gig, {
+        pinned: true,
+        pinRank: spotlight.pinRank ?? getNextBrowsePinRank(),
+        pinLabel: spotlight.pinLabel || "Pinned by admin",
+      });
+    },
+    [getNextBrowsePinRank, updateGigBrowseSpotlight]
+  );
 
   const persistApplicationReview = async (
     app: GigApplication,
@@ -1990,20 +2136,152 @@ export default function GigAdminConsole({
 
         <section className="mt-10">
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="mb-6 rounded-[28px] border border-[#d4dfd7] bg-[linear-gradient(135deg,#f7fbf8,#eef4ef)] p-5 shadow-[0_16px_40px_rgba(31,79,67,0.08)]">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#6f877d]">Browse spotlight desk</div>
+                  <div className="mt-2 text-xl font-semibold text-[#203a33]">Pinned Browse management</div>
+                  <div className="mt-2 max-w-2xl text-sm leading-6 text-[#5f766e]">
+                    Promote priority gigs directly from admin. Pinned listings surface first on `/browse`, keep their featured treatment,
+                    and can carry a short admin label for extra context.
+                  </div>
+                </div>
+                <div className="grid min-w-[220px] grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Pinned live</div>
+                    <div className="mt-2 text-2xl font-semibold text-[#203a33]">{pinnedGigs.length}</div>
+                  </div>
+                  <div className="rounded-2xl border border-[#d3dfd7] bg-white px-4 py-4">
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-[#70857d]">Open priority</div>
+                    <div className="mt-2 text-2xl font-semibold text-[#203a33]">
+                      {pinnedGigs.filter(({ gig }) => gig.status === "Open").length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {browseControlNotice && (
+                <div
+                  className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${
+                    browseControlNotice.tone === "success"
+                      ? "border-[#c8d8cf] bg-white text-[#355c4f]"
+                      : "border-rose-200 bg-rose-50 text-rose-700"
+                  }`}
+                >
+                  {browseControlNotice.text}
+                </div>
+              )}
+              <div className="mt-5 space-y-3">
+                {pinnedGigs.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[#c9d7ce] bg-white/70 px-4 py-4 text-sm text-[#60756d]">
+                    No gigs are pinned yet. Use the pin controls in the listing rows to create the Browse priority queue.
+                  </div>
+                ) : (
+                  pinnedGigs.map(({ gig, spotlight }) => (
+                    <div key={gig.id} className="rounded-2xl border border-[#d7e2da] bg-white px-4 py-4">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
+                              Slot {spotlight.pinRank ?? "Auto"}
+                            </span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                              {gig.status}
+                            </span>
+                          </div>
+                          <div className="mt-2 text-sm font-semibold text-slate-900">{gig.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {gig.company} • {gig.platform} • {gig.id}
+                          </div>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,240px)_auto] sm:items-center">
+                          <select
+                            className="rounded-xl border border-[#c9d7ce] bg-white px-3 py-2 text-sm text-slate-700"
+                            value={String(spotlight.pinRank ?? 1)}
+                            onChange={(e) =>
+                              updateGigBrowseSpotlight(gig, {
+                                pinned: true,
+                                pinRank: Number.parseInt(e.target.value, 10) || 1,
+                              })
+                            }
+                            disabled={browseControlSavingId === gig.id}
+                          >
+                            {[1, 2, 3, 4, 5, 6].map((slot) => (
+                              <option key={slot} value={slot}>
+                                Slot {slot}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            className="rounded-xl border border-[#c9d7ce] bg-white px-3 py-2 text-sm text-slate-700"
+                            value={spotlight.pinLabel}
+                            placeholder="Pinned by admin"
+                            onChange={(e) =>
+                              setGigs((prev) => {
+                                const next = prev.map((item) =>
+                                  item.id === gig.id
+                                    ? {
+                                        ...item,
+                                        requirements: mergeBrowseSpotlightConfig(item.requirements, {
+                                          pinLabel: e.target.value,
+                                          pinned: true,
+                                          pinRank: spotlight.pinRank ?? 1,
+                                        }),
+                                      }
+                                    : item
+                                );
+                                writeLS(LS_KEYS.GIGS, next);
+                                return next;
+                              })
+                            }
+                            onBlur={(e) =>
+                              updateGigBrowseSpotlight(gig, {
+                                pinned: true,
+                                pinRank: spotlight.pinRank ?? 1,
+                                pinLabel: e.target.value,
+                              })
+                            }
+                            disabled={browseControlSavingId === gig.id}
+                          />
+                          <button
+                            className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
+                            onClick={() => toggleGigPinned(gig)}
+                            disabled={browseControlSavingId === gig.id}
+                          >
+                            {browseControlSavingId === gig.id ? "Saving..." : "Remove pin"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 text-sm font-semibold text-slate-900">Gig listings</div>
               <span className="shrink-0 text-xs text-slate-500">{gigs.length} total</span>
             </div>
             {loading && <div className="mt-4 text-xs text-slate-500">Loading gigs...</div>}
             <div className="mt-4 space-y-3">
-              {gigs.map((gig) => (
+              {gigs.map((gig) => {
+                const spotlight = readBrowseSpotlightConfig(gig.requirements);
+                return (
                 <div key={gig.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
-                      <div className="break-words text-sm font-semibold text-slate-900">{gig.title}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="break-words text-sm font-semibold text-slate-900">{gig.title}</div>
+                        {spotlight.pinned && (
+                          <span className="rounded-full border border-[#bcd6c9] bg-[#edf5ef] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#2f6655]">
+                            Browse pinned {spotlight.pinRank ? `• Slot ${spotlight.pinRank}` : ""}
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-1 text-xs text-slate-500">
                         {gig.company} • {gig.platform}
                       </div>
+                      {spotlight.pinned && spotlight.pinLabel && (
+                        <div className="mt-2 text-xs font-medium text-[#2f6655]">{spotlight.pinLabel}</div>
+                      )}
                     </div>
                     <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
                       <button
@@ -2036,6 +2314,35 @@ export default function GigAdminConsole({
                           <option key={s}>{s}</option>
                         ))}
                       </select>
+                      <button
+                        className={`rounded-full px-3 py-1 text-xs font-semibold sm:w-auto ${
+                          spotlight.pinned
+                            ? "border border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
+                            : "border border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                        }`}
+                        onClick={() => toggleGigPinned(gig)}
+                        disabled={browseControlSavingId === gig.id}
+                      >
+                        {browseControlSavingId === gig.id ? "Saving..." : spotlight.pinned ? "Unpin" : "Pin to Browse"}
+                      </button>
+                      <select
+                        className="w-full min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 sm:w-auto"
+                        value={String(spotlight.pinRank ?? getNextBrowsePinRank())}
+                        onChange={(e) =>
+                          updateGigBrowseSpotlight(gig, {
+                            pinned: true,
+                            pinRank: Number.parseInt(e.target.value, 10) || 1,
+                            pinLabel: spotlight.pinLabel || "Pinned by admin",
+                          })
+                        }
+                        disabled={browseControlSavingId === gig.id}
+                      >
+                        {[1, 2, 3, 4, 5, 6].map((slot) => (
+                          <option key={slot} value={slot}>
+                            Pin slot {slot}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
@@ -2048,7 +2355,7 @@ export default function GigAdminConsole({
                     </span>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
             </section>

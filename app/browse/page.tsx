@@ -25,6 +25,9 @@ type Gig = {
   requirements: string[];
   status: GigStatus;
   postedAt: string;
+  browsePinned?: boolean;
+  browsePinRank?: number | null;
+  browsePinLabel?: string;
 };
 
 type GigApplication = {
@@ -243,6 +246,43 @@ function isKycRequired(gig: Pick<Gig, "requirements">) {
   if (!line) return true;
   const value = String(line).replace(/^meta::kyc_required=/i, "").trim().toLowerCase();
   return !["false", "0", "no", "off"].includes(value);
+}
+
+type BrowseSpotlightConfig = {
+  pinned: boolean;
+  pinRank: number | null;
+  pinLabel: string;
+};
+
+function readBrowseSpotlightConfig(gig: Pick<Gig, "requirements" | "browsePinned" | "browsePinRank" | "browsePinLabel">): BrowseSpotlightConfig {
+  const meta = Array.isArray(gig.requirements) ? gig.requirements : [];
+  const metaMap = meta
+    .filter((item) => String(item).toLowerCase().startsWith("meta::"))
+    .reduce<Record<string, string>>((acc, item) => {
+      const clean = String(item).replace(/^meta::/i, "");
+      const sep = clean.indexOf("=");
+      if (sep > 0) {
+        const key = clean.slice(0, sep).trim().toLowerCase();
+        const value = clean.slice(sep + 1).trim();
+        if (key && value) acc[key] = value;
+      }
+      return acc;
+    }, {});
+  const requirementPinned = ["true", "1", "yes", "on"].includes((metaMap.browse_pinned ?? "false").toLowerCase());
+  const requirementRank = Number.parseInt(metaMap.browse_pin_rank ?? "", 10);
+  const explicitRank =
+    typeof gig.browsePinRank === "number" && Number.isFinite(gig.browsePinRank) && gig.browsePinRank > 0 ? gig.browsePinRank : null;
+  return {
+    pinned: Boolean(gig.browsePinned ?? requirementPinned),
+    pinRank: explicitRank ?? (Number.isFinite(requirementRank) && requirementRank > 0 ? requirementRank : null),
+    pinLabel: String(gig.browsePinLabel ?? metaMap.browse_pin_label ?? "").trim(),
+  };
+}
+
+function getGigStatusPriority(status: GigStatus) {
+  if (status === "Open") return 0;
+  if (status === "Paused") return 1;
+  return 2;
 }
 
 type Role = "Admin" | "Worker";
@@ -670,7 +710,27 @@ export default function BrowsePage() {
     return map;
   }, [assignments]);
 
-  const visibleGigs = useMemo(() => filtered, [filtered]);
+  const visibleGigs = useMemo(() => {
+    return filtered
+      .map((gig, index) => ({ gig, index, spotlight: readBrowseSpotlightConfig(gig) }))
+      .sort((a, b) => {
+        if (a.spotlight.pinned !== b.spotlight.pinned) return a.spotlight.pinned ? -1 : 1;
+        const rankA = a.spotlight.pinRank ?? 999;
+        const rankB = b.spotlight.pinRank ?? 999;
+        if (rankA !== rankB) return rankA - rankB;
+        const statusGap = getGigStatusPriority(a.gig.status) - getGigStatusPriority(b.gig.status);
+        if (statusGap !== 0) return statusGap;
+        const payoutGap = parseBrowsePayoutAmount(b.gig.payout) - parseBrowsePayoutAmount(a.gig.payout);
+        if (payoutGap !== 0) return payoutGap;
+        return a.index - b.index;
+      })
+      .map((entry) => entry.gig);
+  }, [filtered]);
+
+  const visiblePinnedGigIds = useMemo(
+    () => new Set(visibleGigs.filter((gig) => readBrowseSpotlightConfig(gig).pinned).map((gig) => gig.id)),
+    [visibleGigs]
+  );
 
   const applyForGig = async (gig: Gig) => {
     if (!workerId) {
@@ -1095,7 +1155,11 @@ export default function BrowsePage() {
                 const isFullTime = isWorkspaceGig(gig);
                 const isFreelanceCustom = isCustomGig(gig);
                 const requiresKyc = isKycRequired(gig);
-                const isFeaturedCard = index === 0 || (index === 1 && visibleGigs[0]?.status !== "Open" && gig.status === "Open");
+                const spotlight = readBrowseSpotlightConfig(gig);
+                const isFeaturedCard =
+                  spotlight.pinned ||
+                  (visiblePinnedGigIds.size === 0 &&
+                    (index === 0 || (index === 1 && visibleGigs[0]?.status !== "Open" && gig.status === "Open")));
                 const kycLocked = requiresKyc && role === "Worker" && !hasApprovedKyc;
                 const accessLocked = kycLocked;
                 const kycActionHref =
@@ -1251,7 +1315,7 @@ export default function BrowsePage() {
                           )}
                           {isFeaturedCard && (
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
-                              Featured match
+                              {spotlight.pinned ? `Pinned by admin${spotlight.pinRank ? ` • Slot ${spotlight.pinRank}` : ""}` : "Featured match"}
                             </span>
                           )}
                           <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold md:hidden ${statusTone}`}>
@@ -1270,6 +1334,11 @@ export default function BrowsePage() {
                           {gig.gigType && (
                             <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs sm:px-3 sm:text-sm">
                               {formatGigTypeLabel(gig.gigType)}
+                            </span>
+                          )}
+                          {spotlight.pinned && spotlight.pinLabel && (
+                            <span className="rounded-full border border-[#d4dfd7] bg-white px-2.5 py-1 text-xs font-medium text-[#355c4f] sm:px-3 sm:text-sm">
+                              {spotlight.pinLabel}
                             </span>
                           )}
                           {kycLocked && (
