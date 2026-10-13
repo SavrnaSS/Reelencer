@@ -8,7 +8,7 @@ function RecoveryRedirect() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    const query = searchParams.toString();
+    const query = searchParams?.toString() ?? "";
     const hash = window.location.hash || "";
     const target = `/reset-password${query ? `?${query}` : ""}${hash}`;
     window.location.replace(target);

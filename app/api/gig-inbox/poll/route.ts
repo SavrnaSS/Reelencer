@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { NextResponse } from "next/server";
 
 const NO_STORE_HEADERS = {
@@ -6,9 +7,11 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
-export async function POST() {
+async function handlePOST() {
   return NextResponse.json(
     { error: "IMAP polling disabled. Use /api/gig-inbox/ingest via Cloudflare Email Routing." },
     { status: 410, headers: NO_STORE_HEADERS }
   );
 }
+
+export const POST = withApi({ auth: "public" }, handlePOST);

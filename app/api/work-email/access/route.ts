@@ -1,7 +1,8 @@
+import { withApi } from "@/lib/api/route";
 import { getAllowedWorkEmailDomains } from "@/lib/workEmail";
-import { bumpCodeUsage, json, requireUserFromBearer, tableMissing, validateActiveCode } from "../_utils";
+import { json, requireUserFromBearer, tableMissing, validateActiveCode } from "../_utils";
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -18,7 +19,6 @@ export async function POST(req: Request) {
     return json(valid.status, { ok: false, error: valid.error });
   }
 
-  await bumpCodeUsage(guard.admin, String(valid.code.id), Number(valid.code.use_count ?? 0));
 
   return json(200, {
     ok: true,
@@ -27,3 +27,5 @@ export async function POST(req: Request) {
   });
 }
 
+
+export const POST = withApi({ auth: "user" }, handlePOST);

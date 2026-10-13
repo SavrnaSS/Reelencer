@@ -1,113 +1,39 @@
-// app/api/admin/create-worker/route.ts
-import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { withApi } from '@/lib/api/route';
+import { authenticate } from '@/lib/api/auth';
+import { ApiError, databaseError } from '@/lib/api/errors';
+import { supabaseAdmin } from '@/lib/supabaseAdmin';
 
-export async function POST(req: Request) {
-  const guard = await requireAdminFromBearer(req);
-  if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+const workerInput = z.object({
+  workerId: z.string().trim().regex(/^[a-zA-Z0-9_-]{1,80}$/),
+  name: z.string().trim().min(1).max(150),
+  email: z.email().max(254).transform(value => value.toLowerCase()),
+  password: z.string().min(12).max(128),
+  active: z.boolean().default(true),
+});
 
+export const POST = withApi({ auth: 'admin', rateLimit: 6 }, async req => {
+  const parsed = workerInput.safeParse(await req.json());
+  if (!parsed.success) throw new ApiError(400, 'Provide a worker ID, name, valid email, and a password of 12–128 characters.');
+  const { workerId, name, email, password, active } = parsed.data;
+  const actor = await authenticate(req);
   const sb = supabaseAdmin();
-  const body = await req.json().catch(() => ({}));
-
-  const workerId = String(body?.workerId ?? "").trim();
-  const name = String(body?.name ?? "").trim();
-  const email = String(body?.email ?? "").trim().toLowerCase();
-  const password = String(body?.password ?? "");
-  const active = body?.active === undefined ? true : !!body?.active;
-
-  if (!workerId || !name || !email || password.length < 6) {
-    return json(400, { ok: false, error: "Missing fields" });
-  }
-
-  const isMissingColumn = (msg?: string | null) => {
-    if (!msg) return false;
-    return (
-      (msg.includes("column") && msg.includes("does not exist")) ||
-      (msg.includes("Could not find the") && msg.includes("column")) ||
-      msg.includes("schema cache")
-    );
-  };
-  const isMissingTable = (msg?: string | null) => !!msg && msg.includes("does not exist");
-
-  // 1) Create Auth user (profile will be created by trigger handle_new_user)
-  const created = await sb.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { name, role: "Worker", worker_code: workerId, display_name: name },
-  });
-
+  const existing = await sb.from('profiles').select('id').eq('worker_code', workerId).maybeSingle();
+  databaseError(existing.error);
+  if (existing.data) throw new ApiError(409, 'This worker ID is already in use.');
+  const created = await sb.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name, display_name: name } });
   if (created.error || !created.data.user) {
-    return json(500, { ok: false, error: created.error?.message || "Failed to create user" });
+    if (created.error?.status === 422) throw new ApiError(409, 'This email is already registered or cannot be used.');
+    throw new ApiError(503, 'Worker creation is temporarily unavailable.');
   }
-
-  const authUserId = created.data.user.id;
-
-  // 2) Ensure profile exists + set active
-  // Trigger should have inserted it; but we’ll upsert safely in case of edge delay.
-  let upsertProfile = await sb
-    .from("profiles")
-    .upsert({ id: authUserId, role: "Worker", display_name: name, email, active }, { onConflict: "id" })
-    .select("worker_code, display_name, email, active")
-    .single();
-  if (upsertProfile.error) {
-    upsertProfile = await sb
-      .from("profiles")
-      .upsert({ id: authUserId, role: "Worker", display_name: name }, { onConflict: "id" })
-      .select("worker_code, display_name")
-      .single();
+  const id = created.data.user.id;
+  const provisioned = await sb.rpc('provision_worker', { p_actor: actor.user.id, p_user: id, p_code: workerId, p_name: name, p_email: email, p_active: active });
+  if (provisioned.error) {
+    // Supabase Auth and PostgREST cannot share a transaction. Compensate only the newly created user.
+    const cleanup = await sb.auth.admin.deleteUser(id);
+    if (cleanup.error) console.error(JSON.stringify({ event: 'worker_provision_cleanup_failed', userId: id }));
+    databaseError(provisioned.error);
   }
-  if (!upsertProfile.error) {
-    const updateRes = await sb.from("profiles").update({ worker_code: workerId }).eq("id", authUserId).select("worker_code").single();
-    if (!updateRes.error) {
-      upsertProfile = { ...upsertProfile, data: { ...(upsertProfile.data as any), worker_code: updateRes.data.worker_code } } as any;
-    }
-  }
-  if (upsertProfile.error && isMissingColumn(upsertProfile.error.message)) {
-    upsertProfile = await sb
-      .from("profiles")
-      .upsert(
-        { id: authUserId, role: "Worker", display_name: name, worker_code: workerId },
-        { onConflict: "id" }
-      )
-      .select("worker_code, display_name")
-      .single();
-  }
-  if (upsertProfile.error && isMissingColumn(upsertProfile.error.message)) {
-    upsertProfile = await sb
-      .from("profiles")
-      .upsert({ id: authUserId, role: "Worker", display_name: name }, { onConflict: "id" })
-      .select("display_name")
-      .single();
-  }
-
-  if (upsertProfile.error || !upsertProfile.data) {
-    await sb.auth.admin.deleteUser(authUserId).catch(() => null);
-    return json(500, { ok: false, error: upsertProfile.error?.message || "Failed to create profile" });
-  }
-
-  let workersInsert: any = await sb
-    .from("workers")
-    .insert({ id: workerId, user_id: authUserId, name, email, active })
-    .select("id,name,email,active")
-    .single();
-  if (workersInsert.error && isMissingColumn(workersInsert.error.message)) {
-    workersInsert = await sb
-      .from("workers")
-      .insert({ id: workerId, user_id: authUserId, name, active })
-      .select("id,name,active")
-      .single();
-  }
-  if (workersInsert.error && isMissingTable(workersInsert.error.message)) {
-    workersInsert = { data: null, error: null };
-  }
-
-  return json(200, {
-    ok: true,
-    worker: {
-      id: String((upsertProfile.data as any).worker_code ?? workerId),
-      name: String((upsertProfile.data as any).display_name ?? name),
-      email: String((upsertProfile.data as any).email ?? workersInsert.data?.email ?? email),
-      active: (upsertProfile.data as any).active ?? workersInsert.data?.active ?? active,
-    },
-  });
-}
+  return NextResponse.json({ ok: true, worker: provisioned.data }, { status: 201 });
+});

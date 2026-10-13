@@ -1,6 +1,7 @@
+import { withApi } from "@/lib/api/route";
 import { getSecretCodeFromHeaders, json, requireUserFromBearer, tableMissing, validateActiveCode } from "../../_utils";
 
-export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+async function handleDELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -37,3 +38,5 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   return json(200, { ok: true });
 }
 
+
+export const DELETE = withApi({ auth: "user" }, handleDELETE);

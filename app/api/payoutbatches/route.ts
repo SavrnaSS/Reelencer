@@ -1,6 +1,10 @@
+import { withApi } from "@/lib/api/route";
+import { authenticate } from "@/lib/api/auth";
+import { resolveWorkerUserId } from "@/lib/api/work";
 // app/api/payoutbatches/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getDevDashboardPayoutBatches, isDashboardDevMode } from "@/lib/dashboardDevData";
 
 // Optional: keep responses non-cacheable (good for dashboards)
 const NO_STORE_HEADERS = {
@@ -20,7 +24,7 @@ type DbPayoutBatch = {
   processed_at?: string | null;
   paid_at?: string | null;
   method: "UPI" | "Bank" | string;
-  notes?: any;
+  notes?: unknown;
 };
 
 type DbPayoutItem = {
@@ -37,10 +41,10 @@ type DbPayoutItem = {
 type DbWorkItem = {
   id: string | number;
   public_id?: string | null;
-  review?: any;
+  review?: Record<string, unknown>;
 };
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   try {
     const url = new URL(req.url);
     const workerId = url.searchParams.get("workerId")?.trim();
@@ -54,16 +58,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid workerId" }, { status: 400, headers: NO_STORE_HEADERS });
     }
 
+    if (isDashboardDevMode()) {
+      return NextResponse.json(getDevDashboardPayoutBatches(workerId), { headers: NO_STORE_HEADERS });
+    }
+
     const sb = supabaseAdmin();
 
-    const resolveWorkerUuid = async (id: string) => {
-      if (!id.startsWith("WKR-")) return id;
-      const { data, error } = await sb.from("profiles").select("id").eq("worker_code", id).maybeSingle();
-      if (error || !data?.id) return id;
-      return String(data.id);
-    };
-
-    const workerUuid = await resolveWorkerUuid(workerId);
+    const actor = await authenticate(req);
+    const workerUuid = actor.isAdmin ? await resolveWorkerUserId(workerId) : actor.user.id;
 
     // ✅ 1) Fetch batches for worker
     const { data: batchesRaw, error: batchErr } = await sb
@@ -112,7 +114,7 @@ export async function GET(req: Request) {
     }
 
     // ✅ 3) Group items by batch
-    const itemsByBatch = new Map<string, any[]>();
+    const itemsByBatch = new Map<string, Record<string, unknown>[]>();
     for (const it of items) {
       const bid = String(it.batch_id);
       const workItem = workItemMap.get(String(it.work_item_id));
@@ -153,7 +155,9 @@ export async function GET(req: Request) {
     }));
 
     return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Unknown error" }, { status: 500, headers: NO_STORE_HEADERS });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500, headers: NO_STORE_HEADERS });
   }
 }
+
+export const GET = withApi({ auth: "user" }, handleGET);

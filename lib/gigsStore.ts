@@ -1,7 +1,7 @@
 import "server-only";
 
 export type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
-export type PayoutType = "Per task" | "Per post" | "Monthly";
+export type PayoutType = "Per task" | "Per post" | "Monthly" | "Per 1k Views";
 export type GigStatus = "Open" | "Paused" | "Closed";
 export type ApplicationStatus = "Applied" | "Accepted" | "Rejected" | "Withdrawn";
 

@@ -1,246 +1,31 @@
+import { databaseError } from "@/lib/api/errors";
+import { withApi } from "@/lib/api/route";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
-import nodemailer from "nodemailer";
+import { emailBaseUrl, sendEmail } from "@/lib/email/send";
+import { firstName, renderBrandEmail } from "@/lib/email/brandEmail";
 
-function randomWorkerId() {
-  return `WKR-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-}
-
-async function ensureWorkerId(sb: ReturnType<typeof supabaseAdmin>, userId: string) {
-  const existing = await sb.from("workers").select("id").eq("user_id", userId).maybeSingle();
-  if (!existing.error && existing.data?.id) return existing.data.id as string;
-
-  let workerId = "";
-  for (let i = 0; i < 6; i += 1) {
-    const candidate = randomWorkerId();
-    const { data } = await sb.from("workers").select("id").eq("id", candidate).maybeSingle();
-    if (!data?.id) {
-      workerId = candidate;
-      break;
-    }
+async function sendKycEmail(to: string, subject: string, html: string, text?: string) {
+  try {
+    const { provider } = await sendEmail({ to, subject, html, text });
+    return { sent: true as const, provider };
+  } catch (error) {
+    return { sent: false as const, reason: error instanceof Error ? error.message.slice(0, 300) : "Email delivery failed." };
   }
-  if (!workerId) throw new Error("Unable to generate worker id");
-
-  const profile = await sb.from("profiles").select("display_name,email,role").eq("id", userId).maybeSingle();
-  const name = profile.data?.display_name ?? "Worker";
-  const email = profile.data?.email ?? null;
-
-  await sb.from("profiles").update({ worker_code: workerId, role: "Worker", active: true }).eq("id", userId);
-  await sb.from("workers").insert({ id: workerId, user_id: userId, name, email, active: true });
-
-  return workerId;
 }
 
-async function sendKycEmail(to: string, subject: string, html: string) {
-  const brandedFrom = "Reelencer <noreply@reelencer.com>";
-  const resendEnvCandidates = [
-    { key: "RESEND_API_KEY", value: String(process.env.RESEND_API_KEY || "").trim() },
-    { key: "RESEND_KEY", value: String(process.env.RESEND_KEY || "").trim() },
-    { key: "RESEND_API_TOKEN", value: String(process.env.RESEND_API_TOKEN || "").trim() },
-    { key: "RESEND_TOKEN", value: String(process.env.RESEND_TOKEN || "").trim() },
-    { key: "RESEND_SECRET", value: String(process.env.RESEND_SECRET || "").trim() },
-    { key: "RESEND_PRIVATE_KEY", value: String(process.env.RESEND_PRIVATE_KEY || "").trim() },
-    { key: "RESEND_EMAIL_API_KEY", value: String(process.env.RESEND_EMAIL_API_KEY || "").trim() },
-    { key: "NEXT_PUBLIC_RESEND_API_KEY", value: String(process.env.NEXT_PUBLIC_RESEND_API_KEY || "").trim() },
-    { key: "NEXT_PUBLIC_RESEND_KEY", value: String(process.env.NEXT_PUBLIC_RESEND_KEY || "").trim() },
-  ] as const;
-  const resendFromCandidates = [
-    { key: "RESEND_FROM", value: String(process.env.RESEND_FROM || "").trim() },
-    { key: "RESEND_FROM_EMAIL", value: String(process.env.RESEND_FROM_EMAIL || "").trim() },
-    { key: "NEXT_PUBLIC_RESEND_FROM", value: String(process.env.NEXT_PUBLIC_RESEND_FROM || "").trim() },
-    { key: "NEXT_PUBLIC_RESEND_FROM_EMAIL", value: String(process.env.NEXT_PUBLIC_RESEND_FROM_EMAIL || "").trim() },
-  ] as const;
-
-  const resendKeyMatch =
-    resendEnvCandidates.find((candidate) => candidate.value) ?? ({ key: null, value: "" } as const);
-  const resendFromMatch =
-    resendFromCandidates.find((candidate) => candidate.value) ?? ({ key: null, value: "" } as const);
-
-  const resendApiKey = resendKeyMatch.value;
-  const resendFrom = resendFromMatch.value || brandedFrom;
-  const visibleResendKeys = resendEnvCandidates
-    .filter((candidate) => candidate.value)
-    .map((candidate) => candidate.key);
-
-  if (resendApiKey) {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: resendFrom,
-        to: [to],
-        subject,
-        html,
-      }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      return {
-        sent: false as const,
-        reason: body || `Resend delivery failed with status ${response.status}.`,
-      };
-    }
-
-    return { sent: true as const, provider: "resend" as const };
-  }
-
-  const mailgunApiKey = String(process.env.MAILGUN_API_KEY || "").trim();
-  const mailgunDomain = String(process.env.MAILGUN_DOMAIN || "").trim();
-  const mailgunApiBase = String(process.env.MAILGUN_API_BASE || "https://api.mailgun.net").trim().replace(/\/+$/, "");
-  const mailgunFrom = String(process.env.MAILGUN_FROM || resendFrom || brandedFrom).trim();
-
-  if (mailgunApiKey && mailgunDomain) {
-    const params = new URLSearchParams();
-    params.set("from", mailgunFrom);
-    params.set("to", to);
-    params.set("subject", subject);
-    params.set("html", html);
-
-    const response = await fetch(`${mailgunApiBase}/v3/${mailgunDomain}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`api:${mailgunApiKey}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      return {
-        sent: false as const,
-        reason: body || `Mailgun delivery failed with status ${response.status}.`,
-      };
-    }
-
-    return { sent: true as const, provider: "mailgun" as const };
-  }
-
-  const gmailUser = String(process.env.GMAIL_IMAP_USER || "").trim();
-  const gmailPass = String(process.env.GMAIL_IMAP_APP_PASSWORD || "").trim();
-  const host = String(process.env.SMTP_HOST || (gmailUser && gmailPass ? "smtp.gmail.com" : "")).trim();
-  const port = Number(String(process.env.SMTP_PORT || 587).trim() || 587);
-  const user = String(process.env.SMTP_USER || gmailUser).trim();
-  const pass = String(process.env.SMTP_PASS || gmailPass).trim();
-  const from = String(process.env.SMTP_FROM || brandedFrom).trim();
-  if (!host || !user || !pass || !from) {
-    return {
-      sent: false as const,
-      reason: `Mail delivery is not configured for KYC notifications. Resend key not found in [RESEND_API_KEY, RESEND_KEY, RESEND_API_TOKEN, RESEND_TOKEN, RESEND_SECRET, RESEND_PRIVATE_KEY, RESEND_EMAIL_API_KEY]. Runtime visible RESEND keys: ${visibleResendKeys.length ? visibleResendKeys.join(", ") : "none"}. Active Resend from: ${resendFromMatch.key ?? "default sender"}. If you recently added env vars in Vercel, redeploy is required.`,
-    };
-  }
-
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
-
-  await transporter.sendMail({ from, to, subject, html });
-  return { sent: true as const, provider: "smtp" as const };
-}
-
-function appBaseUrl() {
-  const raw = String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://reelencer.com").trim();
-  return raw.replace(/\/+$/, "");
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function renderKycMailLayout({
-  eyebrow,
-  title,
-  intro,
-  tone = "neutral",
-  sections,
-  ctaLabel,
-  ctaHref,
-  footer,
-}: {
-  eyebrow: string;
-  title: string;
-  intro: string;
-  tone?: "neutral" | "success" | "warning";
-  sections?: Array<{ label: string; value: string }>;
-  ctaLabel: string;
-  ctaHref: string;
-  footer: string;
-}) {
-  const accent =
-    tone === "success"
-      ? { surface: "#edf8f1", border: "#d6eadc", pill: "#eff9f2", pillText: "#2c684d" }
-      : tone === "warning"
-        ? { surface: "#fff7ef", border: "#f3dcc2", pill: "#fff2df", pillText: "#9b5d16" }
-        : { surface: "#f4f8f4", border: "#dfe8dc", pill: "#f6faf5", pillText: "#476255" };
-
-  const sectionHtml = (sections ?? [])
-    .filter((section) => section.value.trim())
-    .map(
-      (section) => `
-        <tr>
-          <td style="padding:0 0 14px 0;">
-            <div style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#7b8f84;font-weight:700;">${escapeHtml(section.label)}</div>
-            <div style="margin-top:6px;font-size:15px;line-height:1.6;color:#2f4b3f;">${escapeHtml(section.value)}</div>
-          </td>
-        </tr>
-      `
-    )
-    .join("");
-
-  return `
-    <div style="margin:0;padding:32px 16px;background:#eef4ea;font-family:Inter,Segoe UI,Arial,sans-serif;color:#1f352c;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;border-collapse:collapse;">
-        <tr>
-          <td style="padding:0;">
-            <div style="border:1px solid #d4dccf;border-radius:28px;background:#ffffff;overflow:hidden;box-shadow:0 18px 48px rgba(35,69,56,0.08);">
-              <div style="padding:28px 28px 18px;background:linear-gradient(180deg,#f8faf7 0%,${accent.surface} 100%);border-bottom:1px solid ${accent.border};">
-                <div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#6f877d;font-weight:800;">${escapeHtml(eyebrow)}</div>
-                <div style="margin-top:10px;font-size:30px;line-height:1.15;font-weight:800;color:#1d3f33;">${escapeHtml(title)}</div>
-                <div style="margin-top:12px;font-size:16px;line-height:1.7;color:#496257;">${escapeHtml(intro)}</div>
-                <div style="margin-top:18px;display:inline-block;padding:10px 16px;border-radius:999px;border:1px solid ${accent.border};background:${accent.pill};color:${accent.pillText};font-size:12px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;">
-                  ${escapeHtml(eyebrow)}
-                </div>
-              </div>
-              <div style="padding:26px 28px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                  ${sectionHtml}
-                  <tr>
-                    <td style="padding-top:8px;">
-                      <a href="${escapeHtml(ctaHref)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:#1f4f43;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;">${escapeHtml(ctaLabel)}</a>
-                    </td>
-                  </tr>
-                </table>
-              </div>
-              <div style="padding:18px 28px 26px;font-size:13px;line-height:1.7;color:#71887c;border-top:1px solid #edf3eb;background:#fbfdfb;">
-                ${escapeHtml(footer)}
-              </div>
-            </div>
-          </td>
-        </tr>
-      </table>
-    </div>
-  `;
-}
+const appBaseUrl = emailBaseUrl;
 
 async function resolveKycRecipient(
   sb: ReturnType<typeof supabaseAdmin>,
   userId: string,
   workerId: string | null
 ) {
+  type WorkerLookupRow = { email?: string | null; name?: string | null };
   const [{ data: profile }, { data: worker }, authUserRes] = await Promise.all([
     sb.from("profiles").select("email,display_name").eq("id", userId).maybeSingle(),
-    workerId ? sb.from("workers").select("email,name").eq("id", workerId).maybeSingle() : Promise.resolve({ data: null as any, error: null as any }),
+    workerId
+      ? sb.from("workers").select("email,name").eq("id", workerId).maybeSingle()
+      : Promise.resolve({ data: null as WorkerLookupRow | null, error: null as unknown }),
     sb.auth.admin.getUserById(userId),
   ]);
 
@@ -259,9 +44,10 @@ async function resolveKycRecipient(
   return { email, displayName };
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, rows: [] });
 
   const sb = supabaseAdmin();
   const { data, error } = await sb
@@ -270,9 +56,17 @@ export async function GET(req: Request) {
 
   if (error) return json(500, { ok: false, error: error.message });
 
-  const rows = data ?? [];
+  type KycRow = {
+    id: string;
+    user_id: string;
+    worker_id?: string | null;
+    id_doc_path?: string | null;
+    selfie_path?: string | null;
+    [key: string]: unknown;
+  };
+  const rows = (data ?? []) as KycRow[];
   const withUrls = await Promise.all(
-    rows.map(async (row: any) => {
+    rows.map(async (row) => {
       const recipient = await resolveKycRecipient(sb, row.user_id, row.worker_id ?? null);
       const idDoc =
         row.id_doc_path
@@ -300,7 +94,7 @@ export async function GET(req: Request) {
   return json(200, { ok: true, rows: withUrls });
 }
 
-export async function PATCH(req: Request) {
+async function handlePATCH(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -314,36 +108,24 @@ export async function PATCH(req: Request) {
     return json(400, { ok: false, error: "id and valid status required" });
   }
 
-  const sb = supabaseAdmin();
-  const { data: row, error: rowErr } = await sb.from("worker_kyc").select("*").eq("id", id).single();
-  if (rowErr || !row) return json(404, { ok: false, error: "KYC not found" });
-
-  let workerId: string | null = row.worker_id ?? null;
-  if (status === "approved") {
-    workerId = await ensureWorkerId(sb, row.user_id);
+  if (guard.devBypass) {
+    return json(200, {
+      ok: true,
+      workerId: status === "approved" ? "dev-worker-bypass" : null,
+      mailStatus: {
+        sent: false,
+        reason: "Local dev bypass does not send KYC notification email.",
+      },
+    });
   }
 
-  const { error } = await sb
-    .from("worker_kyc")
-    .update({
-      status,
-      reviewed_at: new Date().toISOString(),
-      reviewer_id: guard.userId,
-      rejection_reason: status === "rejected" ? rejectionReason : null,
-      worker_id: workerId,
-      admin_note: adminNote,
-    })
-    .eq("id", id);
-
-  if (error) return json(500, { ok: false, error: error.message });
-
-  await sb.from("worker_kyc_events").insert({
-    kyc_id: row.id,
-    status,
-    note: adminNote ?? rejectionReason ?? (status === "approved" ? "Approved" : "Rejected"),
-    actor_id: guard.userId,
-    created_at: new Date().toISOString(),
+  const sb = supabaseAdmin();
+  if (typeof body.submittedAt !== "string" || !Number.isFinite(Date.parse(body.submittedAt)) || (rejectionReason?.length ?? 0) > 2000 || (adminNote?.length ?? 0) > 4000) return json(400, { error: "Reload the verification and provide valid review details." });
+  const { data: row, error } = await sb.rpc("review_worker_kyc", {
+    p_actor: guard.userId, p_id: id, p_submitted_at: body.submittedAt, p_status: status, p_reason: rejectionReason, p_note: adminNote,
   });
+  databaseError(error);
+  const workerId: string | null = row.worker_id ?? null;
 
   let mailStatus:
     | { sent: true; recipient: string }
@@ -354,45 +136,54 @@ export async function PATCH(req: Request) {
     const recipient = await resolveKycRecipient(sb, row.user_id, workerId);
     if (recipient.email && (status === "approved" || status === "rejected")) {
       const recipientName = recipient.displayName;
-      const dashboardHref = `${appBaseUrl()}/browse`;
-      const kycHref = `${appBaseUrl()}/browse`;
+      const dashboardHref = `${appBaseUrl()}/dashboard?section=find`;
+      const kycHref = `${appBaseUrl()}/dashboard`;
       const subject =
         status === "approved"
           ? "Your Reelencer KYC has been approved"
           : "Action needed: update your Reelencer KYC submission";
-      const html =
+      const first = firstName(recipientName);
+      const { html, text } =
         status === "approved"
-          ? renderKycMailLayout({
+          ? renderBrandEmail({
+              siteUrl: appBaseUrl(),
               eyebrow: "KYC Approved",
-              title: `Welcome aboard, ${recipientName}`,
+              title: first ? `Welcome aboard, ${first}` : "Welcome aboard",
               intro: "Your identity verification has been successfully approved. Your Reelencer workspace is now unlocked, and you can continue with verified opportunities, assignments, and payout access.",
               tone: "success",
+              highlights: [
+                { label: "Status", value: "Verified" },
+                { label: "Workspace ID", value: workerId || "Assigned in your profile" },
+              ],
               sections: [
                 { label: "Review outcome", value: "Approved by the Reelencer verification team" },
-                { label: "Workspace ID", value: workerId || "Assigned in your profile" },
                 { label: "What you can do now", value: "Open your dashboard, explore verified gigs, and continue through the worker workflow." },
                 { label: "Team note", value: String(adminNote ?? "").trim() },
               ],
-              ctaLabel: "Open your workspace",
-              ctaHref: dashboardHref,
-              footer: "This is an automated confirmation from Reelencer Operations. Your verified account is now active for workspace access and future platform updates.",
+              cta: { label: "Open your workspace", href: dashboardHref },
+              note: "This is an automated confirmation from Reelencer Operations. Your verified account is now active for workspace access and future platform updates.",
             })
-          : renderKycMailLayout({
+          : renderBrandEmail({
+              siteUrl: appBaseUrl(),
               eyebrow: "KYC Update",
-              title: `Your verification needs one more update, ${recipientName}`,
+              title: "Your verification needs one more update",
+              greeting: first ? `Hi ${first},` : undefined,
               intro: "Your submitted KYC packet was reviewed, but it could not be approved in its current form. Please review the details below and submit an updated verification so the team can continue your approval process.",
               tone: "warning",
+              highlights: [
+                { label: "Status", value: "Changes needed" },
+                { label: "Next step", value: "Resubmit your KYC" },
+              ],
               sections: [
                 { label: "Review outcome", value: "Returned for correction by the verification team" },
                 { label: "Why this was returned", value: String(rejectionReason ?? "Please review your submission and upload clearer or matching documents.").trim() },
                 { label: "Team note", value: String(adminNote ?? "").trim() },
                 { label: "Next step", value: "Open your dashboard, update the requested details, and resubmit your verification packet." },
               ],
-              ctaLabel: "Review and update KYC",
-              ctaHref: kycHref,
-              footer: "This is an automated notification from Reelencer Operations. Once you resubmit corrected details, your verification will return to the review queue.",
+              cta: { label: "Review and update KYC", href: kycHref },
+              note: "This is an automated notification from Reelencer Operations. Once you resubmit corrected details, your verification will return to the review queue.",
             });
-      const result = await sendKycEmail(recipient.email, subject, html);
+      const result = await sendKycEmail(recipient.email, subject, html, text);
       mailStatus = result.sent
         ? { sent: true, recipient: recipient.email }
         : { sent: false, reason: result.reason, recipient: recipient.email };
@@ -426,3 +217,7 @@ export async function PATCH(req: Request) {
 
   return json(200, { ok: true, workerId, mailStatus });
 }
+
+export const GET = withApi({ auth: "admin" }, handleGET);
+
+export const PATCH = withApi({ auth: "admin" }, handlePATCH);

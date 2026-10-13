@@ -1,6 +1,8 @@
 "use client";
+import { apiFetch as fetch } from "@/lib/api/client";
 
 import Link from "next/link";
+import { CREATOR_HOME_HREF } from "@/lib/routes";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -405,8 +407,8 @@ export default function WorkEmailCreatorPage() {
                 <p className="text-lg font-bold text-slate-900 sm:text-xl">Work Email Creator</p>
                 <p className="text-xs text-slate-600 sm:text-sm">Provision secure work inboxes for signup and verification workflows.</p>
               </div>
-              <Link href="/proceed" className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">
-                Back
+              <Link href={CREATOR_HOME_HREF} className="text-xs font-semibold text-[#1f4f43] hover:text-[#2d6b5a]">
+                Back to Jobs
               </Link>
             </div>
 

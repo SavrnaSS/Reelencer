@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { decryptSecretText } from "@/lib/secretCrypto";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../../_utils";
 
@@ -13,9 +14,10 @@ function missingSchema(message: string) {
   );
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, password: "" });
 
   const body = await req.json().catch(() => ({}));
   const id = String(body?.id ?? "");
@@ -46,3 +48,4 @@ export async function POST(req: Request) {
   }
 }
 
+export const POST = withApi({ auth: "admin" }, handlePOST);

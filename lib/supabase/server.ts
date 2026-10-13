@@ -1,6 +1,7 @@
 // lib/supabase/server.ts
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
+import { supabaseServerFetch } from "@/lib/supabase/serverFetch";
 
 export async function createSupabaseServer() {
   const cookieStore = await cookies();
@@ -22,6 +23,9 @@ export async function createSupabaseServer() {
             // in Server Components setAll can fail; middleware handles refresh
           }
         },
+      },
+      global: {
+        fetch: supabaseServerFetch,
       },
     }
   );

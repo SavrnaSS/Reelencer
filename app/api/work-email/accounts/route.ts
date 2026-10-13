@@ -1,3 +1,6 @@
+import { hashSecretCode } from "@/lib/workEmail";
+import { databaseError } from "@/lib/api/errors";
+import { withApi } from "@/lib/api/route";
 import {
   getAllowedWorkEmailDomains,
   isValidDomain,
@@ -39,7 +42,7 @@ function mapAccount(row: WorkEmailAccountRow) {
   };
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -76,7 +79,7 @@ export async function GET(req: Request) {
   return json(200, { ok: true, accounts: (data ?? []).map(mapAccount), allowedDomains: getAllowedWorkEmailDomains() });
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -141,7 +144,8 @@ export async function POST(req: Request) {
     updated_at: new Date().toISOString(),
   };
 
-  const { data, error } = await guard.admin.from("work_email_accounts").insert(payload).select("*").single();
+  const { data, error } = await guard.admin.rpc("create_work_email_account", { p_actor: guard.userId, p_code_hash: hashSecretCode(code), p_account: payload });
+  databaseError(error);
 
   if (error) {
     const message = String(error.message || "");
@@ -157,5 +161,9 @@ export async function POST(req: Request) {
     return json(500, { ok: false, error: message });
   }
 
-  return json(200, { ok: true, account: mapAccount(data) });
+  return json(200, { ok: true, account: { ...mapAccount(data), hasSocialPassword: true } });
 }
+
+export const GET = withApi({ auth: "user" }, handleGET);
+
+export const POST = withApi({ auth: "user" }, handlePOST);

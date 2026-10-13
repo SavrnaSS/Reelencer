@@ -3,300 +3,266 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AuthFeedback } from "@/app/_components/AuthFeedback";
+import { AuthField, AuthShell, AuthSubmit, PasswordToggle, authInputClass } from "@/app/_components/AuthShell";
+import { ResendConfirmation } from "@/app/_components/ResendConfirmation";
+import { readAuthEmail, stashAuthEmail } from "@/lib/authEmailHandoff";
+import { confirmState, passwordStrength } from "@/lib/passwordStrength";
 import { supabase } from "@/lib/supabaseClient";
 
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
+type Phase = "checking" | "ready" | "invalid" | "done";
 
-function appBaseUrl() {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) return configured.replace(/\/+$/, "");
-  if (typeof window !== "undefined") return window.location.origin;
-  return "";
-}
+const loginHref = "/login?next=/";
+const signupHref = "/signup?next=/";
 
-function ResetPasswordPageInner() {
+function ResetPasswordInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Older reset emails put the address in the URL; newer ones hand it over in-tab.
+  const emailHint = useMemo(() => searchParams?.get("email")?.trim().toLowerCase() ?? "", [searchParams]);
 
+  const [phase, setPhase] = useState<Phase>("checking");
+  const [accountEmail, setAccountEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
-  const [ready, setReady] = useState(false);
-  const [invalidLink, setInvalidLink] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [err, setErr] = useState<{ text: string; n: number } | null>(null);
+  const [missing, setMissing] = useState<{ password?: boolean; confirm?: boolean }>({});
 
-  const emailHint = useMemo(() => searchParams.get("email")?.trim().toLowerCase() ?? "", [searchParams]);
-  const [resendEmail, setResendEmail] = useState("");
-
-  useEffect(() => {
-    if (emailHint) setResendEmail(emailHint);
-  }, [emailHint]);
-
+  // A reset link signs the user in (via /auth/confirm or Supabase's PASSWORD_RECOVERY event); no session = no link.
   useEffect(() => {
     let active = true;
-
-    const sync = async () => {
-      const { data } = await supabase.auth.getSession();
+    const accept = (email?: string | null) => {
       if (!active) return;
-      if (data.session) {
-        setReady(true);
-        setInvalidLink(false);
-      } else {
-        setReady(false);
-      }
+      setAccountEmail(email ?? "");
+      setPhase((p) => (p === "done" ? p : "ready"));
     };
-
-    void sync();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
-      if (event === "PASSWORD_RECOVERY" || !!session) {
-        setReady(true);
-        setInvalidLink(false);
-      }
+    void supabase.auth.getSession().then(({ data }) => {
+      if (data.session) accept(data.session.user.email);
     });
-
-    const t = window.setTimeout(async () => {
-      if (!active) return;
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY" || session) accept(session?.user.email);
+    });
+    // Give a link in the URL hash a moment to be exchanged before calling it invalid.
+    const timer = window.setTimeout(async () => {
       const { data } = await supabase.auth.getSession();
-      if (!active) return;
-      if (!data.session) {
-        setInvalidLink(true);
-        setErr("This reset link is invalid or expired. Request a new one from login.");
-      }
+      if (active && !data.session) setPhase((p) => (p === "checking" ? "invalid" : p));
     }, 1800);
-
     return () => {
       active = false;
-      window.clearTimeout(t);
+      window.clearTimeout(timer);
       sub.subscription.unsubscribe();
     };
   }, []);
 
+  // After success, continue to log in (the button skips the wait).
+  useEffect(() => {
+    if (phase !== "done") return;
+    const timer = window.setTimeout(() => router.replace("/login?reset=done"), 2200);
+    return () => window.clearTimeout(timer);
+  }, [phase, router]);
+
+  const strength = passwordStrength(password);
+  const match = confirmState(password, confirm);
+
+  const fail = (text: string, fields: typeof missing = {}) => {
+    setMissing(fields);
+    setErr((prev) => ({ text, n: (prev?.n ?? 0) + 1 }));
+  };
+
   const submit = async () => {
     setErr(null);
-    setInfo(null);
-
-    if (!ready) {
-      setErr("Reset session is not ready yet. Re-open the email link or request a new one.");
-      return;
-    }
-
-    if (!password || !confirm) {
-      setErr("Enter and confirm your new password.");
-      return;
-    }
-
-    if (password.length < 6) {
-      setErr("Password must be at least 6 characters.");
-      return;
-    }
-
-    if (password !== confirm) {
-      setErr("Passwords do not match.");
-      return;
-    }
-
+    if (!password || !confirm) return fail("Enter and confirm your new password.", { password: !password, confirm: !confirm });
+    if (password.length < 6) return fail("Use at least 6 characters for your new password.", { password: true });
+    if (password !== confirm) return fail("Passwords don't match yet.", { confirm: true });
+    setMissing({});
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const { data, error } = await supabase.auth.updateUser({ password });
       if (error) {
-        setErr(error.message || "Unable to update password.");
-        return;
+        const same = /different from the old|same password/i.test(error.message);
+        return fail(same ? "Choose a password you haven't used for this account before." : error.message || "Unable to update your password.", { password: same });
       }
-
-      setInfo("Password updated. Redirecting to login...");
+      // Hand the address to the login form in-tab (not in the URL) so they can sign in with the new password.
+      const email = data.user?.email || accountEmail || emailHint;
+      if (email) stashAuthEmail(email);
       await supabase.auth.signOut();
-      const next = emailHint ? `/login?reset=done&email=${encodeURIComponent(emailHint)}` : "/login?reset=done";
-      window.setTimeout(() => router.replace(next), 700);
+      setPhase("done");
     } catch (error) {
-      setErr(errorMessage(error, "Unable to update password."));
+      fail(error instanceof Error ? error.message : "Unable to update your password.");
     } finally {
       setLoading(false);
     }
   };
 
-  const resendResetLink = async () => {
-    setErr(null);
-    setInfo(null);
+  if (phase === "invalid") {
+    return (
+      <AuthShell
+        mode="login"
+        loginHref={loginHref}
+        signupHref={signupHref}
+        title="Request a new reset link"
+        subtitle="This page needs a valid link from a password-reset email. Links work once and expire after a short time."
+        footer={
+          <>
+            Remembered it?{" "}
+            <Link href={loginHref} className="font-bold text-[#aef07f] transition hover:text-white">
+              Log in
+            </Link>
+          </>
+        }
+      >
+        <ResendConfirmation initialEmail={emailHint || readAuthEmail() || ""} kind="reset" />
+      </AuthShell>
+    );
+  }
 
-    const email = resendEmail.trim().toLowerCase();
-    if (!email) {
-      setErr("Enter your account email to resend reset link.");
-      return;
-    }
+  if (phase === "done") {
+    return (
+      <AuthShell mode="login" loginHref={loginHref} signupHref={signupHref} title="Password updated" subtitle="Use your new password to log in from now on.">
+        <div className="grid gap-5">
+          <div role="status" aria-live="polite" className="relative grid justify-items-center gap-3 overflow-hidden rounded-[1.25rem] border border-[#8fe05f]/25 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(143,224,95,0.16),transparent_60%)] px-4 pb-6 pt-7 text-center">
+            <span className="rx-pop-in grid h-16 w-16 place-items-center rounded-full bg-[#22c55e] text-white shadow-[0_14px_30px_rgba(34,197,94,0.4)]" aria-hidden>
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8">
+                <path d="m5 10.5 3.2 3.2L15 7" />
+              </svg>
+            </span>
+            <p className="text-[1.05rem] font-extrabold text-white">You&apos;re all set</p>
+            <p className="text-[0.85rem] font-semibold text-white/60">Taking you to log in…</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.replace("/login?reset=done")}
+            className="resources-cta-button inline-flex h-12 w-full items-center justify-center gap-2 rounded-[1rem] bg-[#8fe05f] px-6 text-base font-extrabold text-[#0b1914] shadow-[0_16px_34px_rgba(143,224,95,0.25)] transition hover:bg-[#9ae86a] sm:h-[3.25rem]"
+          >
+            Log in now
+          </button>
+        </div>
+      </AuthShell>
+    );
+  }
 
-    setResending(true);
-    try {
-      const redirectTo = `${appBaseUrl()}/auth/recovery?email=${encodeURIComponent(email)}`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-      if (error) {
-        setErr(error.message || "Unable to resend reset link right now.");
-        return;
+  const checking = phase === "checking";
+  return (
+    <AuthShell
+      mode="login"
+      loginHref={loginHref}
+      signupHref={signupHref}
+      title="Choose a new password"
+      subtitle="Pick something you haven't used here before. You'll use it to log in from now on."
+      footer={
+        <>
+          Changed your mind?{" "}
+          <Link href={loginHref} className="font-bold text-[#aef07f] transition hover:text-white">
+            Back to log in
+          </Link>
+        </>
       }
-      setInfo("A new password reset link has been sent to your email.");
-      setInvalidLink(false);
-    } catch (error) {
-      setErr(errorMessage(error, "Unable to resend reset link right now."));
-    } finally {
-      setResending(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-[#041f1a] text-white">
-      <div className="relative isolate min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(45,130,105,0.22),transparent_34%),radial-gradient(circle_at_top_right,rgba(18,64,53,0.36),transparent_26%),linear-gradient(135deg,#0d4b3d_0%,#08342b_58%,#051916_100%)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
-
-        <div className="relative mx-auto w-full max-w-2xl px-4 pb-8 pt-16 sm:px-6 lg:px-8 lg:pt-24">
-          <Link href="/" className="text-sm font-semibold text-[#9eea6d] transition hover:text-white">← Back to home</Link>
-
-          <div className="mt-6 rounded-[1.65rem] border border-white/10 bg-[#113d33]/72 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.07)] backdrop-blur-sm sm:p-8">
-            <h1 className="text-[2rem] font-black tracking-[-0.03em] text-white sm:text-[2.35rem]">Reset password</h1>
-            <p className="mt-2 text-sm text-white/70">Set a new password for your Reelencer account.</p>
-
-            {!ready && !invalidLink && (
-              <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/8 px-3 py-1 text-xs text-white/80">
-                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-[#95ea63]" />
-                Verifying reset link...
-              </div>
+    >
+      <form
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+        className={`auth-form-panel grid gap-4 rounded-[1.1rem] ${err ? "has-auth-error" : ""}`}
+      >
+        {/* Which account this changes, so nobody resets the wrong one. */}
+        <div className="flex items-center gap-3 rounded-[1rem] border border-white/10 bg-white/[0.04] px-3.5 py-3" aria-live="polite">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#8fe05f]/15 text-[#8fe05f]" aria-hidden>
+            {checking ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none" />
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-[1.1rem] w-[1.1rem]">
+                <path d="M12 3 19 6v5.5c0 4.2-2.9 7.6-7 8.5-4.1-.9-7-4.3-7-8.5V6l7-3Z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
             )}
-
-            <div className="mt-6 space-y-4">
-              <div>
-                <label className="text-sm font-medium text-white/84" htmlFor="reset-password-new">
-                  New password <span className="text-[#95ea63]">*</span>
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="reset-password-new"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    type={showPassword ? "text" : "password"}
-                    placeholder="At least 6 characters"
-                    className="h-14 w-full rounded-[1.1rem] border border-black/8 bg-white px-5 pr-12 text-[1.02rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500"
-                    autoComplete="new-password"
-                    disabled={!ready || loading}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-700/90 hover:bg-black/5"
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                    disabled={!ready || loading}
-                  >
-                    {showPassword ? "🙈" : "👁"}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium text-white/84" htmlFor="reset-password-confirm">
-                  Confirm new password <span className="text-[#95ea63]">*</span>
-                </label>
-                <div className="relative mt-2">
-                  <input
-                    id="reset-password-confirm"
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    type={showConfirm ? "text" : "password"}
-                    placeholder="Re-enter new password"
-                    className="h-14 w-full rounded-[1.1rem] border border-black/8 bg-white px-5 pr-12 text-[1.02rem] font-semibold text-slate-800 outline-none placeholder:text-slate-500"
-                    autoComplete="new-password"
-                    disabled={!ready || loading}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void submit();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirm((prev) => !prev)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-700/90 hover:bg-black/5"
-                    aria-label={showConfirm ? "Hide password" : "Show password"}
-                    disabled={!ready || loading}
-                  >
-                    {showConfirm ? "🙈" : "👁"}
-                  </button>
-                </div>
-              </div>
-
-              {err && <div className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-800">{err}</div>}
-              {info && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">{info}</div>}
-
-              <div className="flex flex-wrap items-center gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => void submit()}
-                  disabled={!ready || loading}
-                  className="inline-flex h-14 items-center justify-center rounded-[1.2rem] bg-[#8fe05f] px-8 text-lg font-extrabold tracking-[-0.02em] text-[#0b1914] transition hover:bg-[#9ae86a] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loading ? "Updating..." : "Update password"}
-                </button>
-
-                <Link
-                  href={emailHint ? `/login?email=${encodeURIComponent(emailHint)}` : "/login"}
-                  className="text-[#9eea6d] transition hover:text-white"
-                >
-                  Back to login
-                </Link>
-              </div>
-
-              <div className="mt-3 rounded-xl border border-white/12 bg-white/5 p-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-white/58">Need a new link?</div>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <input
-                    value={resendEmail}
-                    onChange={(e) => setResendEmail(e.target.value)}
-                    type="email"
-                    placeholder="you@company.com"
-                    className="h-11 w-full rounded-lg border border-black/8 bg-white px-4 text-sm font-semibold text-slate-800 outline-none placeholder:text-slate-500"
-                    autoComplete="email"
-                    disabled={resending}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void resendResetLink()}
-                    disabled={resending}
-                    className="inline-flex h-11 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/10 px-4 text-sm font-semibold text-white transition hover:bg-white/16 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {resending ? "Sending..." : "Resend link"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[0.72rem] font-bold uppercase tracking-[0.14em] text-white/50">{checking ? "Checking your reset link" : "Resetting password for"}</span>
+            <span className="block truncate text-[0.95rem] font-extrabold text-white">{checking ? "One moment…" : accountEmail || "your account"}</span>
+          </span>
         </div>
-      </div>
-    </div>
-  );
-}
 
-function ResetPasswordFallback() {
-  return (
-    <div className="min-h-screen bg-[#041f1a] text-white">
-      <div className="relative isolate min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(45,130,105,0.22),transparent_34%),radial-gradient(circle_at_top_right,rgba(18,64,53,0.36),transparent_26%),linear-gradient(135deg,#0d4b3d_0%,#08342b_58%,#051916_100%)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(140,209,115,0.12)_1.1px,transparent_1.1px)] bg-[length:12px_12px] opacity-80" />
-        <div className="relative mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center px-6 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/18 bg-white/8 px-3 py-1 text-xs text-white/80">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-[#95ea63]" />
-            Preparing reset form...
+        <fieldset disabled={checking || loading} className="grid gap-4 disabled:opacity-60">
+          <AuthField
+            id="reset-password-new"
+            label="New password"
+            icon="lock"
+            invalid={missing.password}
+            trailing={<PasswordToggle shown={showPassword} onToggle={() => setShowPassword((prev) => !prev)} />}
+          >
+            <input
+              id="reset-password-new"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setErr(null);
+              }}
+              type={showPassword ? "text" : "password"}
+              placeholder="6+ characters"
+              aria-invalid={Boolean(missing.password)}
+              aria-describedby="reset-password-strength"
+              className={`${authInputClass} pr-12`}
+              autoComplete="new-password"
+            />
+          </AuthField>
+
+          <AuthField
+            id="reset-password-confirm"
+            label="Confirm new password"
+            icon="lock"
+            invalid={missing.confirm}
+            trailing={<PasswordToggle shown={showConfirm} onToggle={() => setShowConfirm((prev) => !prev)} />}
+          >
+            <input
+              id="reset-password-confirm"
+              value={confirm}
+              onChange={(e) => {
+                setConfirm(e.target.value);
+                setErr(null);
+              }}
+              type={showConfirm ? "text" : "password"}
+              placeholder="Repeat new password"
+              aria-invalid={Boolean(missing.confirm)}
+              aria-describedby="reset-confirm-state"
+              className={`${authInputClass} pr-12`}
+              autoComplete="new-password"
+            />
+          </AuthField>
+        </fieldset>
+
+        <div className="-mt-1 grid gap-1.5" aria-live="polite">
+          <div id="reset-password-strength" className={`rx-strength rx-strength--${strength.tone || "empty"} flex items-center gap-3`}>
+            <span className="grid flex-1 grid-cols-4 gap-1.5" aria-hidden>
+              {[1, 2, 3, 4].map((step) => (
+                <span key={step} className={`rx-strength-bar h-1.5 rounded-full ${strength.score >= step ? "is-on" : ""}`} />
+              ))}
+            </span>
+            <span className="rx-strength-label min-w-[4.5rem] text-right text-xs font-bold">{strength.label ? (strength.score > 1 ? strength.label : "Too short") : ""}</span>
           </div>
+          <p id="reset-confirm-state" className="min-h-[1.1rem] text-xs font-semibold">
+            {strength.score === 1 && <span className="text-white/64">Use at least 6 characters.</span>}
+            {strength.score !== 1 && match === "match" && <span className="rx-confirm-ok">✓ Passwords match</span>}
+            {strength.score !== 1 && match === "mismatch" && <span className="rx-confirm-bad">Passwords don&apos;t match yet</span>}
+          </p>
         </div>
-      </div>
-    </div>
+
+        {err && <AuthFeedback key={err.n} tone="error" message={err.text} />}
+
+        <AuthSubmit loading={loading} label="Update password" loadingLabel="Updating password..." />
+      </form>
+    </AuthShell>
   );
 }
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<ResetPasswordFallback />}>
-      <ResetPasswordPageInner />
+    <Suspense fallback={<div className="min-h-screen bg-[#ecf4ef]" />}>
+      <ResetPasswordInner />
     </Suspense>
   );
 }

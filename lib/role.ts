@@ -1,19 +1,16 @@
-// lib/role.ts
-import { supabase } from "@/lib/supabaseClient";
+"use client";
+import { apiFetch } from "@/lib/api/client";
+import { toLegacyRole } from "@/lib/roles";
 
 export type Role = "Admin" | "Worker";
 
 export async function getMyRole(): Promise<Role | null> {
-  const { data: userRes } = await supabase.auth.getUser();
-  const user = userRes?.user;
-  if (!user) return null;
-
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (error || !profile?.role) return null;
-  return profile.role as Role;
+  try {
+    const response = await apiFetch("/api/me");
+    if (!response.ok) return null;
+    const identity = await response.json();
+    return toLegacyRole(identity.role);
+  } catch {
+    return null;
+  }
 }

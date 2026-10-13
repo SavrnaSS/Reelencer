@@ -1,16 +1,18 @@
-// app/admin/page.tsx
 "use client";
-
+import { apiFetch as fetch } from "@/lib/api/client";
+// app/admin/page.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { isAdminRole } from "@/lib/roles";
+import { getMyRole } from "@/lib/role";
 import { supabase } from "@/lib/supabaseClient";
 import { usePathname, useRouter } from "next/navigation";
+import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, type WorkTiming } from "@/lib/workDates";
 
 /** Keep in sync with workspace page */
 type Role = "Admin" | "Worker";
 type AuthSession = {
   role: Role;
   workerId?: string;
+  email?: string;
   at: string;
 };
 
@@ -55,6 +57,14 @@ type Worker = {
   name: string;
   email: string;
   active: boolean;
+  introVideo?: {
+    name: string;
+    uploadedAt: string;
+    previewUrl?: string;
+    thumbnailUrl?: string;
+    mimeType?: string;
+    size?: number;
+  };
 };
 
 type WorkItem = {
@@ -64,7 +74,7 @@ type WorkItem = {
   title: string;
   type: TaskType;
   createdAt: string; // YYYY-MM-DD
-  dueAt: string; // local ISO "YYYY-MM-DDTHH:MM"
+  dueAt?: string; // India-local ISO; earnings records may have no deadline
   status: Status;
   priority: Priority;
   rewardINR: number;
@@ -126,15 +136,6 @@ function nowStamp() {
 function nowISO() {
   const d = new Date();
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-function parseLocalISO(s: string) {
-  const [date, time] = s.split("T");
-  const [y, m, d] = date.split("-").map(Number);
-  const [hh, mm] = time.split(":").map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0);
-}
-function minutesBetween(a: Date, b: Date) {
-  return Math.floor((b.getTime() - a.getTime()) / 60000);
 }
 function formatINR(n: number) {
   try {
@@ -596,25 +597,9 @@ function AdminConsole() {
       return (_id: string) => undefined as any;
     }
     const now = new Date();
-    const map = new Map<string, { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean }>();
+    const map = new Map<string, WorkTiming>();
     workItems.forEach((x) => {
-      const due = parseLocalISO(x.dueAt);
-      const dueInMin = minutesBetween(now, due);
-      const overdue =
-        dueInMin < 0 &&
-        (x.status === "Open" || x.status === "In progress" || x.status === "Needs fix" || x.status === "Submitted");
-      let slaRemaining: number | undefined = undefined;
-      let slaBreached: boolean | undefined = undefined;
-      if (
-        x.startedAt &&
-        (x.status === "In progress" || x.status === "Submitted" || x.status === "Approved" || x.status === "Needs fix")
-      ) {
-        const started = parseLocalISO(x.startedAt);
-        const elapsed = minutesBetween(started, now);
-        slaRemaining = x.slaMinutes - elapsed;
-        slaBreached = slaRemaining < 0 && x.status === "In progress";
-      }
-      map.set(x.id, { dueInMin, overdue, slaRemaining, slaBreached });
+      map.set(x.id, getWorkTiming(x, now));
     });
     return (id: string) => map.get(id);
   }, [workItems, tick, mounted]);
@@ -860,7 +845,7 @@ function AdminConsole() {
     }
     return arr.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
-      return parseLocalISO(a.dueAt).getTime() - parseLocalISO(b.dueAt).getTime();
+      return compareWorkDeadlines(a.dueAt, b.dueAt);
     });
   }, [workItems, selectedWorkerId, ql, accountById]);
 
@@ -878,7 +863,7 @@ function AdminConsole() {
         );
       });
     }
-    return arr.sort((a, b) => parseLocalISO(a.dueAt).getTime() - parseLocalISO(b.dueAt).getTime());
+    return arr.sort((a, b) => compareWorkDeadlines(a.dueAt, b.dueAt));
   }, [workItems, ql, workerById, accountById]);
 
   /** ---------- Render (YOUR UI unchanged) ---------- */
@@ -1136,15 +1121,72 @@ function AdminConsole() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <div className="text-sm font-extrabold text-slate-900">{selectedWorker.name}</div>
-                              <div className="text-xs text-slate-600">
-                                {selectedWorker.id} • {selectedWorker.email}
+                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+                          <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="text-sm font-extrabold text-slate-900">{selectedWorker.name}</div>
+                                <div className="text-xs text-slate-600">
+                                  {selectedWorker.id} • {selectedWorker.email}
+                                </div>
                               </div>
+                              <Chip tone="info">{accountsForWorker(selectedWorker.id).length} assigned accounts</Chip>
                             </div>
-                            <Chip tone="info">{accountsForWorker(selectedWorker.id).length} assigned accounts</Chip>
+                          </div>
+
+                          <div className="rounded-md border border-slate-200 bg-white p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-extrabold text-slate-900">Presentation video</div>
+                                <div className="text-xs text-slate-600">
+                                  {selectedWorker.introVideo?.uploadedAt
+                                    ? `Updated ${new Date(selectedWorker.introVideo.uploadedAt).toLocaleString()}`
+                                    : "No presentation video uploaded yet."}
+                                </div>
+                              </div>
+                              {selectedWorker.introVideo?.previewUrl ? (
+                                <a
+                                  href={selectedWorker.introVideo.previewUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 transition hover:bg-slate-50"
+                                >
+                                  Open
+                                </a>
+                              ) : null}
+                            </div>
+                            {selectedWorker.introVideo?.previewUrl ? (
+                              <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                                <div className="relative mx-auto aspect-[9/16] w-full max-w-[220px] bg-slate-900">
+                                  {selectedWorker.introVideo.thumbnailUrl ? (
+                                    <img
+                                      src={selectedWorker.introVideo.thumbnailUrl}
+                                      alt={`${selectedWorker.name} presentation thumbnail`}
+                                      className="h-full w-full object-cover"
+                                    />
+                                  ) : (
+                                    <video
+                                      src={selectedWorker.introVideo.previewUrl}
+                                      className="h-full w-full object-cover"
+                                      preload="metadata"
+                                      playsInline
+                                      muted
+                                    />
+                                  )}
+                                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-[linear-gradient(180deg,rgba(15,23,42,0.08),rgba(15,23,42,0.22))]">
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/35 backdrop-blur-sm">
+                                      <svg viewBox="0 0 24 24" className="ml-1 h-6 w-6 fill-white" aria-hidden="true">
+                                        <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+                                      </svg>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                                This creator has not uploaded a presentation video yet.
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1850,7 +1892,7 @@ function AdminWorkTable({
   items: WorkItem[];
   workerById: (id: string) => Worker | undefined;
   accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined;
+  metaOf: (id: string) => WorkTiming | undefined;
   onOpen: (id: string) => void;
   onReview: (id: string) => void;
 }) {
@@ -1895,8 +1937,8 @@ function AdminWorkTable({
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{x.dueAt.replace("T", " ")}</div>
-                    <div className="text-xs text-slate-600">{overdue ? "Overdue" : "On schedule"}</div>
+                    <div className="font-extrabold text-slate-900">{formatWorkDeadline(x.dueAt)}</div>
+                    {typeof meta?.dueInMin === "number" && <div className="text-xs text-slate-600">{overdue ? "Overdue" : "On schedule"}</div>}
                   </td>
                   <td className="px-4 py-3">
                     <PriorityPill p={x.priority} />
@@ -1944,7 +1986,7 @@ function AdminReviewList({
   items: WorkItem[];
   workerById: (id: string) => Worker | undefined;
   accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined;
+  metaOf: (id: string) => WorkTiming | undefined;
   onOpen: (id: string) => void;
   onReview: (id: string) => void;
 }) {
@@ -1964,7 +2006,7 @@ function AdminReviewList({
                 </div>
                 <div className="mt-1 text-sm text-slate-700 line-clamp-2">{x.title}</div>
                 <div className="mt-2 text-xs text-slate-500 truncate">
-                  {acc?.handle ?? x.accountId} • Due {x.dueAt.replace("T", " ")}
+                  {acc?.handle ?? x.accountId} • {formatWorkDeadline(x.dueAt)}
                 </div>
               </div>
               <div className="shrink-0 flex flex-col items-end gap-2">
@@ -1973,7 +2015,7 @@ function AdminReviewList({
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {overdue ? <Chip tone="danger">Overdue</Chip> : <Chip tone="neutral">On schedule</Chip>}
+              {typeof meta?.dueInMin !== "number" ? <Chip tone="neutral">No deadline</Chip> : overdue ? <Chip tone="danger">Overdue</Chip> : <Chip tone="neutral">On schedule</Chip>}
               <Chip tone="info">Reward {formatINR(x.rewardINR)}</Chip>
               <Chip tone="neutral">{x.type}</Chip>
             </div>
@@ -2004,7 +2046,7 @@ function AdminWorkDetails({
   item: WorkItem | null;
   worker?: Worker;
   account?: AssignedAccount;
-  meta?: { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean };
+  meta?: WorkTiming;
   onClose: () => void;
   onReview: () => void;
 }) {
@@ -2035,16 +2077,18 @@ function AdminWorkDetails({
               <div className="mt-3 grid gap-2 text-sm text-slate-700">
                 <Row label="Worker" value={<span>{worker?.name ?? item.workerId}</span>} />
                 <Row label="Account" value={<span>{account?.handle ?? item.accountId}</span>} />
-                <Row label="Due" value={<span>{item.dueAt.replace("T", " ")}</span>} />
+                <Row label="Due" value={<span>{formatWorkDeadline(item.dueAt)}</span>} />
                 <Row label="Reward" value={<span>{formatINR(item.rewardINR)}</span>} />
                 <Row label="SLA" value={<span>{item.slaMinutes} min</span>} />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {meta?.overdue ? (
+                {typeof meta?.dueInMin !== "number" ? (
+                  <Chip tone="neutral">No deadline</Chip>
+                ) : meta.overdue ? (
                   <Chip tone="danger">Overdue {Math.abs(meta.dueInMin)}m</Chip>
                 ) : (
-                  <Chip tone={typeof meta?.dueInMin === "number" && meta.dueInMin <= 60 ? "warn" : "neutral"}>
-                    Due {Math.max(0, meta?.dueInMin ?? 0)}m
+                  <Chip tone={meta.dueInMin <= 60 ? "warn" : "neutral"}>
+                    Due {Math.max(0, meta.dueInMin)}m
                   </Chip>
                 )}
                 {typeof meta?.slaRemaining === "number" ? (
@@ -2140,41 +2184,27 @@ export default function AdminPage() {
 
   useEffect(() => {
     let alive = true;
-
-    (async () => {
-      // 1) ✅ Demo/local admin session support (kept)
-      // IMPORTANT: only trust LS if role is Admin (as before).
-      const lsSession = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
-      if (isAdminRole(lsSession?.role)) {
-        if (!alive) return;
-        setOk(true);
-        return;
-      }
-
-      // 2) ✅ Supabase auth (kept)
-      const { data: authRes } = await supabase.auth.getUser();
-      const user = authRes?.user;
-
-      if (!user) {
-        if (!alive) return;
-        if (pathname !== "/login") router.replace("/login");
-        return;
-      }
-
-      const { data: profile, error } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-
-      if (error || !isAdminRole(profile?.role)) {
-        if (!alive) return;
-        router.replace("/workspace");
-        return;
-      }
-
-      if (!alive) return;
-      setOk(true);
-    })();
-
+    let version = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const verify = async () => {
+      const request = ++version;
+      const role = await getMyRole();
+      if (!alive || request !== version) return;
+      setOk(role === "Admin");
+      if (role !== "Admin") router.replace(role === "Worker" ? "/dashboard" : "/login");
+    };
+    void verify();
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      version++;
+      setOk(false);
+      clearTimeout(timer);
+      // Leave the Auth callback before reading the refreshed session.
+      timer = setTimeout(() => { void verify(); }, 0);
+    });
     return () => {
       alive = false;
+      clearTimeout(timer);
+      sub.subscription.unsubscribe();
     };
   }, [router, pathname]);
 

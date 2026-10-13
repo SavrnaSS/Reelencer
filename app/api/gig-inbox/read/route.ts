@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -7,7 +8,7 @@ const NO_STORE_HEADERS = {
   Expires: "0",
 };
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   try {
     const body = await req.json();
     const assignmentId = String(body?.assignmentId ?? "");
@@ -43,13 +44,13 @@ export async function POST(req: Request) {
         ? Array.from(
             new Set(
               (
-                Array.isArray((assignment as any).assigned_emails) && (assignment as any).assigned_emails.length > 0
-                  ? (assignment as any).assigned_emails
-                  : (assignment as any).assigned_email
-                    ? [String((assignment as any).assigned_email)]
+                Array.isArray((assignment).assigned_emails) && (assignment).assigned_emails.length > 0
+                  ? (assignment).assigned_emails
+                  : (assignment).assigned_email
+                    ? [String((assignment).assigned_email)]
                     : []
               )
-                .map((email: any) => String(email).trim().toLowerCase())
+                .map((email: unknown) => String(email).trim().toLowerCase())
                 .filter(Boolean)
             )
           )
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
           .neq("status", "deleted");
 
         if (!accountErr && accounts && accounts.length > 0) {
-          const accountIds = accounts.map((row: any) => String(row.id)).filter(Boolean);
+          const accountIds = accounts.map((row) => String(row.id)).filter(Boolean);
           await sb
             .from("work_email_inbox")
             .update({ read_at: readAt })
@@ -76,7 +77,9 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Invalid payload" }, { status: 400, headers: NO_STORE_HEADERS });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Invalid payload" }, { status: 400, headers: NO_STORE_HEADERS });
   }
 }
+
+export const POST = withApi({ auth: "user", assignment: true }, handlePOST);

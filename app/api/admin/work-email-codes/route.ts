@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { codeHint, generateSecretCode, hashSecretCode } from "@/lib/workEmail";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
 
@@ -12,9 +13,10 @@ function tableMissing(message: string) {
   );
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, codes: [] });
 
   const sb = supabaseAdmin();
   const { data, error } = await sb
@@ -32,10 +34,11 @@ export async function GET(req: Request) {
   return json(200, { ok: true, codes: data ?? [] });
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   try {
     const guard = await requireAdminFromBearer(req);
     if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+    if (guard.devBypass) return json(200, { ok: true, code: generateSecretCode(), row: null });
 
     const body = await req.json().catch(() => ({}));
     const label = String(body?.label ?? "").trim();
@@ -82,9 +85,10 @@ export async function POST(req: Request) {
   }
 }
 
-export async function PATCH(req: Request) {
+async function handlePATCH(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, row: null });
 
   const body = await req.json().catch(() => ({}));
   const id = String(body?.id ?? "");
@@ -152,9 +156,10 @@ export async function PATCH(req: Request) {
   return json(200, { ok: true, row: data ?? null });
 }
 
-export async function DELETE(req: Request) {
+async function handleDELETE(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true });
 
   const body = await req.json().catch(() => ({}));
   const id = String(body?.id ?? "");
@@ -170,3 +175,11 @@ export async function DELETE(req: Request) {
   }
   return json(200, { ok: true });
 }
+
+export const GET = withApi({ auth: "admin" }, handleGET);
+
+export const POST = withApi({ auth: "admin" }, handlePOST);
+
+export const PATCH = withApi({ auth: "admin" }, handlePATCH);
+
+export const DELETE = withApi({ auth: "admin" }, handleDELETE);

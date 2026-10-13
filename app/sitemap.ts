@@ -9,11 +9,10 @@ const siteUrl =
 export default function sitemap(): MetadataRoute.Sitemap {
   const routes = [
     "/",
-    "/browse",
     "/login",
     "/signup",
     "/post-login",
-    "/workspace",
+    "/dashboard",
     "/addgigs",
     "/admin",
   ];
@@ -21,7 +20,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return routes.map((route) => ({
     url: `${siteUrl}${route}`,
     lastModified: new Date(),
-    changeFrequency: route === "/" || route === "/browse" ? "daily" : "weekly",
+    changeFrequency: route === "/" ? "daily" : "weekly",
     priority: route === "/" ? 1 : 0.7,
   }));
 }

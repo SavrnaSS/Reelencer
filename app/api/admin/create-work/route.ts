@@ -1,15 +1,17 @@
+import { randomUUID } from "node:crypto";
+import { resolveWorkerUserId } from "@/lib/api/work";
+import { withApi } from "@/lib/api/route";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminAuth";
+import { createDevAdminWorkItem } from "../_devData";
 
 function makePublicId() {
-  return `WI-${Math.floor(1000 + Math.random() * 9000)}`;
+  return `WI-${randomUUID()}`;
 }
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const gate = await requireAdmin(req);
-  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.reason }, { status: 401 });
-
-  const { sadmin, adminId } = gate;
+  if (!gate.ok) return NextResponse.json({ ok: false, error: gate.reason }, { status: gate.status });
   const b = await req.json().catch(() => ({}));
 
   const workerId = String(b?.workerId ?? "");
@@ -18,6 +20,16 @@ export async function POST(req: NextRequest) {
 
   if (!workerId || !accountId || !title) return NextResponse.json({ ok: false, error: "Missing fields" }, { status: 400 });
 
+  if (gate.devBypass) {
+    const created = createDevAdminWorkItem(b);
+    if (!created.ok) return NextResponse.json({ ok: false, error: created.error }, { status: 400 });
+    return NextResponse.json({ ok: true, workItem: created.workItem });
+  }
+
+  const { sadmin, adminId } = gate;
+  if (!Number.isFinite(Number(b.rewardINR)) || Number(b.rewardINR) < 0 || Number(b.rewardINR) > 10000000 || !Number.isFinite(Date.parse(String(b.dueAt)))) {
+    return NextResponse.json({ error: "Valid reward and deadline are required." }, { status: 400 });
+  }
   const public_id = makePublicId();
 
   const row = {
@@ -25,7 +37,7 @@ export async function POST(req: NextRequest) {
     title,
     type: b?.type ?? "Reel posting",
     account_id: accountId,
-    worker_id: workerId,
+    worker_id: await resolveWorkerUserId(workerId),
     created_by: adminId,
     due_at: b?.dueAt, // should be ISO
     status: "Open",
@@ -41,3 +53,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ ok: true });
 }
+
+export const POST = withApi({ auth: "admin" }, handlePOST);

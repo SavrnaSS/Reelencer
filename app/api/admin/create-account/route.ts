@@ -1,10 +1,12 @@
+import { withApi } from "@/lib/api/route";
 // app/api/admin/create-account/route.ts
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
+import { createDevAdminAccount } from "../_devData";
 
 type PolicyTier = "Standard" | "Strict";
 type AccountHealth = "Healthy" | "Watch" | "Risk";
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
 
@@ -35,6 +37,12 @@ export async function POST(req: Request) {
 
   if (!id?.trim() || !handle?.trim() || !niche?.trim() || !ownerTeam?.trim()) {
     return json(400, { ok: false, error: "Missing required fields" });
+  }
+
+  if (guard.devBypass) {
+    const created = createDevAdminAccount(body);
+    if (!created.ok) return json(created.error.includes("exists") ? 409 : 400, { ok: false, error: created.error });
+    return json(200, { ok: true, account: created.account });
   }
 
   const sb = supabaseAdmin();
@@ -81,7 +89,7 @@ export async function POST(req: Request) {
     );
   };
 
-  const stripMissing = (payload: Record<string, any>, msg?: string | null) => {
+  const stripMissing = (payload: Record<string, unknown>, msg?: string | null) => {
     if (!msg) return payload;
     const match = msg.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/);
     const col = match?.[1];
@@ -91,7 +99,7 @@ export async function POST(req: Request) {
     return next;
   };
 
-  const tryInsert = async (payload: Record<string, any>) => {
+  const tryInsert = async (payload: Record<string, unknown>) => {
     let nextPayload = payload;
     for (let i = 0; i < 6; i += 1) {
       const res = await sb.from("accounts").insert(nextPayload).select("*").single();
@@ -110,7 +118,7 @@ export async function POST(req: Request) {
   }
   if (ins.error) return json(500, { ok: false, error: ins.error.message });
 
-  const a = ins.data as any;
+  const a = ins.data;
   const account = {
     id: String(a.id),
     handle: String(a.handle ?? ""),
@@ -125,3 +133,5 @@ export async function POST(req: Request) {
 
   return json(200, { ok: true, account });
 }
+
+export const POST = withApi({ auth: "admin" }, handlePOST);

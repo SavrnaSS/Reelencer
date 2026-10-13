@@ -1,6 +1,11 @@
+import { databaseError } from "@/lib/api/errors";
+import { withApi } from "@/lib/api/route";
+import { ownedStoragePath } from "@/lib/api/uploads";
+import { LIVE_SELFIE_PREFIX, isLiveSelfiePath } from "@/lib/kycSelfie";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { supabaseServerFetch } from "@/lib/supabase/serverFetch";
 
 const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -11,7 +16,7 @@ const NO_STORE_HEADERS = {
 function supabaseAnon() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  return createClient(url, anon, { auth: { persistSession: false } });
+  return createClient(url, anon, { auth: { persistSession: false }, global: { fetch: supabaseServerFetch } });
 }
 
 async function getUserIdFromBearer(req: Request) {
@@ -24,7 +29,7 @@ async function getUserIdFromBearer(req: Request) {
   return { ok: true as const, userId: data.user.id };
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await getUserIdFromBearer(req);
   if (!guard.ok) {
     return NextResponse.json({ error: guard.error }, { status: guard.status, headers: NO_STORE_HEADERS });
@@ -69,7 +74,7 @@ export async function GET(req: Request) {
   );
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await getUserIdFromBearer(req);
   if (!guard.ok) {
     return NextResponse.json({ error: guard.error }, { status: guard.status, headers: NO_STORE_HEADERS });
@@ -84,6 +89,16 @@ export async function POST(req: Request) {
   const idNumber = String(body?.idNumber ?? "").trim();
   const idDocPath = String(body?.idDocPath ?? "").trim();
   const selfiePath = String(body?.selfiePath ?? "").trim();
+  if (!ownedStoragePath(idDocPath, `kyc/${guard.userId}/id_doc-`) || !ownedStoragePath(selfiePath, `kyc/${guard.userId}/selfie-`)) {
+    return NextResponse.json({ error: "Upload your own identity document and selfie." }, { status: 400 });
+  }
+  // New submissions need a selfie taken with the live in-page camera (see lib/kycSelfie).
+  if (!ownedStoragePath(selfiePath, `kyc/${guard.userId}/${LIVE_SELFIE_PREFIX}`) || !isLiveSelfiePath(selfiePath)) {
+    return NextResponse.json({ error: "Take your selfie with the live camera in the verification form.", code: "live_selfie_required" }, { status: 400, headers: NO_STORE_HEADERS });
+  }
+  if (legalName.length > 160 || address.length > 2000 || phone.length > 30 || idType.length > 80 || idNumber.length > 100 || !/^\d{4}-\d{2}-\d{2}$/.test(dob) || !Number.isFinite(Date.parse(dob)) || Date.parse(dob) >= Date.now()) {
+    return NextResponse.json({ error: "Invalid identity details." }, { status: 400 });
+  }
 
   if (!legalName || !dob || !phone || !address || !idType || !idNumber || !idDocPath || !selfiePath) {
     return NextResponse.json(
@@ -93,45 +108,18 @@ export async function POST(req: Request) {
   }
 
   const sb = supabaseAdmin();
-  const now = new Date().toISOString();
-  const { data, error } = await sb
-    .from("worker_kyc")
-    .upsert(
-      {
-        user_id: guard.userId,
-        status: "pending",
-        legal_name: legalName,
-        dob,
-        phone,
-        address,
-        id_type: idType,
-        id_number: idNumber,
-        id_doc_path: idDocPath,
-        selfie_path: selfiePath,
-        submitted_at: now,
-        reviewed_at: null,
-        rejection_reason: null,
-        admin_note: null,
-      },
-      { onConflict: "user_id" }
-    )
-    .select("*")
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
-  }
-
-  await sb.from("worker_kyc_events").insert({
-    kyc_id: data.id,
-    status: "pending",
-    note: "Submitted",
-    actor_id: guard.userId,
-    created_at: now,
+  const { data, error } = await sb.rpc("submit_worker_kyc", {
+    p_worker: guard.userId,
+    p_details: { legal_name: legalName, dob, phone, address, id_type: idType, id_number: idNumber, id_doc_path: idDocPath, selfie_path: selfiePath },
   });
+  databaseError(error);
 
   return NextResponse.json(
     { ok: true, status: data.status, submittedAt: data.submitted_at },
     { headers: NO_STORE_HEADERS }
   );
 }
+
+export const GET = withApi({ auth: "user" }, handleGET);
+
+export const POST = withApi({ auth: "user" }, handlePOST);

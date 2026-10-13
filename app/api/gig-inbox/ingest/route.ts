@@ -1,7 +1,8 @@
+import { withApi } from "@/lib/api/route";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { simpleParser } from "mailparser";
-import { createHash } from "crypto";
+import { createHash, timingSafeEqual } from "crypto";
 
 export const runtime = "nodejs";
 
@@ -10,9 +11,6 @@ const NO_STORE_HEADERS = {
   Pragma: "no-cache",
   Expires: "0",
 };
-
-// Temporary production fallback while Cloudflare/Vercel inbox secrets are being synchronized.
-const FALLBACK_INGEST_SECRET = "reelencer_inbox_2026_secure_key_91x";
 
 function normalizeText(text: string | null | undefined) {
   return (text ?? "").toString().trim();
@@ -34,37 +32,6 @@ function clampText(text: string, max: number) {
   return text.slice(0, max);
 }
 
-function pickBodyText(text: string) {
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const dropPrefixes = [
-    "delivered-to:",
-    "received:",
-    "x-forwarded-",
-    "x-received:",
-    "arc-",
-    "authentication-results:",
-    "dkim-signature:",
-  ];
-
-  const filtered = lines.filter(
-    (line) => !dropPrefixes.some((p) => line.toLowerCase().startsWith(p))
-  );
-
-  const notHeaderish = filtered.filter(
-    (line) =>
-      !/^(mon|tue|wed|thu|fri|sat|sun),/i.test(line) &&
-      !/\b(?:pst|gmt|utc)\b/i.test(line) &&
-      !/;\s*s=arc/i.test(line)
-  );
-
-  const pick = notHeaderish[0] || filtered[0] || lines[0] || "";
-  return pick.length > 400 ? pick.slice(0, 400) : pick;
-}
-
 function extractOtp(text: string) {
   const match = text.match(/\b\d{6}\b/);
   return match ? match[0] : null;
@@ -83,23 +50,20 @@ function extractFirstEmail(value: string | null | undefined) {
   return match ? normalizeEmail(match[0]) : normalizeEmail(raw);
 }
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   try {
     const validSecrets = new Set(
       [
         process.env.GIG_INBOX_INGEST_SECRET,
         process.env.GIG_INGEST_SECRET,
-        FALLBACK_INGEST_SECRET,
       ]
         .map((value) => String(value ?? "").trim())
         .filter(Boolean)
     );
     const provided = req.headers.get("x-inbox-secret") || "";
-    if (validSecrets.size === 0 || !validSecrets.has(provided)) {
-      console.error("[gig-inbox/ingest] unauthorized", {
-        validSecretCount: validSecrets.size,
-        providedLength: provided.length,
-      });
+    if (validSecrets.size === 0) return NextResponse.json({ error: "Inbox service is not configured." }, { status: 503 });
+    const providedHash = createHash("sha256").update(provided).digest();
+    if (!Array.from(validSecrets).some(secret => timingSafeEqual(createHash("sha256").update(secret).digest(), providedHash))) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401, headers: NO_STORE_HEADERS }
@@ -109,7 +73,6 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => null);
     const raw = normalizeText(body?.raw);
     if (!raw) {
-      console.error("[gig-inbox/ingest] missing raw email payload");
       return NextResponse.json(
         { error: "raw email required" },
         { status: 400, headers: NO_STORE_HEADERS }
@@ -128,87 +91,26 @@ export async function POST(req: Request) {
       normalizeEmail(typeof deliveredToHeader === "string" ? deliveredToHeader : "");
 
     if (!toEmail) {
-      console.error("[gig-inbox/ingest] unable to determine recipient", {
-        bodyTo: body?.to ?? null,
-      });
       return NextResponse.json(
         { error: "Unable to determine recipient" },
         { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
-    console.log("[gig-inbox/ingest] parsed inbound email", {
-      toEmail,
-      from: body?.from ?? null,
-      subject: body?.subject ?? null,
-    });
-
     const sb = supabaseAdmin();
-    let assignment: { id: string } | null = null;
+    const recipient = await sb.from("inbox_recipients")
+      .select("gig_assignment_id,work_email_account_id").eq("email", toEmail).maybeSingle();
+    if (recipient.error) return NextResponse.json({ error: "Inbox lookup failed." }, { status: 503 });
+    const assignment = recipient.data?.gig_assignment_id ? { id: String(recipient.data.gig_assignment_id) } : null;
     let workEmailAccount: { id: string } | null = null;
-    const { data: assignmentByList, error: listError } = await sb
-      .from("gig_assignments")
-      .select("id, assigned_email, assigned_emails, subject_filter")
-      .contains("assigned_emails", [toEmail])
-      .maybeSingle();
-
-    if (!listError) {
-      assignment = assignmentByList;
-    } else if (String(listError.message || "").toLowerCase().includes("assigned_emails")) {
-      const { data: assignmentBySingle, error: singleError } = await sb
-        .from("gig_assignments")
-        .select("id, assigned_email, subject_filter")
-        .ilike("assigned_email", toEmail)
-        .maybeSingle();
-      if (singleError) {
-        return NextResponse.json(
-          { error: singleError.message },
-          { status: 500, headers: NO_STORE_HEADERS }
-        );
-      }
-      assignment = assignmentBySingle;
-    } else {
-      console.error("[gig-inbox/ingest] assignment lookup failed", {
-        toEmail,
-        error: listError.message,
-      });
-      return NextResponse.json(
-        { error: listError.message },
-        { status: 500, headers: NO_STORE_HEADERS }
-      );
-    }
-
-    if (!assignment?.id) {
-      const { data: workEmailMatch, error: workEmailErr } = await sb
-        .from("work_email_accounts")
-        .select("id,email,status")
-        .ilike("email", toEmail)
-        .neq("status", "deleted")
-        .maybeSingle();
-
-      if (workEmailErr) {
-        const msg = String(workEmailErr.message || "").toLowerCase();
-        const missingSchema =
-          msg.includes("relation") || msg.includes("does not exist") || msg.includes("undefined table");
-        if (!missingSchema) {
-          console.error("[gig-inbox/ingest] work_email_accounts lookup failed", {
-            toEmail,
-            error: workEmailErr.message,
-          });
-          return NextResponse.json(
-            { error: workEmailErr.message },
-            { status: 500, headers: NO_STORE_HEADERS }
-          );
-        }
-      } else {
-        workEmailAccount = workEmailMatch;
-      }
+    if (recipient.data?.work_email_account_id) {
+      const account = await sb.from("work_email_accounts").select("id")
+        .eq("id", recipient.data.work_email_account_id).eq("status", "active").maybeSingle();
+      if (account.error) return NextResponse.json({ error: "Inbox lookup failed." }, { status: 503 });
+      workEmailAccount = account.data;
     }
 
     if (!assignment?.id && !workEmailAccount?.id) {
-      console.error("[gig-inbox/ingest] no recipient mapping found", {
-        toEmail,
-      });
       return NextResponse.json(
         { error: "No recipient mapping found for inbound email" },
         { status: 404, headers: NO_STORE_HEADERS }
@@ -261,7 +163,7 @@ export async function POST(req: Request) {
     }
 
     const createdAt =
-      parsed.date instanceof Date ? parsed.date.toISOString() : new Date().toISOString();
+      new Date().toISOString();
     const otp = extractOtp(bodyFull);
     const storedBody = bodyFull ? clampText(bodyFull, 20000) : "(No message body)";
 
@@ -273,14 +175,9 @@ export async function POST(req: Request) {
     let inserted: { id?: string } | null = null;
     let insertError: { message: string } | null = null;
     if (assignment?.id) {
-      console.log("[gig-inbox/ingest] storing in gig_inbox", {
-        assignmentId: assignment.id,
-        toEmail,
-        messageId,
-      });
       const ins = await sb
         .from("gig_inbox")
-        .insert({
+        .upsert({
           assignment_id: assignment.id,
           to_email: toEmail,
           subject,
@@ -288,30 +185,22 @@ export async function POST(req: Request) {
           otp_code: otp,
           message_id: messageId,
           created_at: createdAt,
-        })
-        .select("*")
-        .single();
+        }, { onConflict: "assignment_id,message_id", ignoreDuplicates: true })
+        .select("id")
+        .maybeSingle();
       inserted = ins.data as { id?: string } | null;
       insertError = ins.error ? { message: String(ins.error.message || "Insert failed") } : null;
     } else {
       const workAccountId = workEmailAccount?.id;
       if (!workAccountId) {
-        console.error("[gig-inbox/ingest] work email account missing after lookup", {
-          toEmail,
-        });
         return NextResponse.json(
           { error: "Work email account not found for recipient" },
           { status: 404, headers: NO_STORE_HEADERS }
         );
       }
-      console.log("[gig-inbox/ingest] storing in work_email_inbox", {
-        accountId: workAccountId,
-        toEmail,
-        messageId,
-      });
       const ins = await sb
         .from("work_email_inbox")
-        .insert({
+        .upsert({
           account_id: workAccountId,
           to_email: toEmail,
           from_email: fromEmail || null,
@@ -320,41 +209,31 @@ export async function POST(req: Request) {
           otp_code: otp,
           message_id: messageId,
           created_at: createdAt,
-        })
-        .select("*")
-        .single();
+        }, { onConflict: "account_id,message_id", ignoreDuplicates: true })
+        .select("id")
+        .maybeSingle();
       inserted = ins.data as { id?: string } | null;
       insertError = ins.error ? { message: String(ins.error.message || "Insert failed") } : null;
     }
 
     if (insertError) {
-      console.error("[gig-inbox/ingest] insert failed", {
-        toEmail,
-        messageId,
-        error: insertError.message,
-      });
       return NextResponse.json(
         { error: insertError.message },
         { status: 500, headers: NO_STORE_HEADERS }
       );
     }
 
-    console.log("[gig-inbox/ingest] stored successfully", {
-      toEmail,
-      insertedId: inserted?.id ?? null,
-      target: assignment?.id ? "gig_inbox" : "work_email_inbox",
-    });
-
     return NextResponse.json(
-      { ok: true, insertedId: inserted?.id },
+      { ok: true, insertedId: inserted?.id, deduped: !inserted?.id },
       { headers: NO_STORE_HEADERS }
     );
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Ingest failed";
-    console.error("[gig-inbox/ingest] unhandled failure", { error: message });
     return NextResponse.json(
       { error: message },
       { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }
+
+export const POST = withApi({ auth: "public", maxBytes: 2 * 1024 * 1024 }, handlePOST);

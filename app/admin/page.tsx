@@ -1,16 +1,25 @@
-// app/admin/page.tsx
 "use client";
 
+import Link from "next/link";
+import { BrandLogo } from "@/app/_components/BrandLogo";
+import ViewPayoutClaims from "@/app/_components/ViewPayoutClaims";
+import { apiFetch as fetch } from "@/lib/api/client";
+// app/admin/page.tsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { isAdminRole } from "@/lib/roles";
+import { getMyRole } from "@/lib/role";
+import { buildFeedbackSubject, feedbackCategoryLabel } from "@/lib/feedback";
 import { supabase } from "@/lib/supabaseClient";
+import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
 import { usePathname, useRouter } from "next/navigation";
+import { FIND_GIGS_HREF } from "@/lib/routes";
+import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, type WorkTiming } from "@/lib/workDates";
 
 /** Keep in sync with workspace page */
 type Role = "Admin" | "Worker";
 type AuthSession = {
   role: Role;
   workerId?: string;
+  email?: string;
   at: string;
 };
 
@@ -38,6 +47,43 @@ function writeLS<T>(key: string, value: T) {
   } catch {
     // ignore
   }
+}
+
+function devAdminHeaders(): Record<string, string> {
+  return {};
+}
+
+function hasDevAdminBypassSession() {
+  return devAdminHeaders()["x-dev-bypass"] === "1";
+}
+
+function buildAdminHeaders(token?: string | null, initHeaders?: HeadersInit) {
+  const headers = new Headers(initHeaders);
+  headers.set("Content-Type", "application/json");
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  } else {
+    Object.entries(devAdminHeaders()).forEach(([key, value]) => headers.set(key, value));
+  }
+  return headers;
+}
+
+async function getAdminAccessToken() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function getAdminRequestHeaders(initHeaders?: HeadersInit) {
+  const token = await getAdminAccessToken();
+  const headers = buildAdminHeaders(token, initHeaders);
+  return {
+    headers,
+    authorized: !!token || headers.get("x-dev-bypass") === "1",
+  };
 }
 
 /** ===================== Types ===================== */
@@ -68,6 +114,14 @@ type Worker = {
   email: string; // may be blank if loading from profiles-only
   active: boolean;
   timezone?: string;
+  introVideo?: {
+    name: string;
+    uploadedAt: string;
+    previewUrl?: string;
+    thumbnailUrl?: string;
+    mimeType?: string;
+    size?: number;
+  };
 };
 
 type WorkItem = {
@@ -77,7 +131,7 @@ type WorkItem = {
   title: string;
   type: TaskType;
   createdAt: string; // YYYY-MM-DD
-  dueAt: string; // local ISO "YYYY-MM-DDTHH:MM"
+  dueAt?: string; // India-local ISO; earnings records may have no deadline
   status: Status;
   priority: Priority;
   rewardINR: number;
@@ -157,6 +211,31 @@ type WorkEmailManagedAccount = {
   status: string;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type AdminFeedbackStatus = "new" | "reviewing" | "resolved" | "closed";
+
+type AdminFeedbackItem = {
+  id: string;
+  user_id?: string | null;
+  worker_id?: string | null;
+  profile_name?: string | null;
+  profile_role?: string | null;
+  section: string;
+  language_code: string;
+  language_name?: string | null;
+  category: string;
+  rating?: number | null;
+  subject?: string | null;
+  message: string;
+  allow_contact: boolean;
+  status: AdminFeedbackStatus;
+  admin_note?: string | null;
+  source?: string | null;
+  page_url?: string | null;
+  meta?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at?: string | null;
 };
 
 type AdminPayoutItem = {
@@ -286,15 +365,6 @@ function isoToLocalInput(iso?: string | null) {
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
-function parseLocalISO(s: string) {
-  const [date, time] = s.split("T");
-  const [y, m, d] = date.split("-").map(Number);
-  const [hh, mm] = time.split(":").map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0);
-}
-function minutesBetween(a: Date, b: Date) {
-  return Math.floor((b.getTime() - a.getTime()) / 60000);
-}
 function formatINR(n: number) {
   try {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -306,6 +376,24 @@ function clampText(s: string, max = 72) {
   const t = s.trim();
   if (t.length <= max) return t;
   return t.slice(0, max - 1) + "…";
+}
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+function feedbackStatusTone(status: AdminFeedbackStatus): "warn" | "info" | "success" | "neutral" {
+  if (status === "new") return "warn";
+  if (status === "reviewing") return "info";
+  if (status === "resolved") return "success";
+  return "neutral";
 }
 function isMobileWidth() {
   if (typeof window === "undefined") return false;
@@ -327,6 +415,38 @@ function normHandle(s: string) {
 function Icon({ name, className }: { name: string; className?: string }) {
   const c = cx("h-5 w-5", className);
   switch (name) {
+    case "grid":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none">
+          <rect x="4" y="4" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="13" y="4" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="4" y="13" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="13" y="13" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      );
+    case "list":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none">
+          <path d="M9 6h11M9 12h11M9 18h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <circle cx="4.5" cy="6" r="1.2" fill="currentColor" />
+          <circle cx="4.5" cy="12" r="1.2" fill="currentColor" />
+          <circle cx="4.5" cy="18" r="1.2" fill="currentColor" />
+        </svg>
+      );
+    case "mail":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none">
+          <rect x="3.5" y="5.5" width="17" height="13" rx="2" stroke="currentColor" strokeWidth="1.8" />
+          <path d="m4 7 8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      );
+    case "clip":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none">
+          <rect x="5.5" y="5" width="13" height="15.5" rx="2" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M9 5V3.8h6V5M9 11h6M9 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
     case "hamburger":
       return (
         <svg className={c} viewBox="0 0 24 24" fill="none">
@@ -412,6 +532,18 @@ function Icon({ name, className }: { name: string; className?: string }) {
           <path d="M16.5 14h3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
+    case "comment":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none">
+          <path
+            d="M5.5 6.5h13A1.5 1.5 0 0 1 20 8v7a1.5 1.5 0 0 1-1.5 1.5H9l-4 3v-3H5.5A1.5 1.5 0 0 1 4 15V8a1.5 1.5 0 0 1 1.5-1.5Z"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      );
     case "logout":
       return (
         <svg className={c} viewBox="0 0 24 24" fill="none">
@@ -449,15 +581,15 @@ function Button({
   type?: "button" | "submit";
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-extrabold transition focus:outline-none focus:ring-2 focus:ring-[#84d85e]/30 disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 py-2 text-[13px] font-semibold transition [&>svg]:shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50";
   const styles =
     variant === "primary"
-      ? "border border-[#8fd764] bg-[#9adf6f] text-[#123128] hover:bg-[#8ed65f]"
+      ? "bg-[#1f2b24] text-white shadow-[0_1px_0_rgba(255,255,255,0.12)_inset,0_1px_2px_rgba(0,0,0,0.2)] hover:bg-[#2b3a31]"
       : variant === "secondary"
-      ? "border border-[#cfd8ca] bg-[#f7faf5] text-[#23453a] hover:bg-[#eef4ea]"
+      ? "border border-[#d9ddd8] bg-white text-[#1a201c] shadow-[0_1px_2px_rgba(26,32,28,0.06)] hover:bg-[#f7f8f6]"
       : variant === "danger"
-      ? "bg-rose-600 text-white hover:bg-rose-700"
-      : "text-[#476257] hover:bg-[#eaf1e6]";
+      ? "bg-[#b42318] text-white hover:bg-[#9a1d14]"
+      : "text-[#4b544e] hover:bg-[#f1f3f0] hover:text-[#1a201c]";
   return (
     <button type={type} title={title} onClick={onClick} disabled={disabled} className={cx(base, styles, className)}>
       {children}
@@ -476,17 +608,20 @@ function Chip({
 }) {
   const cls =
     tone === "info"
-      ? "border-[#bcd6c9] bg-[#edf5ef] text-[#2f6655]"
+      ? "bg-[#e0ecf8] text-[#1f4a73]"
       : tone === "success"
-      ? "border-[#b9df9c] bg-[#edf8e6] text-[#2f6655]"
+      ? "bg-[#e3f1df] text-[#1f5131]"
       : tone === "warn"
-      ? "border-[#d7dfb2] bg-[#f4f7e8] text-[#5c6530]"
+      ? "bg-[#fdf0d2] text-[#6b4a05]"
       : tone === "danger"
-      ? "border-rose-200 bg-rose-50 text-rose-800"
-      : "border-[#d3dbce] bg-[#f2f6ef] text-[#4f6359]";
+      ? "bg-[#fde4e1] text-[#8e1f1a]"
+      : "bg-[#eceeeb] text-[#4b544e]";
+  const dot =
+    tone === "info" ? "bg-[#2a78d6]" : tone === "success" ? "bg-[#2e7d4f]" : tone === "warn" ? "bg-[#d99a06]" : tone === "danger" ? "bg-[#d03b3b]" : "bg-[#8a938d]";
   return (
-    <span className={cx("inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-extrabold", cls, className)}>
-      {children}
+    <span className={cx("inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[12px] font-medium", cls, className)}>
+      <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full", dot)} aria-hidden="true" />
+      <span className="min-w-0 truncate">{children}</span>
     </span>
   );
 }
@@ -505,17 +640,17 @@ function Card({
   compact?: boolean;
 }) {
   return (
-    <section className="rounded-2xl border border-[#d4dccf] bg-[#f9fbf7] shadow-[0_10px_26px_rgba(25,57,47,0.08)]">
+    <section className="min-w-0 rounded-xl border border-[#e3e5e1] bg-white shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)]">
       {(title || right) && (
-        <div className={cx("flex items-start justify-between gap-3 border-b border-slate-200", compact ? "px-4 py-2" : "px-4 py-3")}>
+        <div className={cx("flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-[#ebedea]", compact ? "px-4 py-2.5" : "px-4 py-3.5 sm:px-5")}>
           <div className="min-w-0">
-            {title && <div className="text-sm font-extrabold text-slate-900">{title}</div>}
-            {subtitle && <div className="mt-0.5 text-sm text-slate-600">{subtitle}</div>}
+            {title && <h2 className="text-[14px] font-semibold text-[#1a201c]">{title}</h2>}
+            {subtitle && <div className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">{subtitle}</div>}
           </div>
-          {right && <div className="shrink-0">{right}</div>}
+          {right && <div className="flex max-w-full shrink-0 flex-wrap gap-2">{right}</div>}
         </div>
       )}
-      <div className={cx(compact ? "px-4 py-2" : "px-4 py-3")}>{children}</div>
+      <div className={cx(compact ? "px-4 py-2.5" : "px-4 py-4 sm:px-5")}>{children}</div>
     </section>
   );
 }
@@ -548,8 +683,8 @@ function WorkStatusBadge({ s }: { s: Status }) {
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-slate-600 font-bold">{label}</span>
-      <span className="text-slate-900 font-extrabold">{value}</span>
+      <span className="text-[13px] text-[#616a64]">{label}</span>
+      <span className="min-w-0 truncate text-right text-[13px] font-semibold text-[#1a201c]">{value}</span>
     </div>
   );
 }
@@ -567,21 +702,53 @@ function Modal({
   children: React.ReactNode;
   actions: React.ReactNode;
 }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
-      <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-[820px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-xl">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
-          <div className="min-w-0">
-            <div className="text-sm font-extrabold text-slate-900">{title}</div>
-            {subtitle && <div className="mt-0.5 text-sm text-slate-600 truncate">{subtitle}</div>}
-          </div>
-          <Button variant="ghost" onClick={onClose} title="Close">
-            <Icon name="x" />
-          </Button>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+      <div className="absolute inset-0 bg-[#0f1411]/50 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="dashboard-sheet-rise relative flex max-h-[92dvh] w-full max-w-[820px] flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-h-[88dvh] sm:rounded-xl"
+      >
+        <div className="flex justify-center pt-2 sm:hidden" aria-hidden="true">
+          <span className="h-1 w-9 rounded-full bg-[#d5d9d4]" />
         </div>
-        <div className="px-4 py-4">{children}</div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-4 py-3">{actions}</div>
+        <div className="flex items-start justify-between gap-3 border-b border-[#ebedea] px-4 pb-3 pt-2.5 sm:px-5 sm:pt-4">
+          <div className="min-w-0">
+            <div className="text-[16px] font-semibold text-[#1a201c]">{title}</div>
+            {subtitle && <div className="mt-0.5 truncate text-[13px] text-[#616a64]">{subtitle}</div>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (Esc)"
+            className="-mr-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f4f1] text-[#1a201c] transition hover:bg-[#e9ebe7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
+          >
+            <Icon name="x" className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">{children}</div>
+        <div
+          className="flex shrink-0 flex-col-reverse gap-2 border-t border-[#ebedea] px-4 pt-3 sm:flex-row sm:flex-wrap sm:justify-end sm:px-5 sm:pb-3 [&>button]:w-full sm:[&>button]:w-auto"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
+          {actions}
+        </div>
       </div>
     </div>
   );
@@ -590,21 +757,29 @@ function Modal({
 /** ===================== Auth fetch helper ===================== */
 async function fetchWithAuth<T>(url: string, init?: RequestInit): Promise<T | null> {
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
+    const { headers, authorized } = await getAdminRequestHeaders(init?.headers);
+    if (!authorized) return null;
     const r = await fetch(url, {
       ...(init || {}),
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers || {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers,
     });
     if (!r.ok) return null;
     return (await r.json()) as T;
   } catch {
     return null;
   }
+}
+
+function AdminEmpty({ icon = "check", title, body }: { icon?: string; title: string; body?: string }) {
+  return (
+    <div className="flex flex-col items-center px-4 py-8 text-center">
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#eef1ed] text-[#5b665f]">
+        <Icon name={icon} className="h-[18px] w-[18px]" />
+      </span>
+      <div className="mt-2.5 text-[13.5px] font-semibold text-[#1a201c]">{title}</div>
+      {body ? <p className="mt-0.5 max-w-[40ch] text-[12.5px] leading-5 text-[#616a64]">{body}</p> : null}
+    </div>
+  );
 }
 
 /** ===================== Work Table & Review List ===================== */
@@ -619,7 +794,7 @@ function AdminWorkTable({
   items: WorkItem[];
   workerById: (id: string) => Worker | undefined;
   accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined;
+  metaOf: (id: string) => WorkTiming | undefined;
   onOpen: (id: string) => void;
   onReview: (id: string) => void;
 }) {
@@ -664,8 +839,8 @@ function AdminWorkTable({
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{x.dueAt.replace("T", " ")}</div>
-                    <div className="text-xs text-slate-600">{overdue ? "Overdue" : "On schedule"}</div>
+                    <div className="font-extrabold text-slate-900">{formatWorkDeadline(x.dueAt)}</div>
+                    {typeof meta?.dueInMin === "number" && <div className="text-xs text-slate-600">{overdue ? "Overdue" : "On schedule"}</div>}
                   </td>
                   <td className="px-4 py-3">
                     <PriorityPill p={x.priority} />
@@ -690,8 +865,8 @@ function AdminWorkTable({
             })}
             {items.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-600">
-                  No work items.
+                <td colSpan={7}>
+                  <AdminEmpty icon="list" title="No work items" body="Create work for this worker to see it tracked here." />
                 </td>
               </tr>
             )}
@@ -713,7 +888,7 @@ function AdminReviewList({
   items: WorkItem[];
   workerById: (id: string) => Worker | undefined;
   accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined;
+  metaOf: (id: string) => WorkTiming | undefined;
   onOpen: (id: string) => void;
   onReview: (id: string) => void;
 }) {
@@ -733,7 +908,7 @@ function AdminReviewList({
                 </div>
                 <div className="mt-1 text-sm text-slate-700 line-clamp-2">{x.title}</div>
                 <div className="mt-2 text-xs text-slate-500 truncate">
-                  {acc?.handle ?? x.accountId} • Due {x.dueAt.replace("T", " ")}
+                  {acc?.handle ?? x.accountId} • {formatWorkDeadline(x.dueAt)}
                 </div>
               </div>
               <div className="shrink-0 flex flex-col items-end gap-2">
@@ -742,7 +917,7 @@ function AdminReviewList({
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {overdue ? <Chip tone="danger">Overdue</Chip> : <Chip tone="neutral">On schedule</Chip>}
+              {typeof meta?.dueInMin !== "number" ? <Chip tone="neutral">No deadline</Chip> : overdue ? <Chip tone="danger">Overdue</Chip> : <Chip tone="neutral">On schedule</Chip>}
               <Chip tone="info">Reward {formatINR(x.rewardINR)}</Chip>
               <Chip tone="neutral">{x.type}</Chip>
             </div>
@@ -762,70 +937,120 @@ function AdminReviewList({
 }
 
 /** ===================== Sidebar ===================== */
-type AdminSection = "Overview" | "Workers" | "Assignments" | "Work" | "Reviews" | "Payouts" | "Gigs" | "Email Access";
+type AdminSection = "Overview" | "Workers" | "Assignments" | "Work" | "Reviews" | "Payouts" | "Feedback" | "Gigs" | "Email Access";
+
+const ADMIN_NAV_GROUPS: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: string }> }> = [
+  {
+    label: "Operations",
+    items: [
+      { id: "Overview", label: "Overview", icon: "grid" },
+      { id: "Reviews", label: "Reviews", icon: "shield" },
+      { id: "Work", label: "Work items", icon: "list" },
+      { id: "Assignments", label: "Assignments", icon: "clip" },
+    ],
+  },
+  {
+    label: "People & money",
+    items: [
+      { id: "Workers", label: "Workers", icon: "users" },
+      { id: "Payouts", label: "Payouts", icon: "wallet" },
+    ],
+  },
+  {
+    label: "Platform",
+    items: [
+      { id: "Gigs", label: "Gigs", icon: "briefcase" },
+      { id: "Feedback", label: "Feedback", icon: "comment" },
+      { id: "Email Access", label: "Email access", icon: "mail" },
+    ],
+  },
+];
 
 function AdminSidebar({
   active,
   onPick,
   onLogout,
+  counts,
+  onClose,
 }: {
   active: AdminSection;
   onPick: (s: AdminSection) => void;
   onLogout: () => void;
+  counts?: Partial<Record<AdminSection, number>>;
+  onClose?: () => void;
 }) {
-  const renderItem = (id: AdminSection, label: string, icon: string) => (
-    <button
-      key={id}
-      onClick={() => onPick(id)}
-      className={cx(
-        "flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2.5 text-sm font-extrabold transition",
-        active === id ? "bg-[#a7e678]/45 text-[#1f4f43]" : "text-[#3d5b4f] hover:bg-[#dfe9da]"
-      )}
-    >
-      <span className="flex items-center gap-2">
-        <Icon name={icon} className={cx(active === id ? "text-[#1f4f43]" : "text-[#698276]")} />
-        {label}
-      </span>
-      <Icon name="chevRight" className="text-[#8aa094]" />
-    </button>
-  );
-
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-[#d4dccf] bg-[#f4f8f1] shadow-[0_16px_36px_rgba(22,58,46,0.08)] lg:sticky lg:top-[92px]">
-      <div className="flex items-center justify-between gap-2 border-b border-[#d4dccf] px-4 py-4">
-        <div className="flex items-center gap-2">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#1f4f43] text-white font-black">AD</div>
-          <div className="leading-tight">
-            <div className="text-sm font-extrabold text-slate-900">Admin Center</div>
-            <div className="text-xs text-slate-600">Full control</div>
-          </div>
-        </div>
-        <Chip tone="info">
-          <span className="inline-flex items-center gap-2">
-            <Icon name="shield" />
-            Admin
+    <div className="flex h-full flex-col bg-white">
+      <div className="flex h-[60px] shrink-0 items-center justify-between gap-2 border-b border-[#ebedea] px-3 lg:h-[64px]">
+        <Link href="/" className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 transition hover:bg-[#f3f4f1]" aria-label="Reelencer home">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]">
+            <BrandLogo className="h-8 w-8" sizes="32px" />
           </span>
-        </Chip>
+          <span className="min-w-0 leading-none">
+            <span className="block truncate font-[Georgia,Times_New_Roman,serif] text-[17px] font-bold text-[#1a201c]">Reelencer</span>
+            <span className="mt-1 flex items-center gap-1.5 text-[11.5px] font-medium text-[#7a827c]">
+              <Icon name="shield" className="h-3 w-3 text-[#2e7d4f]" />
+              Admin console
+            </span>
+          </span>
+        </Link>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close navigation"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f3f4f1] text-[#1a201c] transition hover:bg-[#e9ebe7]"
+          >
+            <Icon name="x" className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
-      <nav className="space-y-1 px-4 py-4">
-        {renderItem("Overview", "Overview", "briefcase")}
-        {renderItem("Workers", "Workers", "users")}
-        {renderItem("Assignments", "Assignments", "briefcase")}
-        {renderItem("Work", "Work items", "briefcase")}
-        {renderItem("Reviews", "Reviews", "shield")}
-        {renderItem("Payouts", "Payouts", "wallet")}
-        {renderItem("Gigs", "Gigs", "briefcase")}
-        {renderItem("Email Access", "Email access", "shield")}
+
+      <nav aria-label="Admin sections" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-4">
+        {ADMIN_NAV_GROUPS.map((group) => (
+          <div key={group.label}>
+            <div className="px-2.5 pb-1 text-[11.5px] font-semibold text-[#7a827c]">{group.label}</div>
+            <div className="grid gap-0.5">
+              {group.items.map((item) => {
+                const isActive = active === item.id;
+                const count = counts?.[item.id] ?? 0;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onPick(item.id)}
+                    aria-current={isActive ? "page" : undefined}
+                    className={cx(
+                      "group flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 lg:h-9",
+                      isActive ? "bg-[#eceeea] text-[#1a201c]" : "text-[#4b544e] hover:bg-[#f3f4f1] hover:text-[#1a201c]"
+                    )}
+                  >
+                    <Icon name={item.icon} className={cx("h-[18px] w-[18px] shrink-0", isActive ? "text-[#1a201c]" : "text-[#7a827c] group-hover:text-[#1a201c]")} />
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {count > 0 ? (
+                      <span className="rounded-full bg-[#1f2b24] px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-white">{count > 99 ? "99+" : count}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
-      <div className="mt-auto px-4 py-4 space-y-3">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-          <div className="text-xs font-extrabold text-slate-600">Enforcement</div>
-          <div className="mt-1">Only Admin can approve / reject / hard reject.</div>
+
+      <div className="shrink-0 border-t border-[#ebedea] p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+        <div className="mb-2 flex items-start gap-2 rounded-lg bg-[#fafbf9] px-3 py-2.5 text-[12px] leading-5 text-[#616a64] ring-1 ring-inset ring-[#ebedea]">
+          <Icon name="shield" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
+          Only admins can approve, reject or hard-reject work.
         </div>
-        <Button variant="secondary" onClick={onLogout} className="w-full" title="Logout">
-          <Icon name="logout" />
-          Logout
-        </Button>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] font-semibold text-[#b42318] transition hover:bg-[#fdf2f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b42318]/30"
+        >
+          <Icon name="logout" className="h-[18px] w-[18px]" />
+          Sign out
+        </button>
       </div>
     </div>
   );
@@ -1084,7 +1309,7 @@ function AdminWorkDetails({
   item: WorkItem | null;
   worker?: Worker;
   account?: AssignedAccount;
-  meta?: { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean };
+  meta?: WorkTiming;
   onClose: () => void;
   onReview: () => void;
 }) {
@@ -1115,16 +1340,18 @@ function AdminWorkDetails({
               <div className="mt-3 grid gap-2 text-sm text-slate-700">
                 <Row label="Worker" value={<span>{worker?.name ?? item.workerId}</span>} />
                 <Row label="Account" value={<span>{account?.handle ?? item.accountId}</span>} />
-                <Row label="Due" value={<span>{item.dueAt.replace("T", " ")}</span>} />
+                <Row label="Due" value={<span>{formatWorkDeadline(item.dueAt)}</span>} />
                 <Row label="Reward" value={<span>{formatINR(item.rewardINR)}</span>} />
                 <Row label="SLA" value={<span>{item.slaMinutes} min</span>} />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {meta?.overdue ? (
+                {typeof meta?.dueInMin !== "number" ? (
+                  <Chip tone="neutral">No deadline</Chip>
+                ) : meta.overdue ? (
                   <Chip tone="danger">Overdue {Math.abs(meta.dueInMin)}m</Chip>
                 ) : (
-                  <Chip tone={typeof meta?.dueInMin === "number" && meta.dueInMin <= 60 ? "warn" : "neutral"}>
-                    Due {Math.max(0, meta?.dueInMin ?? 0)}m
+                  <Chip tone={meta.dueInMin <= 60 ? "warn" : "neutral"}>
+                    Due {Math.max(0, meta.dueInMin)}m
                   </Chip>
                 )}
                 {typeof meta?.slaRemaining === "number" ? (
@@ -1213,6 +1440,15 @@ function AdminWorkDetails({
 }
 
 /** ===================== Page (UI) ===================== */
+/** Enter/Space for rows rendered as role="button" (they contain their own buttons, so they can't be <button>). */
+const activateOnKey = (event: React.KeyboardEvent<HTMLElement>, action: () => void) => {
+  if (event.target !== event.currentTarget) return;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    action();
+  }
+};
+
 function AdminConsole() {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
@@ -1221,6 +1457,7 @@ function AdminConsole() {
 
   // global UI
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const sectionSwitcherRef = useRef<HTMLElement | null>(null);
   const [activeSection, setActiveSection] = useState<AdminSection>("Overview");
   const [q, setQ] = useState("");
   const [tick, setTick] = useState(0);
@@ -1254,10 +1491,31 @@ function AdminConsole() {
   const [accounts, setAccounts] = useState<AssignedAccount[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
+  const [workerDirectoryError, setWorkerDirectoryError] = useState<string | null>(null);
+  const [sandboxWorkers, setSandboxWorkers] = useState<Worker[]>([]);
   const [upiConfigs, setUpiConfigs] = useState<UpiConfig[]>([]);
   const [payoutBatchesAdmin, setPayoutBatchesAdmin] = useState<AdminPayoutBatch[]>([]);
+  // Rejected (Failed) requests leave the queue as soon as they're rejected; they stay reachable behind a toggle.
+  const [showRejectedPayouts, setShowRejectedPayouts] = useState(false);
+  const rejectedPayoutCount = useMemo(() => payoutBatchesAdmin.filter((b) => b.status === "Failed").length, [payoutBatchesAdmin]);
+  const payoutQueue = useMemo(
+    () => (showRejectedPayouts ? payoutBatchesAdmin : payoutBatchesAdmin.filter((b) => b.status !== "Failed")),
+    [payoutBatchesAdmin, showRejectedPayouts]
+  );
+  const payoutActionsRunning = useRef(new Set<string>());
+  const payoutVersion = useRef(0);
+  const [busyPayouts, setBusyPayouts] = useState<Set<string>>(new Set());
   const [workEmailCodes, setWorkEmailCodes] = useState<WorkEmailSecretCode[]>([]);
   const [workEmailSchemaMissing, setWorkEmailSchemaMissing] = useState(false);
+  const [feedbackItems, setFeedbackItems] = useState<AdminFeedbackItem[]>([]);
+  const [feedbackSchemaMissing, setFeedbackSchemaMissing] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackSearch, setFeedbackSearch] = useState("");
+  const [feedbackFilter, setFeedbackFilter] = useState<"all" | AdminFeedbackStatus>("all");
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(null);
+  const [feedbackStatusDraft, setFeedbackStatusDraft] = useState<AdminFeedbackStatus>("new");
+  const [feedbackNoteDraft, setFeedbackNoteDraft] = useState("");
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [newCodeLabel, setNewCodeLabel] = useState("");
   const [newCodeMaxUses, setNewCodeMaxUses] = useState<number>(0);
   const [newCodeExpiry, setNewCodeExpiry] = useState<string>("");
@@ -1329,20 +1587,14 @@ function AdminConsole() {
   const [newAccountAudiosCsv, setNewAccountAudiosCsv] = useState("");
   const [newAccountHashtagsCsv, setNewAccountHashtagsCsv] = useState("");
 
-  /** ✅ Logout (kept + practical) */
-  const logout = useCallback(async () => {
-    try {
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(LS_KEYS.AUTH);
-      }
-      await supabase.auth.signOut();
-    } catch {
-      // ignore and still redirect
-    } finally {
-      setMobileNavOpen(false);
-      setDetailsOpenMobile(false);
-      router.replace("/login");
+  const logout = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(LS_KEYS.AUTH);
     }
+    void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    setMobileNavOpen(false);
+    setDetailsOpenMobile(false);
+    router.replace("/login");
   }, [router]);
 
   const refreshLock = useRef(false);
@@ -1350,8 +1602,9 @@ function AdminConsole() {
   const loadSnapshot = useCallback(async () => {
     if (refreshLock.current) return;
     refreshLock.current = true;
+    const payoutVersionAtStart = payoutVersion.current;
     try {
-      const workersReq = fetchWithAuth<{ ok: boolean; workers: Worker[] }>("/api/admin/workers", { method: "GET" });
+      const workersReq = fetchWithAuth<{ ok: boolean; workers: Worker[]; error?: string }>("/api/admin/workers", { method: "GET" });
       const upiReq = fetchWithAuth<{ ok: boolean; upiConfigs: UpiConfig[] }>("/api/admin/upi-configs", { method: "GET" });
       const payoutsReq = fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches", { method: "GET" });
       // 1) try API snapshot first (kept)
@@ -1371,17 +1624,30 @@ function AdminConsole() {
           setUpiConfigs(snap.upiConfigs ?? []);
         }
         const payoutsRes = await payoutsReq;
-        if (payoutsRes?.ok && Array.isArray(payoutsRes.payoutBatches)) {
+        if (payoutsRes?.ok && Array.isArray(payoutsRes.payoutBatches) && !payoutActionsRunning.current.size && payoutVersion.current === payoutVersionAtStart) {
           setPayoutBatchesAdmin(payoutsRes.payoutBatches);
         }
 
         const workersRes = await workersReq;
-        if (workersRes?.ok && workersRes.workers?.length) {
+        if (workersRes?.ok && Array.isArray(workersRes.workers)) {
+          const canOfferSandbox = workersRes.workers.length === 0 && !!workersRes.error && hasDevAdminBypassSession() && !!snap.workers?.length;
+          setSandboxWorkers(canOfferSandbox ? snap.workers : []);
           setWorkers(workersRes.workers);
-          setSelectedWorkerId((prev) => prev ?? workersRes.workers[0]?.id ?? null);
+          setWorkerDirectoryError(
+            canOfferSandbox
+              ? "Live worker directory is unavailable. Check Supabase connectivity, or use local sandbox workers for testing."
+              : workersRes.error ?? null
+          );
+          setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers[0]?.id ?? null));
         } else if (snap.workers?.length) {
-          setWorkers(snap.workers);
-          setSelectedWorkerId((prev) => prev ?? snap.workers[0]?.id ?? null);
+          setSandboxWorkers(hasDevAdminBypassSession() ? snap.workers : []);
+          setWorkerDirectoryError(
+            hasDevAdminBypassSession()
+              ? "Live worker directory could not be refreshed. Local sandbox workers are available for testing."
+              : "Live worker directory could not be refreshed."
+          );
+          setWorkers([]);
+          setSelectedWorkerId(null);
         }
         if (!scheduleLock.current) {
           scheduleLock.current = true;
@@ -1395,14 +1661,16 @@ function AdminConsole() {
 
       const workersRes = await workersReq;
       if (workersRes?.ok && Array.isArray(workersRes.workers)) {
+        setSandboxWorkers([]);
         setWorkers(workersRes.workers);
-        setSelectedWorkerId((prev) => prev ?? workersRes.workers[0]?.id ?? null);
+        setWorkerDirectoryError(workersRes.error ?? null);
+        setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers[0]?.id ?? null));
         const upiRes = await upiReq;
         if (upiRes?.ok && Array.isArray(upiRes.upiConfigs)) {
           setUpiConfigs(upiRes.upiConfigs);
         }
         const payoutsRes = await payoutsReq;
-        if (payoutsRes?.ok && Array.isArray(payoutsRes.payoutBatches)) {
+        if (payoutsRes?.ok && Array.isArray(payoutsRes.payoutBatches) && !payoutActionsRunning.current.size && payoutVersion.current === payoutVersionAtStart) {
           setPayoutBatchesAdmin(payoutsRes.payoutBatches);
         }
         if (!scheduleLock.current) {
@@ -1414,6 +1682,7 @@ function AdminConsole() {
         }
         return;
       }
+      setWorkerDirectoryError("Live worker directory could not be refreshed.");
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       setToast({ message: "Live admin data unavailable. Check connectivity.", tone: "danger" });
       toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
@@ -1441,22 +1710,97 @@ function AdminConsole() {
     return () => window.clearInterval(id);
   }, [mounted]);
 
-  // REALTIME: refresh snapshot on changes
+  const loadFeedback = useCallback(async () => {
+    setFeedbackLoading(true);
+    const res = await fetchWithAuth<{ ok: boolean; feedbacks?: AdminFeedbackItem[]; missingSchema?: boolean }>("/api/admin/feedback", {
+      method: "GET",
+    });
+
+    if (!res?.ok) {
+      setFeedbackLoading(false);
+      setToast({ message: "Unable to load feedback inbox.", tone: "danger" });
+      return;
+    }
+
+    const nextItems = Array.isArray(res.feedbacks) ? res.feedbacks : [];
+    setFeedbackItems(nextItems);
+    setFeedbackSchemaMissing(!!res.missingSchema);
+    setSelectedFeedbackId((prev) => (nextItems.some((item) => item.id === prev) ? prev : nextItems[0]?.id ?? null));
+    setFeedbackLoading(false);
+  }, []);
+
+  // UPI list on its own (cheap), so a creator's new UPI shows up the moment it's saved.
+  const upiSeenRef = useRef<Map<string, string> | null>(null);
+  const loadUpiConfigs = useCallback(async () => {
+    const res = await fetchWithAuth<{ ok: boolean; upiConfigs: UpiConfig[] }>("/api/admin/upi-configs", { method: "GET" });
+    if (!res?.ok || !Array.isArray(res.upiConfigs)) return;
+    // Announce UPIs that newly need verification (new, or changed to a different ID).
+    const previous = upiSeenRef.current;
+    const fresh = res.upiConfigs.filter((u) => !u.verified && u.upiId && previous && previous.get(u.workerId) !== u.upiId);
+    upiSeenRef.current = new Map(res.upiConfigs.map((u) => [u.workerId, u.upiId]));
+    setUpiConfigs(res.upiConfigs);
+    if (fresh.length) {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      setToast({
+        message: fresh.length === 1 ? `New UPI to verify: ${fresh[0].upiId}${fresh[0].workerCode ? ` (${fresh[0].workerCode})` : ""}` : `${fresh.length} new UPIs to verify`,
+        tone: "success",
+      });
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 5000);
+    }
+  }, []);
+  useEffect(() => {
+    if (upiSeenRef.current === null && upiConfigs.length) upiSeenRef.current = new Map(upiConfigs.map((u) => [u.workerId, u.upiId]));
+  }, [upiConfigs]);
+
+  const loadPayoutsAdmin = useCallback(async () => {
+    if (payoutActionsRunning.current.size) return;
+    const version = payoutVersion.current;
+    const result = await fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches");
+    if (!payoutActionsRunning.current.size && payoutVersion.current === version && result?.ok) setPayoutBatchesAdmin(result.payoutBatches);
+  }, []);
+
+  // REALTIME: the payout tables are server-only (browsers can't subscribe to them), so the server broadcasts a
+  // content-free signal on the admin-only "admin:live" topic and we re-read just what changed.
+  const devBypass = mounted && hasDevAdminBypassSession();
+  const adminLive = useAdminLive(mounted && !devBypass, (kinds: Set<AdminLiveKind> | null) => {
+    if (!kinds) {
+      void loadSnapshot();
+      if (activeSection === "Feedback") void loadFeedback();
+      return;
+    }
+    if (kinds.has("upi_configs")) void loadUpiConfigs();
+    if (kinds.has("payout_batches") || kinds.has("view_payout_claims")) void loadPayoutsAdmin();
+    if (kinds.has("work_items")) void loadSnapshot();
+  });
+  // Local dev bypass has no realtime session: poll instead.
+  useEffect(() => {
+    if (!devBypass) return;
+    const intervalId = window.setInterval(() => {
+      void loadSnapshot();
+      if (activeSection === "Feedback") void loadFeedback();
+    }, 5_000);
+    return () => window.clearInterval(intervalId);
+  }, [activeSection, devBypass, loadFeedback, loadSnapshot]);
+
+  // Payout rows are server-only, so refresh through the authenticated API even if websocket events are unavailable.
   useEffect(() => {
     if (!mounted) return;
-    const channel = supabase
-      .channel("admin-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "work_items" }, () => loadSnapshot())
-      .on("postgres_changes", { event: "*", schema: "public", table: "assignments" }, () => loadSnapshot())
-      .on("postgres_changes", { event: "*", schema: "public", table: "accounts" }, () => loadSnapshot())
-      .on("postgres_changes", { event: "*", schema: "public", table: "workers" }, () => loadSnapshot())
-      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => loadSnapshot())
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
+    let alive = true, running = false;
+    const update = async () => {
+      if (!alive || running || document.hidden || payoutActionsRunning.current.size) return;
+      running = true;
+      const version = payoutVersion.current;
+      try {
+        const result = await fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches");
+        if (alive && !payoutActionsRunning.current.size && payoutVersion.current === version && result?.ok) setPayoutBatchesAdmin(result.payoutBatches);
+      } finally { running = false; }
     };
-  }, [mounted, loadSnapshot]);
+    const timer = window.setInterval(() => void update(), 10_000);
+    const onVisible = () => void update();
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, [mounted]);
 
   const refresh = () => {
     setTick((t) => t + 1);
@@ -1464,16 +1808,14 @@ function AdminConsole() {
   };
 
   const workEmailAdminRequest = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) return { ok: false as const, error: "Session expired. Please sign in again." };
+    const { headers, authorized } = await getAdminRequestHeaders();
+    if (!authorized) {
+      return { ok: false as const, error: "Session expired. Please sign in again." };
+    }
 
     const res = await fetch("/api/admin/work-email-codes", {
       method,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
 
@@ -1499,15 +1841,11 @@ function AdminConsole() {
   }, [workEmailAdminRequest]);
 
   const loadWorkEmailAccountsAdmin = useCallback(async () => {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) return;
+    const { headers, authorized } = await getAdminRequestHeaders();
+    if (!authorized) return;
     const res = await fetch("/api/admin/work-email-accounts", {
       method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
     });
     const parsed = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -1691,7 +2029,34 @@ function AdminConsole() {
       void loadWorkEmailCodes();
       void loadWorkEmailAccountsAdmin();
     }
-  }, [activeSection, loadWorkEmailCodes, loadWorkEmailAccountsAdmin]);
+    if (activeSection === "Feedback") {
+      void loadFeedback();
+    }
+  }, [activeSection, loadFeedback, loadWorkEmailCodes, loadWorkEmailAccountsAdmin]);
+
+  const saveFeedbackUpdate = useCallback(async () => {
+    if (!selectedFeedbackId) return;
+    setFeedbackSaving(true);
+    const res = await fetchWithAuth<{ ok: boolean; feedback?: AdminFeedbackItem }>("/api/admin/feedback", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: selectedFeedbackId,
+        status: feedbackStatusDraft,
+        adminNote: feedbackNoteDraft,
+      }),
+    });
+
+    if (!res?.ok || !res.feedback) {
+      setFeedbackSaving(false);
+      setToast({ message: "Unable to save feedback update.", tone: "danger" });
+      return;
+    }
+
+    setFeedbackItems((prev) => prev.map((item) => (item.id === res.feedback?.id ? res.feedback : item)));
+    setSelectedFeedbackId(res.feedback.id);
+    setFeedbackSaving(false);
+    setToast({ message: "Feedback updated.", tone: "success" });
+  }, [feedbackNoteDraft, feedbackStatusDraft, selectedFeedbackId]);
 
   const visibleWorkEmailAccountsAdmin = useMemo(() => {
     const q = workEmailAccountQuery.trim().toLowerCase();
@@ -1707,6 +2072,61 @@ function AdminConsole() {
     });
   }, [workEmailAccountsAdmin, workEmailAccountQuery]);
 
+  const feedbackStats = useMemo(
+    () =>
+      feedbackItems.reduce(
+        (sum, item) => {
+          sum.total += 1;
+          sum[item.status] += 1;
+          return sum;
+        },
+        { total: 0, new: 0, reviewing: 0, resolved: 0, closed: 0 } as Record<"total" | AdminFeedbackStatus, number>
+      ),
+    [feedbackItems]
+  );
+
+  const visibleFeedbackItems = useMemo(() => {
+    const query = feedbackSearch.trim().toLowerCase();
+    return feedbackItems.filter((item) => {
+      if (feedbackFilter !== "all" && item.status !== feedbackFilter) return false;
+      if (!query) return true;
+      const haystack = [
+        item.profile_name,
+        item.worker_id,
+        item.profile_role,
+        item.section,
+        item.category,
+        item.subject,
+        item.message,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [feedbackFilter, feedbackItems, feedbackSearch]);
+
+  const selectedFeedback = useMemo(
+    () => (selectedFeedbackId ? feedbackItems.find((item) => item.id === selectedFeedbackId) ?? null : feedbackItems[0] ?? null),
+    [feedbackItems, selectedFeedbackId]
+  );
+
+  useEffect(() => {
+    if (!selectedFeedback) {
+      setFeedbackStatusDraft("new");
+      setFeedbackNoteDraft("");
+      return;
+    }
+    setFeedbackStatusDraft(selectedFeedback.status);
+    setFeedbackNoteDraft(selectedFeedback.admin_note ?? "");
+  }, [selectedFeedback]);
+
+  const selectedFeedbackMeta = useMemo<Record<string, unknown>>(() => {
+    if (!selectedFeedback?.meta || typeof selectedFeedback.meta !== "object" || Array.isArray(selectedFeedback.meta)) {
+      return {};
+    }
+    return selectedFeedback.meta;
+  }, [selectedFeedback]);
+
   const revealSocialPassword = useCallback(async (id: string) => {
     const existing = revealedSocialPasswords[id];
     if (existing !== undefined) {
@@ -1717,9 +2137,8 @@ function AdminConsole() {
       });
       return;
     }
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) {
+    const { headers, authorized } = await getAdminRequestHeaders();
+    if (!authorized) {
       setToast({ message: "Session expired. Please sign in again.", tone: "danger" });
       return;
     }
@@ -1727,10 +2146,7 @@ function AdminConsole() {
     try {
       const res = await fetch("/api/admin/work-email-accounts/reveal", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({ id }),
       });
       const parsed = (await res.json().catch(() => ({}))) as { ok?: boolean; password?: string; error?: string };
@@ -1865,29 +2281,14 @@ function AdminConsole() {
     [workItems, selectedWorkId]
   );
 
-  const dueMeta = useMemo<(
-    id: string
-  ) => { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean } | undefined>(() => {
+  const dueMeta = useMemo<(id: string) => WorkTiming | undefined>(() => {
     if (!mounted) {
       return () => undefined;
     }
     const now = new Date();
-    const map = new Map<string, { dueInMin: number; overdue: boolean; slaRemaining?: number; slaBreached?: boolean }>();
+    const map = new Map<string, WorkTiming>();
     workItems.forEach((x) => {
-      const due = parseLocalISO(x.dueAt);
-      const dueInMin = minutesBetween(now, due);
-      const overdue =
-        dueInMin < 0 &&
-        (x.status === "Open" || x.status === "In progress" || x.status === "Needs fix" || x.status === "Submitted");
-      let slaRemaining: number | undefined = undefined;
-      let slaBreached: boolean | undefined = undefined;
-      if (x.startedAt && (x.status === "In progress" || x.status === "Submitted" || x.status === "Approved" || x.status === "Needs fix")) {
-        const started = parseLocalISO(x.startedAt);
-        const elapsed = minutesBetween(started, now);
-        slaRemaining = x.slaMinutes - elapsed;
-        slaBreached = slaRemaining < 0 && x.status === "In progress";
-      }
-      map.set(x.id, { dueInMin, overdue, slaRemaining, slaBreached });
+      map.set(x.id, getWorkTiming(x, now));
     });
     return (id: string) => map.get(id);
   }, [workItems, tick, mounted]);
@@ -2091,43 +2492,77 @@ function AdminConsole() {
     loadSnapshot();
   };
 
-  const approvePayout = useCallback(
-    async (batchId: string) => {
-      const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
-      const upi = batch ? getBatchUpi(batch) : null;
-      const days = upi?.payoutSchedule === "Monthly" ? 30 : upi?.payoutSchedule === "Bi-weekly" ? 14 : 7;
-      const defaultEta = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const etaDate = window.prompt("Estimated payout date (YYYY-MM-DD)?", defaultEta)?.trim() || defaultEta;
-      const res = await fetchWithAuth<{ ok: boolean }>(`/api/admin/payoutbatches/${encodeURIComponent(batchId)}/approve`, {
-        method: "PATCH",
-        body: JSON.stringify({ etaDate }),
+  const submitPayoutAction = useCallback(async (batchId: string, action: "approve" | "reject" | "mark-paid", body: Record<string, string>) => {
+    if (payoutActionsRunning.current.has(batchId)) return;
+    payoutActionsRunning.current.add(batchId);
+    payoutVersion.current++;
+    setBusyPayouts(new Set(payoutActionsRunning.current));
+    try {
+      const { headers, authorized } = await getAdminRequestHeaders();
+      if (!authorized) throw new Error("Sign in again to update this payout.");
+      headers.set("Content-Type", "application/json");
+      const response = await fetch(`/api/admin/payoutbatches/${encodeURIComponent(batchId)}/${action}`, {
+        method: "PATCH", headers, body: JSON.stringify(body),
       });
-      if (res?.ok) loadSnapshot();
-    },
-    [loadSnapshot, payoutBatchesAdmin, getBatchUpi]
-  );
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.ok) throw new Error(result?.error || "Payout update failed. Please refresh and retry.");
+      const status = action === "approve" ? "Processing" : action === "reject" ? "Failed" : "Paid";
+      setPayoutBatchesAdmin((previous) => previous.map((batch) => batch.id === batchId ? {
+        ...batch, status, processedAt: result.batch?.processed_at ?? batch.processedAt, paidAt: result.batch?.paid_at ?? batch.paidAt,
+        notes: Array.isArray(result.batch?.notes) ? result.batch.notes : batch.notes,
+        items: batch.items.map((item) => ({ ...item, ...(action !== "approve" ? { status: action === "reject" ? "Failed" : "Paid" } : {}) })),
+      } : batch));
+      setToast({ message: action === "approve" ? "Payout approved for processing" : action === "reject" ? "Payout rejected and removed from requests" : "Payout recorded as paid", tone: "success" });
+      await loadSnapshot();
+    } catch (error) {
+      setToast({ message: error instanceof Error ? error.message : "Payout update failed", tone: "danger" });
+      await loadSnapshot();
+    } finally {
+      payoutActionsRunning.current.delete(batchId);
+      payoutVersion.current++;
+      setBusyPayouts(new Set(payoutActionsRunning.current));
+    }
+  }, [loadSnapshot]);
 
-  const rejectPayout = useCallback(
-    async (batchId: string) => {
-      const reason = window.prompt("Reason for rejection?", "Rejected by Admin") || "Rejected by Admin";
-      const res = await fetchWithAuth<{ ok: boolean }>(`/api/admin/payoutbatches/${encodeURIComponent(batchId)}/reject`, {
-        method: "PATCH",
-        body: JSON.stringify({ reason }),
-      });
-      if (res?.ok) loadSnapshot();
-    },
-    [loadSnapshot]
-  );
+  const approvePayout = useCallback(async (batchId: string) => {
+    const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
+    if (batch?.status !== "Draft" || payoutActionsRunning.current.has(batchId)) return;
+    const upi = getBatchUpi(batch);
+    const days = upi?.payoutSchedule === "Monthly" ? 30 : upi?.payoutSchedule === "Bi-weekly" ? 14 : 7;
+    const defaultEta = new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+    const entered = window.prompt("Estimated payout date (YYYY-MM-DD)?", defaultEta);
+    if (entered === null) return;
+    await submitPayoutAction(batchId, "approve", { etaDate: entered.trim() || defaultEta });
+  }, [payoutBatchesAdmin, getBatchUpi, submitPayoutAction]);
 
-  const markPayoutPaid = useCallback(
-    async (batchId: string) => {
-      const res = await fetchWithAuth<{ ok: boolean }>(`/api/admin/payoutbatches/${encodeURIComponent(batchId)}/mark-paid`, {
-        method: "PATCH",
-      });
-      if (res?.ok) loadSnapshot();
-    },
-    [loadSnapshot]
-  );
+  const rejectPayout = useCallback(async (batchId: string) => {
+    const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
+    if (!batch || !["Draft", "Processing"].includes(batch.status) || payoutActionsRunning.current.has(batchId)) return;
+    const reason = window.prompt("Reason for rejection?", "Rejected by Admin");
+    if (reason === null) return;
+    await submitPayoutAction(batchId, "reject", { reason: reason.trim() || "Rejected by Admin" });
+  }, [payoutBatchesAdmin, submitPayoutAction]);
+
+  const verifyWorkerUpi = useCallback(async (upi: UpiConfig) => {
+    const res = await fetchWithAuth<{ ok: boolean; error?: string }>("/api/admin/upi-configs", {
+      method: "PATCH", body: JSON.stringify({ workerId: upi.workerId, upiId: upi.upiId, verified: true }),
+    });
+    if (res?.ok) {
+      setUpiConfigs((prev) => prev.map((u) => (u.workerId === upi.workerId && u.upiId === upi.upiId ? { ...u, verified: true, verifiedAt: new Date().toISOString() } : u)));
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      setToast({ message: `UPI ${upi.upiId} verified. The creator sees it instantly.`, tone: "success" });
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+      void loadUpiConfigs();
+    } else setToast({ message: res?.error || "UPI verification failed", tone: "danger" });
+  }, [loadUpiConfigs]);
+
+  const markPayoutPaid = useCallback(async (batchId: string) => {
+    const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
+    if (batch?.status !== "Processing" || payoutActionsRunning.current.has(batchId)) return;
+    const paymentReference = window.prompt("Payment transaction reference (UTR)")?.trim();
+    if (!paymentReference) return;
+    await submitPayoutAction(batchId, "mark-paid", { paymentReference });
+  }, [payoutBatchesAdmin, submitPayoutAction]);
 
   const createAccount = async () => {
     const id = newAccountId.trim();
@@ -2311,7 +2746,7 @@ function AdminConsole() {
     const name = newWorkerName.trim();
     const email = newWorkerEmail.trim();
     const password = newWorkerPassword;
-    if (!id || !name || !email || password.length < 6) return;
+    if (!id || !name || !email || password.length < 12) return;
 
     const res = await fetchWithAuth<{ ok: boolean; worker: Worker }>(`/api/admin/create-worker`, {
       method: "POST",
@@ -2367,7 +2802,7 @@ function AdminConsole() {
     }
     return arr.sort((a, b) => {
       if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
-      return parseLocalISO(a.dueAt).getTime() - parseLocalISO(b.dueAt).getTime();
+      return compareWorkDeadlines(a.dueAt, b.dueAt);
     });
   }, [workItems, selectedWorkerId, ql, accountById]);
 
@@ -2438,21 +2873,40 @@ function AdminConsole() {
         );
       });
     }
-    return arr.sort((a, b) => parseLocalISO(a.dueAt).getTime() - parseLocalISO(b.dueAt).getTime());
+    return arr.sort((a, b) => compareWorkDeadlines(a.dueAt, b.dueAt));
   }, [workItems, ql, workerById, accountById]);
 
   /** ---------- Render (UI unchanged) ---------- */
+  // Keep the active tab visible in the phone/tablet section switcher.
+  useEffect(() => {
+    const nav = sectionSwitcherRef.current;
+    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !active) return;
+    // Instant: smooth programmatic scrolling stalls on this snap-enabled strip.
+    nav.scrollTo({ left: Math.max(0, active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2), behavior: "auto" });
+  }, [activeSection]);
+
+  const adminSectionCounts: Partial<Record<AdminSection, number>> = {
+    Reviews: reviewQueue.length,
+    Feedback: feedbackItems.filter((item) => item.status === "new").length,
+    Payouts: payoutBatchesAdmin.filter((batch) => String(batch.status).toLowerCase() !== "paid").length,
+  };
+  const adminNavItems = ADMIN_NAV_GROUPS.flatMap((group) => group.items);
+  const activeSectionLabel = adminNavItems.find((item) => item.id === activeSection)?.label ?? activeSection;
+
   return (
-    <div className="ops-dashboard-skin min-h-screen bg-slate-50">
-      {/* Mobile nav overlay */}
+    <div className="ops-dashboard-skin min-h-screen">
+      {/* Mobile nav drawer */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-slate-900/30" onClick={() => setMobileNavOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-[88vw] max-w-[320px] bg-white shadow-xl">
+          <div className="absolute inset-0 bg-[#0f1411]/45 backdrop-blur-[2px]" onClick={() => setMobileNavOpen(false)} />
+          <div role="dialog" aria-modal="true" aria-label="Admin navigation" className="absolute inset-y-0 left-0 w-[min(320px,86vw)] shadow-xl" style={{ paddingTop: "env(safe-area-inset-top)" }}>
             <AdminSidebar
               active={activeSection}
-              onPick={(s) => {
-                setActiveSection(s);
+              counts={adminSectionCounts}
+              onClose={() => setMobileNavOpen(false)}
+              onPick={(section) => {
+                setActiveSection(section);
                 setMobileNavOpen(false);
               }}
               onLogout={logout}
@@ -2478,101 +2932,127 @@ function AdminConsole() {
         </div>
       )}
 
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-[#d5ddcf] bg-[#f8faf7]/95 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-h-screen">
+        {/* Desktop sidebar */}
+        <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 border-r border-[#e3e5e1] lg:block 2xl:w-[264px]">
+          <AdminSidebar active={activeSection} onPick={setActiveSection} onLogout={logout} counts={adminSectionCounts} />
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Top bar */}
+          <header className="sticky top-0 z-40 border-b border-[#e3e5e1] bg-white/92 backdrop-blur-md">
+            <div className="flex h-[60px] items-center gap-2 px-3.5 sm:gap-3 sm:px-5 lg:h-[64px] lg:px-6">
               <button
-                className="lg:hidden inline-flex h-10 w-10 items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-50"
+                type="button"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#1a201c] transition hover:bg-[#eceeea] lg:hidden"
                 onClick={() => setMobileNavOpen(true)}
                 aria-label="Open navigation"
               >
-                <Icon name="hamburger" className="text-slate-700" />
+                <Icon name="hamburger" />
               </button>
-              <div className="grid h-10 w-10 place-items-center rounded-md bg-[#0078d4] text-white font-black">AD</div>
-              <div className="min-w-0">
-                <div className="text-sm font-extrabold text-slate-900 truncate">Admin Control Center</div>
-                <div className="hidden sm:block text-xs text-slate-600 truncate">
-                  Full control • Assignments • Work creation • Reviews • Create workers/accounts
-                </div>
+              <div className="min-w-0 shrink-0">
+                <div className="hidden text-[11px] font-semibold text-[#7a827c] sm:block">Admin console</div>
+                <h1 className="truncate text-[16px] font-semibold text-[#1a201c] lg:text-[18px]">{activeSectionLabel}</h1>
               </div>
-            </div>
 
-              <div className="flex items-center gap-2">
-                <div className="hidden md:flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-                  <Icon name="search" />
+              <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
+                <span className="sr-only">Search workers, accounts, work IDs and handles</span>
+                <span className="relative w-full max-w-[460px]">
+                  <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
                   <input
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder="Search workers, accounts, work IDs, handles…"
-                    className="w-[380px] bg-transparent text-sm outline-none placeholder:text-slate-400"
+                    className="h-9 w-full rounded-lg border border-[#e3e5e1] bg-[#f3f4f1] pl-9 pr-3 text-[13.5px] text-[#1a201c] outline-none transition placeholder:text-[#7a827c] focus:bg-white"
                   />
-                </div>
-                <label className="hidden md:flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-600">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={showCancelled}
-                    onChange={(e) => setShowCancelled(e.target.checked)}
-                  />
-                  Show cancelled
+                </span>
+              </label>
+
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                {!devBypass ? (
+                  <span
+                    className={`hidden h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold sm:inline-flex ${
+                      adminLive === "live" ? "bg-[#ebf5ee] text-[#226b40]" : adminLive === "offline" ? "bg-[#fff6e5] text-[#9a5b00]" : "bg-[#f1f3f0] text-[#7a827c]"
+                    }`}
+                    title={adminLive === "live" ? "UPI, KYC, payouts and claims update instantly" : adminLive === "offline" ? "Live updates unavailable; refreshing every 15 seconds" : "Connecting to live updates"}
+                    aria-live="polite"
+                  >
+                    <span className="relative flex h-2 w-2" aria-hidden>
+                      {adminLive === "live" ? <span className="absolute inline-flex h-full w-full rounded-full bg-[#4caf6e] opacity-60 motion-safe:animate-ping" /> : null}
+                      <span className={`relative inline-flex h-2 w-2 rounded-full ${adminLive === "live" ? "bg-[#2e7d4f]" : adminLive === "offline" ? "bg-[#e29a1b]" : "bg-[#b9c0ba]"}`} />
+                    </span>
+                    {adminLive === "live" ? "Live" : adminLive === "offline" ? "Auto-refresh" : "Connecting"}
+                  </span>
+                ) : null}
+                <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
+                  <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
+                  <span className="xl:hidden">Cancelled</span>
+                  <span className="hidden xl:inline">Show cancelled</span>
                 </label>
-              <Button variant="secondary" onClick={refresh} title="Refresh">
-                <Icon name="refresh" />
-                Refresh
-              </Button>
-              <Button variant="secondary" onClick={openCreateWorker} title="Create worker">
-                <Icon name="plus" />
-                <span className="hidden sm:inline">Worker</span>
-              </Button>
-              <Button variant="secondary" onClick={openCreateAccount} title="Create account">
-                <Icon name="plus" />
-                <span className="hidden sm:inline">Account</span>
-              </Button>
-              <Button variant="ghost" className="border border-slate-200 bg-white" title="Alerts">
-                <Icon name="bell" />
-                <span className="hidden sm:inline">Alerts</span>
-              </Button>
-              <Button variant="secondary" onClick={logout} title="Logout">
-                <Icon name="logout" />
-                <span className="hidden sm:inline">Logout</span>
-              </Button>
+                <button
+                  type="button"
+                  onClick={refresh}
+                  title="Refresh data"
+                  aria-label="Refresh data"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#4b544e] transition hover:bg-[#f1f3f0] hover:text-[#1a201c] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
+                >
+                  <Icon name="refresh" className="h-[18px] w-[18px]" />
+                </button>
+                <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
+                  <Icon name="plus" className="h-4 w-4" />
+                  <span className="hidden sm:inline">Worker</span>
+                </Button>
+                <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
+                  <Icon name="plus" className="h-4 w-4" />
+                  <span className="hidden sm:inline">Account</span>
+                </Button>
+              </div>
             </div>
-          </div>
 
-          {/* Mobile search */}
-          <div className="mt-2 md:hidden">
-            <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-slate-700">
-              <Icon name="search" />
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-400" />
+            {/* Phones/tablets: search + section switcher */}
+            <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
+              <label className="relative block min-w-0 flex-1">
+                <span className="sr-only">Search</span>
+                <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search workers, work IDs, handles…"
+                  className="h-10 w-full rounded-lg border border-[#e3e5e1] bg-[#f3f4f1] pl-9 pr-3 text-[16px] text-[#1a201c] outline-none placeholder:text-[#7a827c] focus:bg-white"
+                />
+              </label>
+              <label className="flex h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-[#e3e5e1] bg-white px-2.5 text-[12.5px] font-medium text-[#4b544e]">
+                <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
+                Cancelled
+              </label>
             </div>
-            <label className="mt-2 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-600">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-300"
-                checked={showCancelled}
-                onChange={(e) => setShowCancelled(e.target.checked)}
-              />
-              Show cancelled items
-            </label>
-          </div>
-
-          {/* KPI strip */}
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Chip tone="warn">Submitted: {kpis.submitted}</Chip>
-            <Chip tone="danger">Breaches: {kpis.breaches}</Chip>
-            <Chip tone="info">In progress: {kpis.inProg}</Chip>
-            <Chip tone="neutral">Open: {kpis.open}</Chip>
-            <Chip tone="success">Approved: {kpis.approved}</Chip>
-            <Chip tone="danger">Hard rejected: {kpis.hardRejected}</Chip>
-            {!mounted && <Chip tone="neutral">Loading…</Chip>}
-          </div>
-        </div>
-      </header>
+            <nav ref={sectionSwitcherRef} aria-label="Admin sections" className="dashboard-chip-scroller flex gap-1 overflow-x-auto scroll-px-3.5 px-3.5 pb-2 sm:px-5 lg:hidden">
+              {adminNavItems.map((item) => {
+                const isActive = item.id === activeSection;
+                const count = adminSectionCounts[item.id] ?? 0;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveSection(item.id)}
+                    aria-current={isActive ? "page" : undefined}
+                    className={cx(
+                      "inline-flex h-8 shrink-0 snap-start items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold transition",
+                      isActive ? "bg-[#1f2b24] text-white" : "text-[#4b544e] hover:bg-[#f1f3f0]"
+                    )}
+                  >
+                    {item.label}
+                    {count > 0 ? (
+                      <span className={cx("rounded-full px-1.5 text-[11px] leading-[18px] tabular-nums", isActive ? "bg-white/20 text-white" : "bg-[#eef0ed] text-[#4b544e]")}>{count}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </nav>
+          </header>
 
       {toast && (
-        <div className="fixed right-4 top-16 z-[80] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-extrabold text-slate-900 shadow-lg">
+        <div role="status" className="fixed inset-x-3 bottom-4 z-[80] rounded-xl border border-[#e3e5e1] bg-white px-4 py-3 text-[13.5px] font-semibold text-[#1a201c] shadow-lg sm:inset-x-auto sm:bottom-auto sm:right-5 sm:top-[76px]">
           <div className={`inline-flex items-center gap-2 ${toast.tone === "success" ? "text-emerald-600" : "text-rose-600"}`}>
             <span className="h-2.5 w-2.5 rounded-full bg-current" />
             {toast.message}
@@ -2580,19 +3060,39 @@ function AdminConsole() {
         </div>
       )}
 
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        <div className="grid grid-cols-12 gap-6">
-          {/* Desktop sidebar */}
-          <aside className="hidden lg:block col-span-3">
-            <AdminSidebar active={activeSection} onPick={setActiveSection} onLogout={logout} />
-          </aside>
+          <div className="mx-auto w-full max-w-[1440px] px-3.5 py-4 sm:px-6 sm:py-6">
+          <main className="min-w-0 space-y-5">
+            {/* KPI tiles */}
+            {activeSection === "Overview" && (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                {[
+                  { label: "Awaiting review", value: kpis.submitted, tone: "text-[#6b4a05]", section: "Reviews" as AdminSection },
+                  { label: "SLA breaches", value: kpis.breaches, tone: kpis.breaches ? "text-[#b42318]" : "text-[#1a201c]", section: "Work" as AdminSection },
+                  { label: "In progress", value: kpis.inProg, tone: "text-[#1a201c]", section: "Work" as AdminSection },
+                  { label: "Open", value: kpis.open, tone: "text-[#1a201c]", section: "Work" as AdminSection },
+                  { label: "Approved", value: kpis.approved, tone: "text-[#1f5131]", section: "Work" as AdminSection },
+                  { label: "Hard rejected", value: kpis.hardRejected, tone: kpis.hardRejected ? "text-[#b42318]" : "text-[#1a201c]", section: "Work" as AdminSection },
+                ].map((tile) => (
+                  <button
+                    key={tile.label}
+                    type="button"
+                    onClick={() => setActiveSection(tile.section)}
+                    className="group flex min-w-0 flex-col gap-2 rounded-xl border border-[#e3e5e1] bg-white p-3.5 text-left shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:border-[#cfd5cf] hover:shadow-[0_4px_14px_-6px_rgba(26,32,28,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
+                  >
+                    <span className="flex items-center justify-between gap-2 text-[12.5px] font-medium text-[#616a64]">
+                      <span className="truncate">{tile.label}</span>
+                      <Icon name="chevRight" className="h-3.5 w-3.5 shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5" />
+                    </span>
+                    <span className={cx("text-[22px] font-semibold leading-none tabular-nums", tile.tone)}>{mounted ? tile.value : "–"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-          {/* Main */}
-          <main className="col-span-12 lg:col-span-9 space-y-6">
             {/* Overview */}
             {activeSection === "Overview" && (
               <div className="space-y-6">
-                <div className="grid gap-6 lg:grid-cols-2">
+                <div className="grid items-start gap-5 lg:grid-cols-2">
                 <Card title="Review queue" subtitle="Submitted items awaiting admin decision" right={<Chip tone="warn">{reviewQueue.length}</Chip>}>
                   <AdminReviewList
                     items={reviewQueue.slice(0, 8)}
@@ -2602,7 +3102,7 @@ function AdminConsole() {
                     onOpen={openWorkDetails}
                     onReview={openReviewModal}
                   />
-                  {reviewQueue.length === 0 && <div className="text-sm text-slate-600">No submitted items right now.</div>}
+                  {reviewQueue.length === 0 && <AdminEmpty icon="check" title="Review queue is clear" body="Submitted work appears here for approval." />}
                 </Card>
 
                 <Card
@@ -2622,7 +3122,7 @@ function AdminConsole() {
                   }
                 >
                   <div className="space-y-3">
-                    {workers.map((w) => {
+                    {workers.slice(0, 6).map((w) => {
                       const assignedCount = accountsForWorker(w.id).length;
                       const pending = workItems.filter((it) => isWorkerMatch(w, it) && isCountedSubmission(it)).length;
                       const resubmits = workItems.filter((it) => isWorkerMatch(w, it) && isResubmission(it)).length;
@@ -2630,13 +3130,21 @@ function AdminConsole() {
                       const earningsApproved = getWorkerApprovedEarnings(w);
                       const upi = getWorkerUpi(w);
                       return (
-                        <button
+                        <div
                           key={w.id}
-                          className="w-full text-left rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50 transition"
+                          role="button"
+                          tabIndex={0}
+                          className="w-full cursor-pointer text-left rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
                           onClick={() => {
                             setSelectedWorkerId(w.id);
                             setActiveSection("Workers");
                           }}
+                          onKeyDown={(event) =>
+                            activateOnKey(event, () => {
+                              setSelectedWorkerId(w.id);
+                              setActiveSection("Workers");
+                            })
+                          }
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
@@ -2649,6 +3157,7 @@ function AdminConsole() {
                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                                   <span className="truncate">UPI: {upi.upiId}</span>
                                   <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
+                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
                                 </div>
                               )}
                             </div>
@@ -2661,10 +3170,20 @@ function AdminConsole() {
                             <Chip tone="neutral">{inProg} in progress</Chip>
                             <Chip tone="success">{formatINR(earningsApproved)} approved</Chip>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                     {workers.length === 0 && <div className="text-sm text-slate-600">Loading workers…</div>}
+                    {workers.length > 6 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveSection("Workers")}
+                        className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-[13px] font-semibold text-[#2b5d4a] transition hover:bg-[#f3f4f1]"
+                      >
+                        View all {workers.length} workers
+                        <Icon name="chevRight" className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 </Card>
                 </div>
@@ -2763,14 +3282,47 @@ function AdminConsole() {
                       </Button>
                     }
                   >
+                    {workerDirectoryError ? (
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                        <span>{workerDirectoryError}</span>
+                        {sandboxWorkers.length > 0 ? (
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setWorkers(sandboxWorkers);
+                              setSelectedWorkerId((prev) =>
+                                sandboxWorkers.some((worker) => worker.id === prev) ? prev : sandboxWorkers[0]?.id ?? null
+                              );
+                              setWorkerDirectoryError("Using local sandbox workers for testing. Live worker directory remains unavailable.");
+                            }}
+                          >
+                            Use sandbox workers
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="space-y-2">
-                      {visibleWorkers.map((w) => (
-                        <button
+                      {visibleWorkers.map((w) => {
+                        // A div acting as a button: each row contains its own "Confirm verified UPI" button.
+                        const selectWorker = () => {
+                          setSelectedWorkerId(w.id);
+                          if (typeof window !== "undefined" && window.innerWidth < 1024) {
+                            window.requestAnimationFrame(() =>
+                              document.getElementById("admin-worker-controls")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                            );
+                          }
+                        };
+                        return (
+                        <div
                           key={w.id}
-                          onClick={() => setSelectedWorkerId(w.id)}
+                          role="button"
+                          tabIndex={0}
+                          onClick={selectWorker}
+                          onKeyDown={(event) => activateOnKey(event, selectWorker)}
+                          aria-pressed={selectedWorkerId === w.id}
                           className={cx(
-                            "w-full text-left rounded-lg border p-3 transition",
-                            selectedWorkerId === w.id ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white hover:bg-slate-50"
+                            "w-full cursor-pointer text-left rounded-lg border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40",
+                            selectedWorkerId === w.id ? "border-[#1f2b24] bg-[#fafbf9] ring-1 ring-[#1f2b24]" : "border-slate-200 bg-white hover:bg-slate-50"
                           )}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -2787,6 +3339,7 @@ function AdminConsole() {
                                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                                     <span className="truncate">UPI: {upi.upiId}</span>
                                     <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
+                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
                                   </div>
                                 );
                               })()}
@@ -2799,14 +3352,21 @@ function AdminConsole() {
                             <Chip tone="neutral">{workItems.filter((it) => isWorkerMatch(w, it) && isResubmission(it)).length} resubmits</Chip>
                             <Chip tone="success">{formatINR(getWorkerApprovedEarnings(w))} approved</Chip>
                           </div>
-                        </button>
-                      ))}
-                      {visibleWorkers.length === 0 && <div className="text-sm text-slate-600">No workers match search.</div>}
+                        </div>
+                        );
+                      })}
+                      {visibleWorkers.length === 0 && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                          {workerDirectoryError
+                            ? "No live workers could be loaded. Check Supabase connectivity and refresh."
+                            : "No workers match search."}
+                        </div>
+                      )}
                     </div>
                   </Card>
                 </div>
 
-                <div className="col-span-12 lg:col-span-7 space-y-6">
+                <div id="admin-worker-controls" className="col-span-12 scroll-mt-32 space-y-6 lg:col-span-7">
                   <Card
                     title="Worker controls"
                     subtitle="Assignments + work creation are admin-owned."
@@ -2842,6 +3402,7 @@ function AdminConsole() {
                                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                                     <span className="truncate">UPI: {upi.upiId}</span>
                                     <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
+                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
                                     {upi.payoutSchedule && upi.payoutDay && (
                                       <span className="text-[11px] text-slate-400">
                                         {upi.payoutSchedule} • {upi.payoutDay}
@@ -2853,11 +3414,66 @@ function AdminConsole() {
                             </div>
                             <Chip tone="info">{accountsForWorker(selectedWorker.id).length} assigned accounts</Chip>
                           </div>
-                          <div className="mt-3">
-                            <Button variant="danger" onClick={() => openDeleteWorkerModal(selectedWorker)}>
-                              Delete this worker
-                            </Button>
+                        </div>
+
+                        <div className="rounded-md border border-slate-200 bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-extrabold text-slate-900">Presentation video</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {selectedWorker.introVideo?.uploadedAt
+                                  ? `Updated ${new Date(selectedWorker.introVideo.uploadedAt).toLocaleString()}`
+                                  : "No presentation video uploaded yet."}
+                              </div>
+                            </div>
+                            {selectedWorker.introVideo?.previewUrl ? (
+                              <a
+                                href={selectedWorker.introVideo.previewUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 transition hover:bg-slate-50"
+                              >
+                                Open
+                              </a>
+                            ) : null}
                           </div>
+
+                          {selectedWorker.introVideo?.previewUrl || selectedWorker.introVideo?.thumbnailUrl ? (
+                            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-[#a3a3a6] px-4 py-3">
+                              <div className="flex min-h-[420px] items-center justify-center">
+                                <div className="relative w-full max-w-[220px] overflow-hidden">
+                                  <div className="aspect-[9/16] w-full">
+                                    {selectedWorker.introVideo?.thumbnailUrl ? (
+                                      <img
+                                        src={selectedWorker.introVideo.thumbnailUrl}
+                                        alt={`${selectedWorker.name} presentation thumbnail`}
+                                        className="h-full w-full object-cover"
+                                      />
+                                    ) : (
+                                      <video
+                                        src={selectedWorker.introVideo?.previewUrl}
+                                        className="h-full w-full object-cover"
+                                        preload="metadata"
+                                        playsInline
+                                        muted
+                                      />
+                                    )}
+                                  </div>
+                                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/35 backdrop-blur-sm">
+                                      <svg viewBox="0 0 24 24" className="ml-1 h-6 w-6 fill-white" aria-hidden="true">
+                                        <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+                                      </svg>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                              This creator has not uploaded a presentation video yet.
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid gap-3 md:grid-cols-2">
@@ -3010,6 +3626,20 @@ function AdminConsole() {
                             </Button>
                           </div>
                         </Card>
+
+                        <section aria-label="Danger zone" className="rounded-xl border border-[#f3cdc8] bg-[#fffafa] p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="text-[13.5px] font-semibold text-[#8e1f1a]">Delete {selectedWorker.name}</div>
+                              <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
+                                Removes this worker&apos;s profile and access. You&apos;ll be asked to confirm.
+                              </p>
+                            </div>
+                            <Button variant="secondary" onClick={() => openDeleteWorkerModal(selectedWorker)} className="border-[#f1c9c4] text-[#b42318] hover:bg-[#fdf2f1]">
+                              Delete worker
+                            </Button>
+                          </div>
+                        </section>
                       </div>
                     )}
                   </Card>
@@ -3032,11 +3662,12 @@ function AdminConsole() {
                     title="Work items"
                     subtitle="Admin can create, track and open any work item."
                     right={
-                      <div className="flex items-center gap-2">
+                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                         <select
                           value={selectedWorkerId ?? ""}
                           onChange={(e) => setSelectedWorkerId(e.target.value || null)}
-                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 outline-none"
+                          aria-label="Worker"
+                          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-medium text-slate-900 outline-none sm:w-56 sm:flex-none"
                         >
                           {workers.map((w) => (
                             <option key={w.id} value={w.id}>
@@ -3079,8 +3710,70 @@ function AdminConsole() {
             {activeSection === "Payouts" && (
               <div className="grid grid-cols-12 gap-6">
                 <div className="col-span-12 space-y-6">
+                  <ViewPayoutClaims admin />
                   <Card title="Payout requests" subtitle="Review, approve, or reject worker payout requests.">
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    {/* Phones: one card per request so amount, status and actions stay visible */}
+                    <ul className="space-y-3 md:hidden">
+                      {payoutQueue.map((b) => {
+                        const total = payoutTotals(b);
+                        const upi = getBatchUpi(b);
+                        return (
+                          <li key={b.id} className="rounded-xl border border-slate-200 bg-white p-3.5">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-[14px] font-semibold text-slate-900">
+                                  {b.workerName ?? "Worker"} <span className="font-normal text-slate-500">({b.workerCode ?? b.workerId})</span>
+                                </div>
+                                <div className="mt-0.5 text-[12.5px] text-slate-600">{b.cycleLabel}</div>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <div className="text-[15px] font-semibold tabular-nums text-slate-900">{formatINR(total)}</div>
+                                <div className="mt-1">
+                                  <Chip tone={payoutStatusTone(b.status)}>{b.status}</Chip>
+                                </div>
+                              </div>
+                            </div>
+                            <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-[#fafbf9] px-3 py-2.5 text-[12px]">
+                              <dt className="text-slate-500">Period</dt>
+                              <dd className="text-right text-slate-900">
+                                {b.periodStart} → {b.periodEnd}
+                              </dd>
+                              <dt className="text-slate-500">Method</dt>
+                              <dd className="truncate text-right text-slate-900">{b.method}</dd>
+                              {upi?.upiId ? (
+                                <>
+                                  <dt className="text-slate-500">UPI</dt>
+                                  <dd className="truncate text-right text-slate-900">
+                                    {upi.upiId} · {upi.verified ? "Verified" : "Unverified"}
+                                  </dd>
+                                </>
+                              ) : null}
+                              <dt className="text-slate-500">Created</dt>
+                              <dd className="text-right text-slate-900">{b.createdAt?.slice(0, 16).replace("T", " ")}</dd>
+                              <dt className="text-slate-500">ETA</dt>
+                              <dd className="text-right text-slate-900">{getPayoutEta(b) ?? "—"}</dd>
+                            </dl>
+                            <div className="mt-3 grid grid-cols-3 gap-2">
+                              <Button variant="secondary" onClick={() => approvePayout(b.id)} disabled={busyPayouts.has(b.id) || b.status !== "Draft"} className="px-2">
+                                Approve
+                              </Button>
+                              <Button variant="secondary" onClick={() => rejectPayout(b.id)} disabled={busyPayouts.has(b.id) || !["Draft", "Processing"].includes(b.status)} className="px-2">
+                                Reject
+                              </Button>
+                              <Button variant="primary" onClick={() => markPayoutPaid(b.id)} disabled={busyPayouts.has(b.id) || b.status !== "Processing"} className="px-2">
+                                Mark paid
+                              </Button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                      {payoutQueue.length === 0 && (
+                        <li>
+                          <AdminEmpty icon="wallet" title={rejectedPayoutCount ? "No open payout requests" : "No payout requests yet"} />
+                        </li>
+                      )}
+                    </ul>
+                    <div className="hidden overflow-x-auto rounded-lg border border-slate-200 md:block">
                       <table className="min-w-[980px] w-full text-left text-sm">
                         <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
                           <tr>
@@ -3095,7 +3788,7 @@ function AdminConsole() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200">
-                          {payoutBatchesAdmin.map((b) => {
+                          {payoutQueue.map((b) => {
                             const total = payoutTotals(b);
                             const upi = getBatchUpi(b);
                             return (
@@ -3125,13 +3818,13 @@ function AdminConsole() {
                                 <td className="px-3 py-3 text-slate-600">{getPayoutEta(b) ?? "—"}</td>
                                 <td className="px-3 py-3">
                                   <div className="flex flex-wrap gap-2">
-                                    <Button variant="secondary" onClick={() => approvePayout(b.id)} disabled={b.status !== "Draft"}>
+                                    <Button variant="secondary" onClick={() => approvePayout(b.id)} disabled={busyPayouts.has(b.id) || b.status !== "Draft"}>
                                       Approve
                                     </Button>
-                                    <Button variant="secondary" onClick={() => rejectPayout(b.id)} disabled={b.status === "Paid"}>
+                                    <Button variant="secondary" onClick={() => rejectPayout(b.id)} disabled={busyPayouts.has(b.id) || !["Draft", "Processing"].includes(b.status)}>
                                       Reject
                                     </Button>
-                                    <Button variant="primary" onClick={() => markPayoutPaid(b.id)} disabled={b.status !== "Processing"}>
+                                    <Button variant="primary" onClick={() => markPayoutPaid(b.id)} disabled={busyPayouts.has(b.id) || b.status !== "Processing"}>
                                       Mark paid
                                     </Button>
                                   </div>
@@ -3139,16 +3832,26 @@ function AdminConsole() {
                               </tr>
                             );
                           })}
-                          {payoutBatchesAdmin.length === 0 && (
+                          {payoutQueue.length === 0 && (
                             <tr>
                               <td colSpan={7} className="px-3 py-6 text-sm text-slate-600">
-                                No payout requests yet.
+                                {rejectedPayoutCount ? "No open payout requests." : "No payout requests yet."}
                               </td>
                             </tr>
                           )}
                         </tbody>
                       </table>
                     </div>
+                    {rejectedPayoutCount ? (
+                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 text-[12.5px] text-slate-500">
+                        <span>
+                          {showRejectedPayouts ? `Showing ${rejectedPayoutCount} rejected` : `${rejectedPayoutCount} rejected ${rejectedPayoutCount === 1 ? "request is" : "requests are"} hidden`}
+                        </span>
+                        <button type="button" onClick={() => setShowRejectedPayouts((v) => !v)} className="font-semibold text-sky-700 underline-offset-2 hover:underline">
+                          {showRejectedPayouts ? "Hide rejected" : "Show rejected"}
+                        </button>
+                      </div>
+                    ) : null}
                   </Card>
 
                   <Card title="Created work emails" subtitle="Stored credentials submitted by users before email generation.">
@@ -3166,7 +3869,40 @@ function AdminConsole() {
                         Refresh
                       </Button>
                     </div>
-                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <ul className="space-y-3 md:hidden">
+                      {visibleWorkEmailAccountsAdmin.map((row) => (
+                        <li key={row.id} className="rounded-xl border border-slate-200 bg-white p-3.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-[13.5px] font-semibold text-slate-900">{row.email}</div>
+                              <div className="truncate text-[12.5px] text-slate-600">
+                                @{row.username} · {row.platform || "—"}
+                              </div>
+                            </div>
+                            <span className="shrink-0 text-[11.5px] text-slate-500">{row.createdAt ? row.createdAt.slice(0, 10) : "—"}</span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-[#fafbf9] px-3 py-2 text-[12px]">
+                            <span className="min-w-0 truncate text-slate-600">Owner: {row.ownerDisplayName || row.ownerWorkerCode || row.ownerUserId}</span>
+                            {row.hasSocialPassword ? (
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                <span className="font-mono text-[11.5px] text-slate-900">
+                                  {revealedSocialPasswords[row.id] !== undefined ? revealedSocialPasswords[row.id] || "(empty)" : "••••••••"}
+                                </span>
+                                <Button variant="ghost" onClick={() => revealSocialPassword(row.id)} disabled={revealingPasswordFor === row.id} className="min-h-8 px-2 py-1 text-[12px]">
+                                  {revealedSocialPasswords[row.id] !== undefined ? "Hide" : revealingPasswordFor === row.id ? "Revealing..." : "Reveal"}
+                                </Button>
+                              </span>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                      {visibleWorkEmailAccountsAdmin.length === 0 && (
+                        <li>
+                          <AdminEmpty icon="mail" title="No created work emails" />
+                        </li>
+                      )}
+                    </ul>
+                    <div className="hidden overflow-x-auto rounded-lg border border-slate-200 md:block">
                       <table className="min-w-[1040px] w-full text-left text-sm">
                         <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
                           <tr>
@@ -3222,6 +3958,261 @@ function AdminConsole() {
                         </tbody>
                       </table>
                     </div>
+                  </Card>
+                </div>
+              </div>
+            )}
+
+            {/* Feedback */}
+            {activeSection === "Feedback" && (
+              <div className="grid grid-cols-12 gap-6">
+                <div className="col-span-12">
+                  <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                    {[
+                      { label: "New", value: feedbackStats.new, dot: "bg-[#d99a06]" },
+                      { label: "Reviewing", value: feedbackStats.reviewing, dot: "bg-[#2a78d6]" },
+                      { label: "Resolved", value: feedbackStats.resolved, dot: "bg-[#2e7d4f]" },
+                      { label: "Total inbox", value: feedbackStats.total, dot: "bg-[#8a938d]" },
+                    ].map((tile) => (
+                      <div key={tile.label} className="rounded-xl border border-[#e3e5e1] bg-white p-3.5 shadow-[0_1px_2px_rgba(26,32,28,0.06)] sm:p-4">
+                        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-[#616a64]">
+                          <span className={cx("h-2 w-2 rounded-full", tile.dot)} aria-hidden="true" />
+                          {tile.label}
+                        </div>
+                        <div className="mt-2 text-[22px] font-semibold leading-none tabular-nums text-[#1a201c]">{tile.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="col-span-12 xl:col-span-5 space-y-6">
+                  <Card
+                    title="Feedback inbox"
+                    subtitle="Dashboard submissions arrive here with section and device context."
+                    right={
+                      <Button variant="secondary" onClick={loadFeedback}>
+                        Refresh
+                      </Button>
+                    }
+                  >
+                    <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+                        <input
+                          value={feedbackSearch}
+                          onChange={(e) => setFeedbackSearch(e.target.value)}
+                          placeholder="Search profile, worker, subject, or message..."
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                        />
+                        <select
+                          value={feedbackFilter}
+                          onChange={(e) => setFeedbackFilter(e.target.value as "all" | AdminFeedbackStatus)}
+                          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                        >
+                          <option value="all">All statuses</option>
+                          <option value="new">New</option>
+                          <option value="reviewing">Reviewing</option>
+                          <option value="resolved">Resolved</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </div>
+
+                      {feedbackSchemaMissing && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                          Schema missing. Run <code>scripts/dashboard-feedback-schema.sql</code> in Supabase SQL Editor.
+                        </div>
+                      )}
+
+                      {feedbackLoading && (
+                        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">Loading feedback inbox…</div>
+                      )}
+
+                      <div className="space-y-3">
+                        {visibleFeedbackItems.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setSelectedFeedbackId(item.id)}
+                            className={cx(
+                              "w-full rounded-xl border p-4 text-left transition",
+                              selectedFeedback?.id === item.id ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white hover:bg-slate-50"
+                            )}
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-extrabold text-slate-900">
+                                  {item.profile_name || item.worker_id || "Unknown profile"}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {item.profile_role || "Creator"} • {item.worker_id || "No worker code"}
+                                </div>
+                              </div>
+                              <Chip tone={feedbackStatusTone(item.status)}>{item.status}</Chip>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Chip tone="neutral">{feedbackCategoryLabel(item.category)}</Chip>
+                              <Chip tone="info">{item.section}</Chip>
+                              {item.rating ? <Chip tone="warn">{item.rating}/5</Chip> : null}
+                            </div>
+                            <div className="mt-3 text-sm font-extrabold text-slate-800">
+                              {item.subject?.trim()
+                                ? item.subject
+                                : buildFeedbackSubject({ section: item.section, category: item.category, rating: item.rating })}
+                            </div>
+                            <div className="mt-1 line-clamp-3 text-sm leading-6 text-slate-600">{item.message}</div>
+                            <div className="mt-3 text-xs text-slate-500">{formatDateTime(item.created_at)}</div>
+                          </button>
+                        ))}
+
+                        {!feedbackLoading && visibleFeedbackItems.length === 0 && (
+                          <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-sm text-slate-600">
+                            No feedback matches the current filter.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                </div>
+
+                <div className="col-span-12 xl:col-span-7 space-y-6">
+                  <Card title="Feedback details" subtitle="Review the submission, add notes, and update delivery status.">
+                    {!selectedFeedback ? (
+                      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                        Select a feedback item from the inbox to review it.
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-xl font-black text-slate-900">
+                              {selectedFeedback.subject?.trim()
+                                ? selectedFeedback.subject
+                                : buildFeedbackSubject({
+                                    section: selectedFeedback.section,
+                                    category: selectedFeedback.category,
+                                    rating: selectedFeedback.rating,
+                                  })}
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+                              <span>{selectedFeedback.profile_name || "Unknown profile"}</span>
+                              <span>•</span>
+                              <span>{selectedFeedback.profile_role || "Creator"}</span>
+                              {selectedFeedback.worker_id ? (
+                                <>
+                                  <span>•</span>
+                                  <span>{selectedFeedback.worker_id}</span>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Chip tone={feedbackStatusTone(selectedFeedback.status)}>{selectedFeedback.status}</Chip>
+                            <Chip tone="neutral">{feedbackCategoryLabel(selectedFeedback.category)}</Chip>
+                            <Chip tone="info">{selectedFeedback.section}</Chip>
+                            {selectedFeedback.rating ? <Chip tone="warn">{selectedFeedback.rating}/5</Chip> : null}
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Submitted</div>
+                            <div className="mt-2 text-sm font-extrabold text-slate-900">{formatDateTime(selectedFeedback.created_at)}</div>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Language</div>
+                            <div className="mt-2 text-sm font-extrabold text-slate-900">
+                              {selectedFeedback.language_name || selectedFeedback.language_code || "—"}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Contact</div>
+                            <div className="mt-2 text-sm font-extrabold text-slate-900">
+                              {selectedFeedback.allow_contact ? "Allowed" : "Not allowed"}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Source</div>
+                            <div className="mt-2 text-sm font-extrabold text-slate-900">{selectedFeedback.source || "dashboard"}</div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-slate-200 bg-white p-4">
+                          <div className="text-xs font-extrabold uppercase tracking-[0.14em] text-slate-500">User message</div>
+                          <div className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-700">{selectedFeedback.message}</div>
+                        </div>
+
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.14em] text-slate-500">Environment</div>
+                            <div className="mt-3 space-y-2 text-sm text-slate-700">
+                              <div className="flex items-center justify-between gap-3">
+                                <span>Path</span>
+                                <span className="truncate font-extrabold text-slate-900">{String(selectedFeedbackMeta.path ?? "—")}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span>Device</span>
+                                <span className="font-extrabold text-slate-900">{String(selectedFeedbackMeta.deviceClass ?? "—")}</span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span>Viewport</span>
+                                <span className="font-extrabold text-slate-900">
+                                  {selectedFeedbackMeta.viewportWidth != null && selectedFeedbackMeta.viewportHeight != null
+                                    ? `${String(selectedFeedbackMeta.viewportWidth)} × ${String(selectedFeedbackMeta.viewportHeight)}`
+                                    : "—"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <span>Page URL</span>
+                                {selectedFeedback.page_url ? (
+                                  <a
+                                    href={selectedFeedback.page_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="truncate font-extrabold text-sky-700 hover:text-sky-800"
+                                  >
+                                    Open
+                                  </a>
+                                ) : (
+                                  <span className="font-extrabold text-slate-900">—</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="text-xs font-extrabold uppercase tracking-[0.14em] text-slate-500">Admin action</div>
+                            <div className="mt-3 space-y-3">
+                              <select
+                                value={feedbackStatusDraft}
+                                onChange={(e) => setFeedbackStatusDraft(e.target.value as AdminFeedbackStatus)}
+                                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 outline-none"
+                              >
+                                <option value="new">New</option>
+                                <option value="reviewing">Reviewing</option>
+                                <option value="resolved">Resolved</option>
+                                <option value="closed">Closed</option>
+                              </select>
+                              <textarea
+                                value={feedbackNoteDraft}
+                                onChange={(e) => setFeedbackNoteDraft(e.target.value)}
+                                placeholder="Internal note for follow-up, resolution, or next action..."
+                                className="min-h-[160px] w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
+                              />
+                              <div className="flex flex-wrap gap-2">
+                                <Button variant="primary" onClick={saveFeedbackUpdate} disabled={feedbackSaving}>
+                                  {feedbackSaving ? "Saving..." : "Save update"}
+                                </Button>
+                                <Button variant="secondary" onClick={() => setFeedbackStatusDraft("reviewing")}>
+                                  Mark reviewing
+                                </Button>
+                                <Button variant="secondary" onClick={() => setFeedbackStatusDraft("resolved")}>
+                                  Mark resolved
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </Card>
                 </div>
               </div>
@@ -3286,27 +4277,22 @@ function AdminConsole() {
                 </div>
                 <div className="col-span-12 lg:col-span-7 space-y-6">
                   <Card title="Manage secret codes" subtitle="Block, activate, or delete access codes.">
-                    <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Total</div>
-                        <div className="mt-1 text-lg font-black text-slate-900">{workEmailCodeStats.total}</div>
-                      </div>
-                      <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-emerald-700">Active</div>
-                        <div className="mt-1 text-lg font-black text-emerald-900">{workEmailCodeStats.active}</div>
-                      </div>
-                      <div className="rounded-md border border-rose-200 bg-rose-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-rose-700">Blocked</div>
-                        <div className="mt-1 text-lg font-black text-rose-900">{workEmailCodeStats.blocked}</div>
-                      </div>
-                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-amber-700">Expired</div>
-                        <div className="mt-1 text-lg font-black text-amber-900">{workEmailCodeStats.expired}</div>
-                      </div>
-                      <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-blue-700">Exhausted</div>
-                        <div className="mt-1 text-lg font-black text-blue-900">{workEmailCodeStats.exhausted}</div>
-                      </div>
+                    <div className="mb-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+                      {[
+                        { label: "Total", value: workEmailCodeStats.total, dot: "bg-[#8a938d]" },
+                        { label: "Active", value: workEmailCodeStats.active, dot: "bg-[#2e7d4f]" },
+                        { label: "Blocked", value: workEmailCodeStats.blocked, dot: "bg-[#d03b3b]" },
+                        { label: "Expired", value: workEmailCodeStats.expired, dot: "bg-[#d99a06]" },
+                        { label: "Exhausted", value: workEmailCodeStats.exhausted, dot: "bg-[#2a78d6]" },
+                      ].map((tile) => (
+                        <div key={tile.label} className="rounded-lg border border-[#e3e5e1] bg-[#fafbf9] px-3 py-2.5">
+                          <div className="flex items-center gap-1.5 text-[12px] font-medium text-[#616a64]">
+                            <span className={cx("h-1.5 w-1.5 rounded-full", tile.dot)} aria-hidden="true" />
+                            {tile.label}
+                          </div>
+                          <div className="mt-1 text-[18px] font-semibold leading-none tabular-nums text-[#1a201c]">{tile.value}</div>
+                        </div>
+                      ))}
                     </div>
 
                     <div className="mb-4 grid gap-3 sm:grid-cols-[1.4fr_0.9fr_0.9fr_auto]">
@@ -3506,43 +4492,62 @@ function AdminConsole() {
 
             {/* Gigs */}
             {activeSection === "Gigs" && (
-              <div className="grid grid-cols-12 gap-6">
-                <div className="col-span-12 space-y-6">
-                  <Card title="Gig marketplace" subtitle="Open dedicated pages for creation, KYC, and credential reviews.">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <a
-                        href="/addgigs/create-new-gig"
-                        className="rounded-full bg-[#0b5cab] px-5 py-2 text-sm font-semibold text-white hover:bg-[#0f6bc7]"
-                      >
-                        Create new gig
-                      </a>
-                      <a
-                        href="/addgigs/kyc-review"
-                        className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                      >
-                        KYC Review
-                      </a>
-                      <a
-                        href="/addgigs/credential-submissions"
-                        className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                      >
-                        Credential submissions
-                      </a>
-                      <a
-                        href="/addgigs/applications"
-                        className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                      >
-                        Applications
-                      </a>
-                      <a
-                        href="/browse"
-                        className="rounded-full border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-400"
-                      >
-                        View marketplace
-                      </a>
+              <div className="space-y-4 sm:space-y-5">
+                {/* Primary action */}
+                <section className="relative overflow-hidden rounded-xl bg-[#1f2b24] p-5 text-white shadow-[0_12px_32px_-16px_rgba(15,20,17,0.6)] sm:p-6">
+                  <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#2e7d4f]/35 blur-3xl" aria-hidden="true" />
+                  <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3.5">
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
+                        <Icon name="briefcase" className="h-5 w-5 text-white" />
+                      </span>
+                      <div className="min-w-0">
+                        <h2 className="text-[17px] font-semibold">Publish a new gig</h2>
+                        <p className="mt-0.5 max-w-[56ch] text-[13px] leading-5 text-white/70">
+                          Set the brief, deliverables, payout and application mode. It goes live in the creator marketplace once published.
+                        </p>
+                      </div>
                     </div>
-                  </Card>
-                </div>
+                    <Link
+                      href="/addgigs/create-new-gig"
+                      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-white px-4 text-[13.5px] font-semibold text-[#1f2b24] transition hover:bg-[#f1f3f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <Icon name="plus" className="h-4 w-4" />
+                      Create new gig
+                    </Link>
+                  </div>
+                </section>
+
+                {/* Related tools */}
+                <section aria-labelledby="gig-tools-title">
+                  <h2 id="gig-tools-title" className="mb-2.5 px-0.5 text-[13px] font-semibold text-[#616a64]">
+                    Gig operations
+                  </h2>
+                  <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+                    {[
+                      { href: "/addgigs/applications", icon: "users", title: "Applications", body: "Review creator applications and proposals, then approve or request changes." },
+                      { href: "/addgigs/kyc-review", icon: "shield", title: "KYC review", body: "Verify creator identity documents before protected gigs and payouts unlock." },
+                      { href: "/addgigs/credential-submissions", icon: "clip", title: "Credential submissions", body: "Check account credentials creators submitted for credential-based gigs." },
+                      { href: "/addgigs/linked-accounts", icon: "users", title: "Linked accounts", body: "Record weekly insights for creators' Content Posting accounts. Creators see them in their dashboard." },
+                      { href: FIND_GIGS_HREF, icon: "search", title: "View marketplace", body: "See the public gig feed exactly as creators see it." },
+                    ].map((tool) => (
+                      <Link
+                        key={tool.href}
+                        href={tool.href}
+                        className="group flex min-w-0 flex-col rounded-xl border border-[#e3e5e1] bg-white p-4 shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:border-[#cfd5cf] hover:shadow-[0_6px_18px_-8px_rgba(26,32,28,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-5"
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#eef1ed] text-[#2b5d4a]">
+                            <Icon name={tool.icon} className="h-[18px] w-[18px]" />
+                          </span>
+                          <Icon name="chevRight" className="h-4 w-4 text-[#a3aaa4] transition group-hover:translate-x-0.5 group-hover:text-[#1a201c]" />
+                        </span>
+                        <span className="mt-3 text-[14px] font-semibold text-[#1a201c]">{tool.title}</span>
+                        <span className="mt-1 text-[12.5px] leading-5 text-[#616a64]">{tool.body}</span>
+                      </Link>
+                    ))}
+                  </div>
+                </section>
               </div>
             )}
 
@@ -3557,10 +4562,11 @@ function AdminConsole() {
                   onOpen={openWorkDetails}
                   onReview={openReviewModal}
                 />
-                {reviewQueue.length === 0 && <div className="text-sm text-slate-600 mt-2">No submitted items.</div>}
+                {reviewQueue.length === 0 && <AdminEmpty icon="check" title="Nothing to review" body="When workers submit work, it lands here for approve, needs fix or hard reject." />}
               </Card>
             )}
           </main>
+          </div>
         </div>
       </div>
 
@@ -3578,7 +4584,7 @@ function AdminConsole() {
               <Button
                 variant="primary"
                 onClick={createWorker}
-                disabled={!newWorkerId.trim() || !newWorkerName.trim() || !newWorkerEmail.trim() || newWorkerPassword.length < 6}
+                disabled={!newWorkerId.trim() || !newWorkerName.trim() || !newWorkerEmail.trim() || newWorkerPassword.length < 12}
               >
                 <Icon name="check" />
                 Create worker
@@ -3628,7 +4634,7 @@ function AdminConsole() {
             </div>
 
             <div className="md:col-span-2">
-              <div className="text-sm font-extrabold text-slate-800">Password (min 6 chars)</div>
+              <div className="text-sm font-extrabold text-slate-800">Password (min 12 chars)</div>
               <input
                 value={newWorkerPassword}
                 onChange={(e) => setNewWorkerPassword(e.target.value)}
@@ -4151,51 +5157,27 @@ export default function AdminPage() {
 
   useEffect(() => {
     let alive = true;
-
-    // ✅ Practical: if auth state changes (logout/session expiry), leave admin immediately
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!alive) return;
-      const lsSession = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
-      const hasLocalAdmin = isAdminRole(lsSession?.role);
-      const hasSupabase = !!session?.user;
-      if (!hasLocalAdmin && !hasSupabase) {
-        setOk(false);
-        if (pathname !== "/login") router.replace("/login");
-      }
+    let version = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const verify = async () => {
+      const request = ++version;
+      const role = await getMyRole();
+      if (!alive || request !== version) return;
+      setOk(role === "Admin");
+      if (role !== "Admin") router.replace(role === "Worker" ? "/dashboard" : "/login");
+    };
+    void verify();
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      version++;
+      setOk(false);
+      clearTimeout(timer);
+      // Leave the Auth callback before reading the refreshed session.
+      timer = setTimeout(() => { void verify(); }, 0);
     });
-
-    (async () => {
-      // 1) ✅ Demo/local admin session support (kept)
-      const lsSession = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
-      if (isAdminRole(lsSession?.role)) {
-        if (!alive) return;
-        setOk(true);
-        return;
-      }
-
-      // 2) ✅ Supabase auth (kept)
-      const { data: authRes } = await supabase.auth.getUser();
-      const user = authRes?.user;
-      if (!user) {
-        if (!alive) return;
-        if (pathname !== "/login") router.replace("/login");
-        return;
-      }
-
-      const { data: profile, error } = await supabase.from("profiles").select("role").eq("id", user.id).single();
-      if (error || !isAdminRole(profile?.role)) {
-        if (!alive) return;
-        router.replace("/workspace");
-        return;
-      }
-
-      if (!alive) return;
-      setOk(true);
-    })();
-
     return () => {
       alive = false;
-      sub?.subscription?.unsubscribe();
+      clearTimeout(timer);
+      sub.subscription.unsubscribe();
     };
   }, [router, pathname]);
 

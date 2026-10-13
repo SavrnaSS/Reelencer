@@ -1,9 +1,17 @@
+import { withApi } from "@/lib/api/route";
+import { authenticate } from "@/lib/api/auth";
+import { assignedAccounts } from "@/lib/api/work";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-export async function GET() {
+async function handleGET(req: Request) {
+  const actor = await authenticate(req);
   const sb = supabaseAdmin();
-  const { data, error } = await sb.from("accounts").select("*").order("id");
+  const accountIds = actor.isAdmin ? null : (await assignedAccounts(actor.user.id)).map(row => row.account_id);
+  if (accountIds && !accountIds.length) return NextResponse.json([]);
+  let query = sb.from("accounts").select("*").order("id");
+  if (accountIds) query = query.in("id", accountIds);
+  const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(
     (data ?? []).map((a) => ({
@@ -19,3 +27,5 @@ export async function GET() {
     }))
   );
 }
+
+export const GET = withApi({ auth: "user" }, handleGET);

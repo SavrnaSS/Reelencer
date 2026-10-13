@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
 
 type WorkEmailAccountRow = {
@@ -31,9 +32,10 @@ function missingSchema(message: string) {
   );
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, accounts: [] });
 
   const sb = supabaseAdmin();
   const { data, error } = await sb
@@ -82,3 +84,5 @@ export async function GET(req: Request) {
 
   return json(200, { ok: true, accounts: rows });
 }
+
+export const GET = withApi({ auth: "admin" }, handleGET);

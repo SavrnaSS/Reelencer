@@ -1,40 +1,43 @@
+import { withApi } from "@/lib/api/route";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
+import { getDevAdminPayoutBatches } from "../_devData";
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+  if (guard.devBypass) return json(200, { ok: true, payoutBatches: getDevAdminPayoutBatches() });
 
   const sb = supabaseAdmin();
   const batchesRes = await sb.from("payout_batches").select("*").order("created_at", { ascending: false });
   if (batchesRes.error) return json(500, { ok: false, error: batchesRes.error.message });
 
-  const batches = (batchesRes.data ?? []) as any[];
+  const batches = (batchesRes.data ?? []);
   const batchIds = batches.map((b) => String(b.id)).filter(Boolean);
   const workerIds = Array.from(new Set(batches.map((b) => String(b.worker_id ?? "")).filter(Boolean)));
 
   const itemsRes = batchIds.length
     ? await sb.from("payout_items").select("*").in("batch_id", batchIds)
-    : { data: [] as any[], error: null as any };
+    : { data: [], error: null };
   if (itemsRes.error) return json(500, { ok: false, error: itemsRes.error.message });
 
   const profilesRes = workerIds.length
     ? await sb.from("profiles").select("id,worker_code,display_name").in("id", workerIds)
-    : { data: [] as any[] };
+    : { data: [] };
 
-  const workerById = new Map<string, any>((profilesRes.data ?? []).map((p: any) => [String(p.id), p]));
-  const itemsByBatch = new Map<string, any[]>();
+  const workerById = new Map<string, Record<string, unknown>>((profilesRes.data ?? []).map((p) => [String(p.id), p]));
+  const itemsByBatch = new Map<string, Record<string, unknown>[]>();
 
   for (const it of itemsRes.data ?? []) {
-    const bid = String((it as any).batch_id ?? "");
+    const bid = String((it).batch_id ?? "");
     const arr = itemsByBatch.get(bid) ?? [];
     arr.push({
-      id: String((it as any).id ?? ""),
-      workItemId: String((it as any).work_item_id ?? ""),
-      workerId: String((it as any).worker_id ?? ""),
-      handle: String((it as any).handle ?? ""),
-      amountINR: Number((it as any).amount_inr ?? 0),
-      status: String((it as any).status ?? ""),
-      reason: (it as any).reason ?? undefined,
+      id: String((it).id ?? ""),
+      workItemId: String((it).work_item_id ?? ""),
+      workerId: String((it).worker_id ?? ""),
+      handle: String((it).handle ?? ""),
+      amountINR: Number((it).amount_inr ?? 0),
+      status: String((it).status ?? ""),
+      reason: (it).reason ?? undefined,
     });
     itemsByBatch.set(bid, arr);
   }
@@ -63,3 +66,5 @@ export async function GET(req: Request) {
     }),
   });
 }
+
+export const GET = withApi({ auth: "admin" }, handleGET);

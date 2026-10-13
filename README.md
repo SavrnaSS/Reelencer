@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Reelencer
 
-## Getting Started
+A Next.js application for creator onboarding, gigs, account assignments, work review, private inboxes and payouts. Supabase provides Auth, PostgreSQL and Storage; a Cloudflare email worker forwards inbound mail to the authenticated ingest endpoint.
 
-First, run the development server:
+## Local setup
+
+Use Node.js 22 (`.nvmrc`). The application runs against a real Supabase project by default.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+nvm use
+npm ci
+cp .env.example .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Fill in the public Supabase URL/key, server service key, PostgreSQL `DATABASE_URL`, canonical application URL and email transport. Generate independent secrets for `WORK_EMAIL_CRYPTO_SECRET`, `GIG_INBOX_INGEST_SECRET` and `CRON_SECRET` using `openssl rand -hex 32`. Keep `.env.local` private and back up the encryption key. Never replace an existing key without migrating its encrypted data.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+For a new or reviewed staging database:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run db:migrate
+npm run check:backend
+npm run dev
+```
 
-## Learn More
+For an existing database, read [the migration and release procedure](docs/production-readiness.md) first. Migrations install the canonical schema, transaction functions, row-level security and storage buckets. Recognized legacy layouts are upgraded with guarded conversions and history preservation; incompatible ownership or values stop the migration for review. Supply `DATABASE_SSL_CA_FILE` or `DATABASE_SSL_CA` when the database uses Supabase's private certificate authority. The current project's migrations and administrator setup have been applied and verified.
 
-To learn more about Next.js, take a look at the following resources:
+Workers sign up and verify their email before signing in. Login bootstraps their profile through `/api/bootstrap-profile`. Configure `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `ADMIN_NAME` in the ignored `.env`, apply migrations, then run `npm run admin:sync` to create or update the administrator. Both the server environment and the registered database identity must agree before admin access is granted. The browser obtains the role from the authenticated API. See [administrator setup](docs/admin-setup.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Commands
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development app on port 3000 |
+| `npm run check` | Route types, TypeScript, backend tests and backend lint |
+| `npm test` | API authorization and PostgreSQL transaction regression tests |
+| `npm run db:migrate` | Apply all pending migrations atomically with checksums |
+| `npm run check:backend` | Read-only environment, schema and storage readiness checks |
+| `npm run admin:check` | Inspect admin configuration and account registration without changing credentials |
+| `npm run admin:sync` | Explicitly provision/update the administrator from `.env` |
+| `npm run credentials:check` | Validate the encryption key and count legacy plaintext credentials |
+| `npm run credentials:migrate` | Encrypt legacy plaintext credentials after validation |
+| `npm run build` / `npm start` | Build and serve the production app |
 
-## Deploy on Vercel
+Tests use a mock HTTP transport and local PGlite database; they require no live service credentials. The full frontend lint command remains `npm run lint`; the backend check has its own lint target.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The development and production build commands use Webpack. This also supports restricted build environments where Turbopack's CSS compiler cannot open a local port.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Backend contracts
+
+Client API calls attach the current verified Supabase bearer token only to same-origin `/api/` requests. `lib/api/route.ts` supplies authentication, authorization, input size limits, rate limiting, safe errors and request IDs. Database transactions enforce work, assignment, KYC and payout state changes. Sensitive tables and RPC functions are inaccessible directly to browser roles.
+
+Worker IDs shown in the interface are aliases; canonical ownership is the Supabase Auth UUID. Client-supplied worker IDs never authorize access. Uploads validate size, file signatures and ownership. KYC and presentation media are private; gig brief media is intentionally public. Account passwords are encrypted with authenticated AES-256-GCM before storage.
+
+Payouts use an approval and reconciliation workflow. The APIs **do not initiate bank transfers**. UPI verification is an explicit administrator action, and marking a batch paid requires a payment reference.
+
+## Inbox and scheduled work
+
+Set the worker's `GIG_INGEST_SECRET` to match the application's `GIG_INBOX_INGEST_SECRET` and configure `GIG_INGEST_URL` in `wrangler.toml`. Deploy the worker with a configured Wrangler CLI and route your email domains to it. `GIG_ASSIGNMENT_EMAIL_DOMAIN` controls generated gig addresses; `WORK_EMAIL_ALLOWED_DOMAINS` controls work-email addresses. Incoming message IDs are deduplicated, and an address cannot belong to multiple accounts or be reused after deletion.
+
+Configure an external scheduler to POST `/api/jobs/schedule` every 15 minutes using the `CRON_SECRET` bearer token. This job is idempotent and creates upcoming work without mutating data during dashboard reads.
+
+Application automation rules (Gig operations → Applications → Automations) run through `/api/jobs/application-automation`. Configure the same scheduler to POST it every 15 minutes with the `CRON_SECRET` bearer token. Each run handles only applications that newly match an enabled rule, at most the rule's per-run limit and 200 in total, and records every application in a per-rule ledger so retries or overlapping runs never process one twice. Rules act as the admin who enabled them and are skipped if that account loses admin access. Every run is listed in the Activity tab.
+
+See [production readiness and outstanding infrastructure checks](docs/production-readiness.md) for setup, credential migration, validation, operational limits and rollout steps.

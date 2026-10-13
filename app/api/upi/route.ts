@@ -1,77 +1,31 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { withApi } from "@/lib/api/route";
+import { authenticate } from "@/lib/api/auth";
+import { ApiError, databaseError } from "@/lib/api/errors";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-async function getUserId(req: Request) {
-  const authHeader = req.headers.get("authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) return null;
-  const token = authHeader.slice("Bearer ".length);
-  const { data, error } = await supabaseAdmin().auth.getUser(token);
-  if (error || !data?.user?.id) return null;
-  return data.user.id;
+function response(row: Record<string, unknown> | null) {
+  return { upiId: row?.upi_id ?? "", verified: row?.verified ?? false, verifiedAt: row?.verified_at ?? undefined, updatedAt: row?.updated_at ?? undefined, payoutSchedule: row?.payout_schedule ?? "Weekly", payoutDay: row?.payout_day ?? "Fri" };
 }
-
-export async function GET(req: Request) {
-  const supabase = supabaseAdmin();
-  const userId = await getUserId(req);
-  if (!userId) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-
-  const { data, error } = await supabase
-    .from("upi_configs")
-    .select("*")
-    .eq("worker_id", userId)
-    .maybeSingle();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  return NextResponse.json({
-    upiId: data?.upi_id ?? "",
-    verified: data?.verified ?? false,
-    verifiedAt: data?.verified_at ?? undefined,
-    payoutSchedule: data?.payout_schedule ?? "Weekly",
-    payoutDay: data?.payout_day ?? "Fri",
-  });
-}
-
-export async function PUT(req: Request) {
-  const supabase = supabaseAdmin();
-  const userId = await getUserId(req);
-  if (!userId) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-
-  const body = await req.json();
-
-  const payload = {
-    worker_id: userId,
-    upi_id: String(body.upiId ?? ""),
-    verified: Boolean(body.verified ?? false),
-    verified_at: body.verifiedAt ? String(body.verifiedAt) : null,
-    payout_schedule: String(body.payoutSchedule ?? "Weekly"),
-    payout_day: String(body.payoutDay ?? "Fri"),
-  };
-
-  const { data: updated, error: updateErr } = await supabase
-    .from("upi_configs")
-    .update({
-      upi_id: payload.upi_id,
-      verified: payload.verified,
-      verified_at: payload.verified_at,
-      payout_schedule: payload.payout_schedule,
-      payout_day: payload.payout_day,
-    })
-    .eq("worker_id", userId)
-    .select("worker_id");
-
-  if (updateErr) return NextResponse.json({ error: updateErr.message }, { status: 500 });
-
-  if (!updated || updated.length === 0) {
-    const { error: insertErr } = await supabase.from("upi_configs").insert(payload);
-    if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
-  }
-
-  return NextResponse.json({
-    upiId: payload.upi_id,
-    verified: payload.verified,
-    verifiedAt: payload.verified_at ?? undefined,
-    payoutSchedule: payload.payout_schedule,
-    payoutDay: payload.payout_day,
-  });
-}
+export const GET = withApi({ auth: "user" }, async req => {
+  const actor = await authenticate(req);
+  const { data, error } = await supabaseAdmin().from("upi_configs").select("*").eq("worker_id", actor.user.id).maybeSingle();
+  databaseError(error);
+  return NextResponse.json(response(data));
+});
+const upiSchema = z.object({ upiId: z.string().trim().min(5).max(100).regex(/^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/), payoutSchedule: z.enum(["Weekly", "Monthly"]).default("Weekly"), payoutDay: z.string().max(10).default("Fri") });
+export const PUT = withApi({ auth: "user" }, async req => {
+  const actor = await authenticate(req);
+  const parsed = upiSchema.safeParse(await req.json());
+  if (!parsed.success) throw new ApiError(400, "Invalid UPI configuration.");
+  const { payoutSchedule, payoutDay } = parsed.data;
+  if (payoutSchedule === "Weekly" ? !["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].includes(payoutDay) : !/^(?:[1-9]|1\d|2[0-8])$/.test(payoutDay)) throw new ApiError(400, "Choose a valid payout day (monthly: 1–28).");
+  const sb = supabaseAdmin();
+  const { error } = await sb.rpc("save_upi_config", { p_worker: actor.user.id, p_upi: parsed.data.upiId, p_schedule: payoutSchedule, p_day: payoutDay });
+  databaseError(error);
+  // "Saved 5m ago" on the creator's card; the save function itself doesn't touch updated_at.
+  const { data, error: stampError } = await sb.from("upi_configs").update({ updated_at: new Date().toISOString() }).eq("worker_id", actor.user.id).select("*").maybeSingle();
+  databaseError(stampError);
+  return NextResponse.json(response(data));
+});

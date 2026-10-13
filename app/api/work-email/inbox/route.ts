@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { getSecretCodeFromHeaders, json, requireUserFromBearer, tableMissing, validateActiveCode } from "../_utils";
 
 type WorkEmailInboxRow = {
@@ -26,7 +27,7 @@ function mapInbox(row: WorkEmailInboxRow) {
   };
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
   const code = getSecretCodeFromHeaders(req);
@@ -87,7 +88,7 @@ export async function GET(req: Request) {
   return json(200, { ok: true, inbox: (data ?? []).map(mapInbox) });
 }
 
-export async function PATCH(req: Request) {
+async function handlePATCH(req: Request) {
   const guard = await requireUserFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
   const code = getSecretCodeFromHeaders(req);
@@ -143,3 +144,7 @@ export async function PATCH(req: Request) {
 
   return json(200, { ok: true });
 }
+
+export const GET = withApi({ auth: "user" }, handleGET);
+
+export const PATCH = withApi({ auth: "user" }, handlePATCH);

@@ -1,16 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { BRAND_ASSETS } from "@/lib/brand";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 const siteName = "Reelencer";
 const siteDescription =
@@ -45,9 +35,15 @@ export const metadata: Metadata = {
   },
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
-    apple: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
-    shortcut: ["/logo-mark.svg"],
+    icon: [
+      { url: BRAND_ASSETS.favicon, sizes: "any", type: "image/x-icon" },
+      { url: BRAND_ASSETS.favicon16, sizes: "16x16", type: "image/png" },
+      { url: BRAND_ASSETS.favicon32, sizes: "32x32", type: "image/png" },
+      { url: BRAND_ASSETS.icon192, sizes: "192x192", type: "image/png" },
+      { url: BRAND_ASSETS.icon512, sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: BRAND_ASSETS.apple180, sizes: "180x180", type: "image/png" }],
+    shortcut: [BRAND_ASSETS.favicon],
   },
   openGraph: {
     type: "website",
@@ -58,7 +54,7 @@ export const metadata: Metadata = {
     description: siteDescription,
     images: [
       {
-        url: "/og-image.png",
+        url: BRAND_ASSETS.share,
         width: 1200,
         height: 630,
         alt: "Reelencer",
@@ -69,7 +65,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Reelencer | Verified Creator Marketplace",
     description: siteDescription,
-    images: ["/og-image.png"],
+    images: [BRAND_ASSETS.share],
   },
   robots: {
     index: true,
@@ -101,24 +97,26 @@ export default function RootLayout({
         "@type": "Organization",
         name: "Reelencer",
         url: siteUrl,
-        logo: `${siteUrl}/logo-mark.svg`,
+        logo: new URL(BRAND_ASSETS.logoPng, siteUrl).href,
       },
       {
         "@type": "WebSite",
         name: "Reelencer",
         url: siteUrl,
-        potentialAction: {
-          "@type": "SearchAction",
-          target: `${siteUrl}/browse?q={search_term_string}`,
-          "query-input": "required name=search_term_string",
-        },
       },
     ],
   };
 
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
+      <body className="antialiased">
+        {/* Sets the home page colour theme before first paint to avoid a flash. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var d=document.documentElement,s=localStorage.getItem('reelencer-home-theme');d.dataset.homeTheme=s==='dark'?'dark':'light';}catch(e){}})();",
+          }}
+        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

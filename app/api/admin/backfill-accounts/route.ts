@@ -1,12 +1,16 @@
+import { withApi } from "@/lib/api/route";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
+import { normalizeDevAdminAccounts } from "../_devData";
 
 const DEFAULT_RULES = ["Use caption template", "No politics/religion"];
 const DEFAULT_AUDIOS = ["Calm Beat #2", "Soft Pop #3"];
 const DEFAULT_HASHTAGS = ["#brand", "#reels"];
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
+
+  if (guard.devBypass) return json(200, normalizeDevAdminAccounts());
 
   const sb = supabaseAdmin();
   const accountsRes = await sb.from("accounts").select("*");
@@ -21,7 +25,7 @@ export async function POST(req: Request) {
     );
   };
 
-  const stripMissing = (payload: Record<string, any>, msg?: string | null) => {
+  const stripMissing = (payload: Record<string, unknown>, msg?: string | null) => {
     if (!msg) return payload;
     const match = msg.match(/column ['"]?([a-zA-Z0-9_]+)['"]?/);
     const col = match?.[1];
@@ -31,7 +35,7 @@ export async function POST(req: Request) {
     return next;
   };
 
-  const updateRow = async (id: string, payload: Record<string, any>) => {
+  const updateRow = async (id: string, payload: Record<string, unknown>) => {
     let nextPayload = payload;
     for (let i = 0; i < 6; i += 1) {
       const res = await sb.from("accounts").update(nextPayload).eq("id", id);
@@ -83,3 +87,5 @@ export async function POST(req: Request) {
 
   return json(200, { ok: true, updated, errors });
 }
+
+export const POST = withApi({ auth: "admin" }, handlePOST);

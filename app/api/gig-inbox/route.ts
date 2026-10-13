@@ -1,3 +1,4 @@
+import { withApi } from "@/lib/api/route";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -14,7 +15,7 @@ function uniqueLower(values: string[]) {
   return Array.from(new Set(values.map((value) => String(value).trim().toLowerCase()).filter(Boolean)));
 }
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const url = new URL(req.url);
   const assignmentId = url.searchParams.get("assignmentId");
 
@@ -26,7 +27,7 @@ export async function GET(req: Request) {
   }
 
   const hoursParam = url.searchParams.get("hours");
-  const hours = Math.max(1, Math.min(48, Number(hoursParam || DEFAULT_HOURS)));
+  const hours = Math.max(1, Math.min(48, (Number(hoursParam) || DEFAULT_HOURS)));
   const cutoffIso = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
   const sb = supabaseAdmin();
@@ -40,10 +41,10 @@ export async function GET(req: Request) {
       .eq("id", assignmentId)
       .single();
     if (!assignErr && assignment) {
-      if (Array.isArray((assignment as any).assigned_emails)) {
-        assignedEmails = uniqueLower((assignment as any).assigned_emails.map((e: any) => String(e)));
-      } else if ((assignment as any).assigned_email) {
-        assignedEmails = uniqueLower([String((assignment as any).assigned_email)]);
+      if (Array.isArray((assignment).assigned_emails)) {
+        assignedEmails = uniqueLower((assignment).assigned_emails.map((e: unknown) => String(e)));
+      } else if ((assignment).assigned_email) {
+        assignedEmails = uniqueLower([String((assignment).assigned_email)]);
       }
     }
   } catch {
@@ -69,7 +70,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const gigInboxRows = (data ?? []).map((row: any) => ({
+  const gigInboxRows = (data ?? []).map((row) => ({
     id: String(row.id),
     assignmentId: String(row.assignment_id),
     toEmail: row.to_email,
@@ -81,7 +82,7 @@ export async function GET(req: Request) {
     source: "gig",
   }));
 
-  let workInboxRows: any[] = [];
+  let workInboxRows: Array<{ createdAt: string; [key: string]: unknown }> = [];
   if (assignedEmails.length > 0) {
     try {
       const { data: accounts, error: accountsError } = await sb
@@ -100,7 +101,7 @@ export async function GET(req: Request) {
           );
         }
       } else {
-        const accountIds = (accounts ?? []).map((row: any) => String(row.id)).filter(Boolean);
+        const accountIds = (accounts ?? []).map((row) => String(row.id)).filter(Boolean);
         if (accountIds.length > 0) {
           const { data: workInbox, error: workInboxError } = await sb
             .from("work_email_inbox")
@@ -119,7 +120,7 @@ export async function GET(req: Request) {
               );
             }
           } else {
-            workInboxRows = (workInbox ?? []).map((row: any) => ({
+            workInboxRows = (workInbox ?? []).map((row) => ({
               id: String(row.id),
               assignmentId,
               accountId: String(row.account_id),
@@ -146,7 +147,7 @@ export async function GET(req: Request) {
   return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }
 
-export async function DELETE(req: Request) {
+async function handleDELETE(req: Request) {
   const url = new URL(req.url);
   const assignmentId = url.searchParams.get("assignmentId");
 
@@ -176,10 +177,10 @@ export async function DELETE(req: Request) {
 
     const assignedEmails = assignment
       ? uniqueLower(
-          Array.isArray((assignment as any).assigned_emails) && (assignment as any).assigned_emails.length > 0
-            ? (assignment as any).assigned_emails
-            : (assignment as any).assigned_email
-              ? [String((assignment as any).assigned_email)]
+          Array.isArray((assignment).assigned_emails) && (assignment).assigned_emails.length > 0
+            ? (assignment).assigned_emails
+            : (assignment).assigned_email
+              ? [String((assignment).assigned_email)]
               : []
         )
       : [];
@@ -192,7 +193,7 @@ export async function DELETE(req: Request) {
         .neq("status", "deleted");
 
       if (!accountErr && accounts && accounts.length > 0) {
-        const accountIds = accounts.map((row: any) => String(row.id)).filter(Boolean);
+        const accountIds = accounts.map((row) => String(row.id)).filter(Boolean);
         await sb.from("work_email_inbox").delete().in("account_id", accountIds);
       }
     }
@@ -202,3 +203,7 @@ export async function DELETE(req: Request) {
 
   return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
 }
+
+export const GET = withApi({ auth: "user", assignment: true }, handleGET);
+
+export const DELETE = withApi({ auth: "user", assignment: true }, handleDELETE);

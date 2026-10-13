@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch as fetch } from "@/lib/api/client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -86,7 +87,7 @@ export default function PostLoginPage() {
       }
 
       setActiveStep(3);
-      setMsg("Redirecting to your workspace...");
+      setMsg("Redirecting to your dashboard...");
       router.replace(payload.redirectTo);
     }
 
@@ -106,7 +107,7 @@ export default function PostLoginPage() {
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#0b5cab] text-sm font-black text-white">RG</div>
             <div>
-              <div className="text-lg font-bold text-slate-900">Setting up your workspace</div>
+              <div className="text-lg font-bold text-slate-900">Setting up your dashboard</div>
               <div className="text-xs text-slate-500">Secure redirect and profile initialization in progress</div>
             </div>
           </div>
