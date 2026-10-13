@@ -111,16 +111,22 @@ const TONES: Record<EmailTone, { bg: string; fg: string; dot: string; art: Email
 
 /**
  * Bulletproof button: a real VML button for Outlook desktop (which ignores padding/radius on links), and a styled
- * link everywhere else. Primary = the dashboard's dark button; secondary = its white outlined button.
+ * link everywhere else. Primary = the dashboard's dark button with a forward arrow; secondary = its outlined button.
+ * The label sits in its own coloured <span>: Gmail and Apple Mail force links to `color:inherit` (see the
+ * x-apple-data-detectors rule), which would otherwise turn white button text into dark-on-dark.
  */
 function button(label: string, href: string, kind: "primary" | "secondary") {
   const primary = kind === "primary";
-  const width = Math.max(primary ? 200 : 160, Math.round(label.length * 8.2 + 56));
+  const fg = primary ? "#ffffff" : C.ink;
+  const width = Math.max(primary ? 220 : 170, Math.round(label.length * 8.4 + (primary ? 84 : 56)));
+  const content = `<span class="btn-label" style="color:${fg};">${esc(label)}</span>${
+    primary ? `<span class="btn-label btn-arrow" style="color:${fg};padding-left:10px;font-weight:400;">&#8594;</span>` : ""
+  }`;
   return `<!--[if mso]>
-<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(href)}" style="height:46px;v-text-anchor:middle;width:${width}px;" arcsize="18%" ${primary ? `stroke="f" fillcolor="${C.button}"` : `strokecolor="#d9ddd8" fillcolor="#ffffff"`}>
-<w:anchorlock/><center style="color:${primary ? "#ffffff" : C.ink};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${esc(label)}</center>
+<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(href)}" style="height:48px;v-text-anchor:middle;width:${width}px;" arcsize="17%" ${primary ? `stroke="f" fillcolor="${C.button}"` : `strokecolor="#d9ddd8" fillcolor="#ffffff"`}>
+<w:anchorlock/><center style="color:${fg};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${esc(label)}${primary ? " &#8594;" : ""}</center>
 </v:roundrect>
-<![endif]--><!--[if !mso]><!-- --><a class="${primary ? "btn-primary" : "btn-secondary"}" href="${esc(href)}" target="_blank" style="display:inline-block;${primary ? `background:${C.button};border:1px solid ${C.button};` : "background:#ffffff;border:1px solid #d9ddd8;"}padding:14px 24px;font:600 15px/1.1 ${FONT};color:${primary ? "#ffffff" : C.ink};text-decoration:none;border-radius:8px;mso-hide:all;">${esc(label)}</a><!--<![endif]-->`;
+<![endif]--><!--[if !mso]><!-- --><a class="${primary ? "btn-primary" : "btn-secondary"}" href="${esc(href)}" target="_blank" style="display:inline-block;min-width:${primary ? 180 : 140}px;box-sizing:border-box;text-align:center;${primary ? `background:${C.button};border:1px solid ${C.button};` : "background:#ffffff;border:1px solid #d9ddd8;"}padding:15px 26px;font:600 15px/1.1 ${FONT};color:${fg};text-decoration:none;border-radius:8px;mso-hide:all;">${content}</a><!--<![endif]-->`;
 }
 
 /** First name for a friendly greeting, or "" when the name is missing/placeholder. */
@@ -202,11 +208,11 @@ ${steps
     ? `
               <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" class="btn-wrap" style="margin:30px auto 0;">
                 <tr>
-                  <td class="btn" align="center" style="border-radius:8px;">${button(input.cta.label, input.cta.href, "primary")}</td>
+                  <td class="btn btn-cell-primary" align="center" bgcolor="${C.button}" style="border-radius:8px;background:${C.button};color:#ffffff;">${button(input.cta.label, input.cta.href, "primary")}</td>
                   ${
                     input.secondaryCta
                       ? `<td class="btn-gap" width="10" style="font-size:0;line-height:0;">&nbsp;</td>
-                  <td class="btn" align="center" style="border-radius:8px;">${button(input.secondaryCta.label, input.secondaryCta.href, "secondary")}</td>`
+                  <td class="btn btn-cell-secondary" align="center" bgcolor="#ffffff" style="border-radius:8px;background:#ffffff;color:${C.ink};">${button(input.secondaryCta.label, input.secondaryCta.href, "secondary")}</td>`
                       : ""
                   }
                 </tr>
@@ -237,17 +243,18 @@ ${steps
     a[x-apple-data-detectors], u + #body a, #MessageViewBody a { color:inherit !important; text-decoration:none !important; font-size:inherit !important; font-family:inherit !important; font-weight:inherit !important; line-height:inherit !important; }
     .btn-primary:hover { background:#2b3a31 !important; }
     .btn-secondary:hover { background:#f7f8f6 !important; }
+    .btn-primary:hover .btn-arrow { padding-left:14px !important; }
     @media only screen and (max-width:600px) {
       .outer { padding:16px 10px 24px !important; }
       .px { padding-left:22px !important; padding-right:22px !important; }
       .top { padding-left:4px !important; padding-right:4px !important; }
-      .hero img { width:240px !important; height:auto !important; }
+      .hero-wrap { padding:12px 12px 0 !important; }
       .title { font-size:22px !important; line-height:1.3 !important; }
       .kv-k, .kv-v { display:block !important; width:auto !important; }
       .kv-k { padding-bottom:0 !important; }
       .kv-v { padding-top:2px !important; border-top:0 !important; }
       .btn-wrap, .btn-wrap tbody, .btn-wrap tr, .btn-wrap td { display:block !important; width:100% !important; box-sizing:border-box; }
-      .btn a { display:block !important; text-align:center !important; }
+      .btn a { display:block !important; text-align:center !important; min-width:0 !important; }
       .btn-gap { height:10px !important; }
       .rcpt { font-size:12px !important; }
     }
@@ -263,13 +270,18 @@ ${steps
       .chip { background:${tone.darkBg} !important; color:${tone.darkFg} !important; }
       .step-dot { background:#173222 !important; color:#9fd7ad !important; }
       .link { color:#8fd3a3 !important; }
-      .btn-primary { background:#eef2ee !important; border-color:#eef2ee !important; color:#111513 !important; }
-      .btn-secondary { background:#1a1f1c !important; border-color:#3a433d !important; color:#eef2ee !important; }
+      .btn-primary, .btn-cell-primary { background:#eef2ee !important; border-color:#eef2ee !important; color:#111513 !important; }
+      .btn-primary .btn-label { color:#111513 !important; }
+      .btn-secondary, .btn-cell-secondary { background:#1a1f1c !important; border-color:#3a433d !important; color:#eef2ee !important; }
+      .btn-secondary .btn-label { color:#eef2ee !important; }
     }
     [data-ogsc] .t-ink, [data-ogsc] .brand { color:#eef2ee !important; }
     [data-ogsc] .t-body { color:#cdd5cf !important; }
     [data-ogsc] .t-muted, [data-ogsc] .rcpt { color:#a2aca5 !important; }
     [data-ogsc] .link { color:#8fd3a3 !important; }
+    [data-ogsb] .btn-primary, [data-ogsb] .btn-cell-primary { background:#eef2ee !important; border-color:#eef2ee !important; }
+    [data-ogsc] .btn-primary .btn-label { color:#111513 !important; }
+    [data-ogsc] .btn-secondary .btn-label { color:#eef2ee !important; }
   </style>
 </head>
 <body id="body" class="page" style="margin:0;padding:0;background:${C.canvas};">
@@ -301,10 +313,8 @@ ${steps
             <td class="card" bgcolor="${C.card}" style="background:${C.card};border:1px solid ${C.border};border-radius:12px;">
               ${
                 art
-                  ? `<div style="padding:20px 20px 0;">
-                <div class="hero" style="padding:20px 12px;text-align:center;border-radius:10px;background:${C.art};">
-                  <img src="${art}" width="280" height="140" alt="" border="0" style="display:inline-block;width:280px;max-width:100%;height:auto;border:0;outline:none;">
-                </div>
+                  ? `<div class="hero-wrap" style="padding:20px 20px 0;">
+                <img class="hero" src="${art}" width="558" height="210" alt="" border="0" style="display:block;width:100%;max-width:558px;height:auto;border:0;border-radius:10px;outline:none;">
               </div>`
                   : ""
               }

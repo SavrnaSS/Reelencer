@@ -270,7 +270,7 @@ export async function sendLifecycleNotification(
     intro: config.intro,
     highlights: config.highlights,
     sections: config.sections,
-    cta: { label: config.ctaLabel ?? "Open project panel", href: ctaHref },
+    cta: { label: config.ctaLabel ?? "View my project", href: ctaHref },
     secondaryCta: config.secondaryCtaLabel && config.secondaryCtaHref ? { label: config.secondaryCtaLabel, href: config.secondaryCtaHref } : undefined,
     note: config.footer ?? `You're receiving this because you applied to ${context.gigTitle} on Reelencer. Your project panel always has the latest status.`,
   });
@@ -389,9 +389,9 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
               "Open your project panel, review the invite, and complete the onboarding steps shared by the recruiter.",
           },
         ],
-        ctaLabel: "Open WhatsApp onboarding",
+        ctaLabel: "Join the WhatsApp group",
         ctaHref: nextProposal.whatsappLink?.trim() || context?.gigUrl,
-        secondaryCtaLabel: "Open project panel",
+        secondaryCtaLabel: "View my project",
         secondaryCtaHref: context?.gigUrl,
       });
     } else if (explicitNotificationMode === "workflow_update") {
@@ -409,8 +409,8 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           { label: "Next steps", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the latest onboarding checklist and wait for the next recruiter checkpoint." },
           { label: "Additional explanation", value: String(nextProposal.adminExplanation ?? "").trim() },
         ],
-        ctaLabel: "View latest instructions",
-        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+        ctaLabel: "See what's changed",
+        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Join the WhatsApp group" : undefined,
         secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
       });
     } else if (proposalStatusChanged && nextProposal.reviewStatus === "Accepted") {
@@ -428,8 +428,8 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           { label: "Operational guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Open your project panel to review the latest onboarding plan and recruiter expectations." },
           { label: "Next actions", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the onboarding instructions, join the assigned communication channel if provided, and wait for the recruiter handoff." },
         ],
-        ctaLabel: "Open onboarding panel",
-        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+        ctaLabel: "Start onboarding",
+        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Join the WhatsApp group" : undefined,
         secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
       });
     } else if (proposalStatusChanged && nextProposal.reviewStatus === "Rejected") {
@@ -446,7 +446,7 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() || "Review the latest notes in your project panel." },
           { label: "Guidance", value: String(nextProposal.adminExplanation ?? "").trim() || "Review the recruiter guidance carefully and return with a stronger revision if the role remains open." },
         ],
-        ctaLabel: "Review feedback",
+        ctaLabel: "See the feedback",
       });
     } else if (whatsappLinkAdded) {
       mailStatus = await sendLifecycleNotification(to, context, {
@@ -471,9 +471,9 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
               "Open your project panel, review the invite, and complete the onboarding steps shared by the recruiter.",
           },
         ],
-        ctaLabel: "Open WhatsApp onboarding",
+        ctaLabel: "Join the WhatsApp group",
         ctaHref: nextProposal.whatsappLink?.trim() || context?.gigUrl,
-        secondaryCtaLabel: "Open project panel",
+        secondaryCtaLabel: "View my project",
         secondaryCtaHref: context?.gigUrl,
       });
     } else if (onboardingChanged || recruiterNoteChanged) {
@@ -491,8 +491,8 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           { label: "Next steps", value: String(nextProposal.onboardingSteps ?? "").trim() || "Review the latest onboarding checklist and wait for the next recruiter checkpoint." },
           { label: "Additional explanation", value: String(nextProposal.adminExplanation ?? "").trim() },
         ],
-        ctaLabel: "View latest instructions",
-        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Open WhatsApp group" : undefined,
+        ctaLabel: "See what's changed",
+        secondaryCtaLabel: nextProposal.whatsappLink?.trim() ? "Join the WhatsApp group" : undefined,
         secondaryCtaHref: nextProposal.whatsappLink?.trim() || undefined,
       });
     } else if (groupConfirmedNow) {
@@ -509,7 +509,7 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           { label: "Current stage", value: "Recruiter final review remains in progress. You will be notified once the final decision is published." },
           { label: "Confirmed at", value: String(nextProposal.groupJoinedConfirmedAt ?? "").trim() },
         ],
-        ctaLabel: "Track final review",
+        ctaLabel: "Track my application",
       });
     } else if ((nextStatus === "Accepted" || nextStatus === "Rejected") && prevStatus !== nextStatus) {
       mailStatus = await sendLifecycleNotification(to, context, {
@@ -534,7 +534,8 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
           },
           { label: "Recruiter note", value: String(nextProposal.adminNote ?? "").trim() },
         ],
-        ctaLabel: nextStatus === "Accepted" ? "Continue to your project" : "Review final update",
+        ctaLabel: nextStatus === "Accepted" ? "Start my project" : "Find new gigs",
+        ...(nextStatus === "Accepted" ? {} : { ctaHref: `${appBaseUrl()}/dashboard?section=find`, secondaryCtaLabel: "View the decision", secondaryCtaHref: context?.gigUrl }),
       });
     }
   } catch (error) {

@@ -36,11 +36,18 @@ test('layout is production-safe across clients', () => {
   const images = [...html.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(images, [`https://reelencer.example${BRAND_ASSETS.emailLogo}`, `https://reelencer.example${BRAND_ASSETS.emailArt.success}`], 'only the logo and the tone illustration load remotely');
   assert.match(html, /width="32" height="32" alt=""/, 'the decorative logo has reserved dimensions');
-  assert.match(html, /width="280" height="140" alt=""/, 'the illustration has reserved dimensions');
+  assert.match(html, /width="558" height="210" alt=""/, 'the illustration has reserved dimensions');
   assert.ok(html.includes('class="brand"'), 'the brand name remains readable when images are blocked');
   assert.match(html, /class="chip"[^>]*>.*Proposal Approved<\/span>/, 'the status chip names the update');
   assert.ok(html.includes('@media (prefers-color-scheme: dark)'), 'dark mode palette is included');
   assert.ok(Buffer.byteLength(html) < 100_000, 'stays under Gmail’s ~102KB clipping limit');
+});
+
+test('button labels keep their own colour, so clients forcing links to inherit colour can\'t hide them', () => {
+  const { html } = renderBrandEmail({ ...base, secondaryCta: { label: 'Find new gigs', href: 'https://reelencer.example/find' } });
+  assert.match(html, /class="btn-primary"[^>]*><span class="btn-label" style="color:#ffffff;">Open onboarding panel<\/span><span class="btn-label btn-arrow" style="color:#ffffff;[^"]*">&#8594;<\/span><\/a>/);
+  assert.match(html, /class="btn-secondary"[^>]*><span class="btn-label" style="color:#1a201c;">Find new gigs<\/span><\/a>/);
+  assert.match(html, /bgcolor="#1f2b24"[^>]*color:#ffffff;/, 'the primary cell is dark with white text even if the link styling is stripped');
 });
 
 test('illustrations follow the tone unless one is chosen, and every one exists', async () => {

@@ -96,8 +96,8 @@ async function sendExistingAccountEmail(to: string, site: string) {
     title: "You already have an account",
     greeting: "Hi there,",
     intro: `Someone (hopefully you) tried to sign up with ${to}, which already has an active Reelencer account. Log in instead, or reset your password if you've forgotten it.`,
-    cta: { label: "Log in to Reelencer", href: `${site}/login?next=/` },
-    secondaryCta: { label: "Reset password", href: reset?.link ?? `${site}/reset-password` },
+    cta: { label: "Log in to my account", href: `${site}/login?next=/` },
+    secondaryCta: { label: "Reset my password", href: reset?.link ?? `${site}/reset-password` },
     note: "Didn't try to sign up? No action is needed; your account and password haven't changed.",
   });
   await sendDecisionEmail(to, "You already have a Reelencer account", html, text, "account");

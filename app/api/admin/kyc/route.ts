@@ -161,7 +161,7 @@ async function handlePATCH(req: Request) {
                 ...(workerId ? [{ label: "Creator ID", value: workerId }] : []),
               ],
               sections: [{ label: "Note from the team", value: teamNote }],
-              cta: { label: "Open your wallet", href: walletHref },
+              cta: { label: "Go to my wallet", href: walletHref },
               note: "You don't need to verify again. If your bank or UPI details change, update them in your wallet before your next payout.",
             })
           : renderBrandEmail({

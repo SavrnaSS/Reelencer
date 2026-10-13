@@ -1,6 +1,9 @@
 // Email header illustrations (one per kind of message), drawn in the creator dashboard's palette and rendered to
-// PNG, since Gmail and Outlook don't display SVG. Output: public/brand/email-<name>.<hash>.png at 2x (560×280,
-// shown at 280×140), registered in public/brand/assets.json under `emailArt`.
+// PNG, since Gmail and Outlook don't display SVG. Output: public/brand/email-<name>.<hash>.png at 2x (1116×420,
+// shown at 558×210 and scaled down on phones), registered in public/brand/assets.json under `emailArt`.
+// Each image *is* the rounded panel (corners transparent): apps that force dark mode by recolouring backgrounds
+// (Gmail and Outlook on iOS/Android) never recolour images, so a panel drawn in HTML around the art would turn dark
+// while the art stayed light. Baking the panel into the image keeps it identical everywhere.
 //   node scripts/generate-email-art.mjs
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -23,6 +26,8 @@ const line = "#cad5c8";
 const amber = "#e0a23a";
 const amberSoft = "#fbecd0";
 const grey = "#9aa59e";
+// The panel colour (C.art in lib/email/brandEmail.ts).
+const panel = "#f4f6f2";
 
 const stroke = `stroke="${ink}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"`;
 const ground = `<path d="M44 132h232" ${stroke} />`;
@@ -111,10 +116,11 @@ const assetsPath = path.join(output, "assets.json");
 const assets = JSON.parse(await readFile(assetsPath, "utf8"));
 const emailArt = {};
 for (const [name, body] of Object.entries(scenes)) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="560" height="280" viewBox="0 0 320 160">${body}</svg>`;
-  // Opaque background matching the template's illustration panel (C.art in lib/email/brandEmail.ts), so the image
-  // blends into its panel and never shows a dark box in clients that drop transparency.
-  const png = await sharp(Buffer.from(svg)).flatten({ background: "#f4f6f2" }).png({ compressionLevel: 9, palette: true, quality: 95 }).toBuffer();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1116" height="420" viewBox="0 0 558 210">
+    <rect width="558" height="210" rx="12" fill="${panel}" />
+    <g transform="translate(103 16) scale(1.1)">${body}</g>
+  </svg>`;
+  const png = await sharp(Buffer.from(svg)).png({ compressionLevel: 9, palette: true, quality: 95 }).toBuffer();
   const hash = createHash("sha256").update(png).digest("hex").slice(0, 12);
   const filename = `email-${name}.${hash}.png`;
   await writeFile(path.join(output, filename), png);
