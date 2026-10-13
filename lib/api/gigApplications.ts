@@ -4,7 +4,7 @@ import { isContentPostingType, readStoredAccountSetup, redactProposal, type Stor
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { linkSocialAccount } from "@/lib/api/socialLink";
 import { firstName, renderBrandEmail, type EmailTone } from "@/lib/email/brandEmail";
-import { emailBaseUrl, sendEmail } from "@/lib/email/send";
+import { emailBaseUrl, sendEmail, type EmailCategory } from "@/lib/email/send";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const NO_STORE_HEADERS = {
@@ -111,8 +111,8 @@ export function decodeWorkerName(raw: unknown): { workerName?: string; workerEma
 }
 
 /** Sends through the shared mailer (lib/email/send.ts). Kept for existing callers. */
-export async function sendDecisionEmail(to: string, subject: string, html: string, text?: string) {
-  return sendEmail({ to, subject, html, text });
+export async function sendDecisionEmail(to: string, subject: string, html: string, text?: string, category: EmailCategory = "applications") {
+  return sendEmail({ to, subject, html, text, category });
 }
 
 export function appBaseUrl() {

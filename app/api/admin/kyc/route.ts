@@ -6,7 +6,7 @@ import { firstName, renderBrandEmail } from "@/lib/email/brandEmail";
 
 async function sendKycEmail(to: string, subject: string, html: string, text?: string) {
   try {
-    const { provider } = await sendEmail({ to, subject, html, text });
+    const { provider } = await sendEmail({ to, subject, html, text, category: "kyc" });
     return { sent: true as const, provider };
   } catch (error) {
     return { sent: false as const, reason: error instanceof Error ? error.message.slice(0, 300) : "Email delivery failed." };

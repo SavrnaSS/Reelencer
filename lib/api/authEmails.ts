@@ -71,7 +71,7 @@ async function sendConfirmEmail(to: string, name: string, link: string, site: st
     note: "Didn't sign up? You can safely ignore this email; nothing is activated until this link is clicked.",
   });
   try {
-    await sendDecisionEmail(to, "Confirm your Reelencer email", html, text);
+    await sendDecisionEmail(to, "Confirm your Reelencer email", html, text, "account");
   } catch (error) {
     logLinkForDev(to, link);
     throw error;
@@ -98,7 +98,7 @@ async function sendExistingAccountEmail(to: string, site: string) {
     secondaryCta: { label: "Reset password", href: reset?.link ?? `${site}/reset-password` },
     note: "Didn't try to sign up? No action is needed; your account and password haven't changed.",
   });
-  await sendDecisionEmail(to, "You already have a Reelencer account", html, text);
+  await sendDecisionEmail(to, "You already have a Reelencer account", html, text, "account");
 }
 
 const isAlreadyRegistered = (error: { code?: string; status?: number; message?: string }) =>
@@ -166,7 +166,7 @@ export async function sendPasswordReset(req: NextRequest, email: string) {
     note: "Didn't ask for this? You can ignore this email; your password won't change. If you keep getting these, reply and we'll take a look.",
   });
   try {
-    await sendDecisionEmail(email, "Reset your Reelencer password", html, text);
+    await sendDecisionEmail(email, "Reset your Reelencer password", html, text, "account");
   } catch (error) {
     logLinkForDev(email, reset.link);
     throw error;

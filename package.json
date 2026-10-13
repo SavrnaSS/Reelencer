@@ -21,6 +21,7 @@
     "credentials:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/encrypt-credentials.mjs",
     "credentials:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/encrypt-credentials.mjs --apply",
     "admin:sync": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-admin.mjs",
+    "mail:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/mail-check.mjs",
     "admin:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-admin.mjs --check"
   },
   "dependencies": {

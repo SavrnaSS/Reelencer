@@ -29,7 +29,8 @@ add('node', Number(process.versions.node.split('.')[0]) >= 22, 'Node.js 22 or ne
 for (const name of ['NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_ANON_KEY','SUPABASE_SERVICE_ROLE_KEY']) add(name, Boolean(process.env[name]));
 add('DATABASE_URL', Boolean(process.env.DATABASE_URL), 'Provide the database session URL to apply and verify migration history.');
 for (const name of ['WORK_EMAIL_CRYPTO_SECRET','GIG_INBOX_INGEST_SECRET','CRON_SECRET']) add(name, (process.env[name] ?? '').length >= 32, 'Use an independent secret of at least 32 characters.');
-add('email_transport', Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM) || Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM), 'Configure and verify a transactional email sender.');
+add('email_transport', Boolean(process.env.RESEND_API_KEY && (process.env.MAIL_FROM || process.env.RESEND_FROM)) || Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM), 'Set RESEND_API_KEY and MAIL_FROM on your verified domain (npm run mail:check).');
+add('email_webhook', !process.env.RESEND_API_KEY || Boolean(process.env.RESEND_WEBHOOK_SECRET), 'Add a Resend webhook to /api/webhooks/resend and set RESEND_WEBHOOK_SECRET.');
 add('production_demo_disabled', process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE !== 'true' && process.env.ENABLE_DEV_ADMIN_BYPASS !== 'true');
 const adminEmail = (process.env.ADMIN_EMAIL ?? '').trim().toLowerCase();
 add('ADMIN_EMAIL', /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail), 'Configure the server-only administrator email and run admin:sync.');
