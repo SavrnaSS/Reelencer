@@ -9,5 +9,14 @@
   "icon512": "/brand/icon-512.92edbf569f5b.png",
   "maskable512": "/brand/icon-maskable-512.6334159bebb8.png",
   "apple180": "/brand/apple-touch-icon.0c75bb56af3a.png",
-  "share": "/brand/share.3fbc2a2ff5d0.png"
+  "share": "/brand/share.3fbc2a2ff5d0.png",
+  "emailArt": {
+    "welcome": "/brand/email-welcome.cadb83449a81.png",
+    "security": "/brand/email-security.7df5ec10775b.png",
+    "success": "/brand/email-success.5a3eb734c8ec.png",
+    "attention": "/brand/email-attention.ddd4ddbe5e6e.png",
+    "closed": "/brand/email-closed.7f6ef35fca46.png",
+    "verified": "/brand/email-verified.297e8826948e.png",
+    "inbox": "/brand/email-inbox.fd21870da1a9.png"
+  }
 }

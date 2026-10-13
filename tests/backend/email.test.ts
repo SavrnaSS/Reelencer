@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBrandEmail, firstName, emailAssetOrigin } from '../../lib/email/brandEmail';
+import { renderBrandEmail, firstName, emailAssetOrigin, fillRecipient, RECIPIENT_TOKEN } from '../../lib/email/brandEmail';
 import { BRAND_ASSETS } from '../../lib/brand';
 
 const base = {
@@ -22,23 +22,44 @@ test('user-written content is escaped, never injected', () => {
 
 test('emails and URLs become styled links (no default blue auto-linking), trailing punctuation excluded', () => {
   const { html } = renderBrandEmail({ ...base, intro: 'We tried asha@example.com. See https://reelencer.example/help.' });
-  assert.match(html, /<a class="text-strong" href="mailto:asha@example\.com"[^>]*text-decoration:none[^>]*>asha@example\.com<\/a>\./);
+  assert.match(html, /<a class="t-ink" href="mailto:asha@example\.com"[^>]*text-decoration:none[^>]*>asha@example\.com<\/a>\./);
   assert.match(html, /<a class="link" href="https:\/\/reelencer\.example\/help"[^>]*>https:\/\/reelencer\.example\/help<\/a>\./);
 });
 
 test('layout is production-safe across clients', () => {
   const { html } = renderBrandEmail({ ...base, secondaryCta: { label: 'Open WhatsApp group', href: 'https://chat.whatsapp.com/x' }, highlights: [{ label: 'Decision', value: 'Approved' }], sections: [{ label: 'Empty', value: '   ' }] });
   assert.ok(html.startsWith('<!doctype html>'));
-  assert.match(html, /<v:roundrect[^>]+fillcolor="#8fe05f"/, 'Outlook gets a VML button');
+  assert.match(html, /<v:roundrect[^>]+fillcolor="#1f2b24"/, 'Outlook gets a VML button in the dashboard primary colour');
   assert.equal((html.match(/<v:roundrect/g) ?? []).length, 2, 'both buttons are bulletproof');
   assert.ok(!html.includes('>Empty<'), 'blank sections are skipped');
   assert.ok(html.includes(`src="https://reelencer.example${BRAND_ASSETS.emailLogo}"`), 'email clients get a public PNG of the current logo');
-  assert.equal(new Set([...html.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1])).size, 1, 'only the brand mark is a remote image (header and footer share it)');
-  assert.match(html, /width="48" height="48" alt=""/, 'the decorative logo has reserved dimensions');
-  assert.ok(html.includes('class="hdr-word"'), 'the brand name remains readable when images are blocked');
-  assert.ok(!html.includes('logo-tri'), 'the previous mark no longer appears in emails');
-  assert.ok(html.includes('&#10003;'), 'success tone shows a check symbol');
+  const images = [...html.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(images, [`https://reelencer.example${BRAND_ASSETS.emailLogo}`, `https://reelencer.example${BRAND_ASSETS.emailArt.success}`], 'only the logo and the tone illustration load remotely');
+  assert.match(html, /width="32" height="32" alt=""/, 'the decorative logo has reserved dimensions');
+  assert.match(html, /width="280" height="140" alt=""/, 'the illustration has reserved dimensions');
+  assert.ok(html.includes('class="brand"'), 'the brand name remains readable when images are blocked');
+  assert.match(html, /class="chip"[^>]*>.*Proposal Approved<\/span>/, 'the status chip names the update');
+  assert.ok(html.includes('@media (prefers-color-scheme: dark)'), 'dark mode palette is included');
   assert.ok(Buffer.byteLength(html) < 100_000, 'stays under Gmail’s ~102KB clipping limit');
+});
+
+test('illustrations follow the tone unless one is chosen, and every one exists', async () => {
+  const { existsSync } = await import('node:fs');
+  const art = (html: string) => /email-(?!logo)([a-z]+)\.[a-f0-9]{12}\.png/.exec(html)?.[1];
+  assert.equal(art(renderBrandEmail({ ...base, tone: 'warning' }).html), 'attention');
+  assert.equal(art(renderBrandEmail({ ...base, tone: 'closed' }).html), 'closed');
+  assert.equal(art(renderBrandEmail({ ...base, tone: 'neutral' }).html), 'inbox');
+  assert.equal(art(renderBrandEmail({ ...base, illustration: 'security' }).html), 'security');
+  for (const path of Object.values(BRAND_ASSETS.emailArt)) assert.ok(existsSync(`public${path}`), path);
+});
+
+test('the recipient placeholder is filled with the escaped address in both parts', () => {
+  const rendered = renderBrandEmail(base);
+  assert.ok(rendered.html.includes(RECIPIENT_TOKEN) && rendered.text.includes(RECIPIENT_TOKEN));
+  const filled = fillRecipient(rendered, 'a&b@example.com');
+  assert.ok(!filled.html.includes(RECIPIENT_TOKEN) && !filled.text?.includes(RECIPIENT_TOKEN));
+  assert.ok(filled.html.includes('a&amp;b@example.com'));
+  assert.ok(filled.text?.includes('Sent to a&b@example.com.'));
 });
 
 test('plain-text part carries the message and every link', () => {
@@ -57,11 +78,11 @@ test('greeting name helper ignores placeholders', () => {
 });
 
 test('every email uses the same logo, always from a public https origin', () => {
-  const logoSrcs = (html: string) => [...html.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]);
+  const logoSrcs = (html: string) => [...html.matchAll(/<img src="([^"]+)"/g)].map((m) => m[1]).filter((src) => src.includes('/brand/email-logo.'));
   const publicHtml = renderBrandEmail(base).html;
   const srcs = logoSrcs(publicHtml);
-  assert.equal(srcs.length, 2, 'header logo + footer mark');
-  assert.ok(srcs.every((src) => src === `https://reelencer.example${BRAND_ASSETS.emailLogo}`), 'header and footer use the identical asset');
+  assert.equal(srcs.length, 1, 'one logo, in the header');
+  assert.ok(srcs.every((src) => src === `https://reelencer.example${BRAND_ASSETS.emailLogo}`), 'the current logo asset');
 
   // Mail sent from dev, LAN or tunnels must never reference an address the recipient can't reach.
   const saved = { ...process.env };
@@ -69,7 +90,7 @@ test('every email uses the same logo, always from a public https origin', () => 
     delete process.env.EMAIL_ASSET_ORIGIN; delete process.env.NEXT_PUBLIC_SITE_URL; delete process.env.APP_URL; delete process.env.NEXT_PUBLIC_APP_URL;
     for (const site of ['http://localhost:3000', 'https://localhost', 'http://reelencer.com', 'https://192.168.1.20:3000', 'https://10.0.0.5', 'https://app.local', 'https://[::1]']) {
       assert.equal(emailAssetOrigin(site), 'https://reelencer.com', site);
-      assert.ok(logoSrcs(renderBrandEmail({ ...base, siteUrl: site }).html).every((src) => src.startsWith('https://reelencer.com/brand/email-logo.')), site);
+      assert.ok([...renderBrandEmail({ ...base, siteUrl: site }).html.matchAll(/<img src="([^"]+)"/g)].every((m) => m[1].startsWith('https://reelencer.com/brand/email-')), site);
     }
     process.env.NEXT_PUBLIC_SITE_URL = 'https://staging.reelencer.com/';
     assert.equal(emailAssetOrigin('http://localhost:3000'), 'https://staging.reelencer.com');

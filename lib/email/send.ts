@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
+import { fillRecipient } from "./brandEmail";
 import { addressOf, resendKey, resolveProvider, resolveSender, supportAddress, type EmailCategory, type EmailProvider } from "./config";
 
 type Transporter = ReturnType<typeof nodemailer.createTransport>;
@@ -217,6 +218,8 @@ export async function sendEmail(mail: OutgoingEmail): Promise<SendResult> {
 
   const message = {
     ...mail,
+    // Templates mark where the recipient's address goes (header, footer); fill it with the real one.
+    ...fillRecipient({ html: mail.html, text: mail.text }, to),
     to,
     category,
     idempotencyKey: mail.idempotencyKey ?? `${category}:${createHash("sha256").update(`${to}\n${mail.subject}\n${randomUUID()}`).digest("hex").slice(0, 40)}`,

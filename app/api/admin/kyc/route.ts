@@ -136,52 +136,54 @@ async function handlePATCH(req: Request) {
     const recipient = await resolveKycRecipient(sb, row.user_id, workerId);
     if (recipient.email && (status === "approved" || status === "rejected")) {
       const recipientName = recipient.displayName;
-      const dashboardHref = `${appBaseUrl()}/dashboard?section=find`;
-      const kycHref = `${appBaseUrl()}/dashboard`;
+      const walletHref = `${appBaseUrl()}/dashboard?section=wallet`;
+      const kycHref = `${appBaseUrl()}/payouts`;
       const subject =
         status === "approved"
-          ? "Your Reelencer KYC has been approved"
-          : "Action needed: update your Reelencer KYC submission";
+          ? "You're verified on Reelencer"
+          : "Action needed: update your Reelencer verification";
       const first = firstName(recipientName);
+      const teamNote = String(adminNote ?? "").trim();
       const { html, text } =
         status === "approved"
           ? renderBrandEmail({
               siteUrl: appBaseUrl(),
-              eyebrow: "KYC Approved",
-              title: first ? `Welcome aboard, ${first}` : "Welcome aboard",
-              intro: "Your identity verification has been successfully approved. Your Reelencer workspace is now unlocked, and you can continue with verified opportunities, assignments, and payout access.",
+              preheader: "Your identity is verified. You can now request payouts from your wallet.",
+              eyebrow: "Identity verified",
+              title: "Your identity is verified",
+              greeting: first ? `Hi ${first},` : "Hi there,",
+              intro: "Good news: the team has reviewed and approved your KYC. Payouts are now unlocked, so you can withdraw your approved earnings from your wallet whenever you're ready.",
               tone: "success",
+              illustration: "verified",
               highlights: [
                 { label: "Status", value: "Verified" },
-                { label: "Workspace ID", value: workerId || "Assigned in your profile" },
+                { label: "Payouts", value: "Unlocked" },
+                ...(workerId ? [{ label: "Creator ID", value: workerId }] : []),
               ],
-              sections: [
-                { label: "Review outcome", value: "Approved by the Reelencer verification team" },
-                { label: "What you can do now", value: "Open your dashboard, explore verified gigs, and continue through the worker workflow." },
-                { label: "Team note", value: String(adminNote ?? "").trim() },
-              ],
-              cta: { label: "Open your workspace", href: dashboardHref },
-              note: "This is an automated confirmation from Reelencer Operations. Your verified account is now active for workspace access and future platform updates.",
+              sections: [{ label: "Note from the team", value: teamNote }],
+              cta: { label: "Open your wallet", href: walletHref },
+              note: "You don't need to verify again. If your bank or UPI details change, update them in your wallet before your next payout.",
             })
           : renderBrandEmail({
               siteUrl: appBaseUrl(),
-              eyebrow: "KYC Update",
-              title: "Your verification needs one more update",
-              greeting: first ? `Hi ${first},` : undefined,
-              intro: "Your submitted KYC packet was reviewed, but it could not be approved in its current form. Please review the details below and submit an updated verification so the team can continue your approval process.",
+              preheader: "Your KYC needs a quick update before payouts can be unlocked.",
+              eyebrow: "Action needed",
+              title: "Your verification needs an update",
+              greeting: first ? `Hi ${first},` : "Hi there,",
+              intro: "Thanks for submitting your KYC. The team couldn't approve it as it is, so we've sent it back for a quick fix. Your work and earnings are safe; payouts unlock as soon as you're verified.",
               tone: "warning",
               highlights: [
                 { label: "Status", value: "Changes needed" },
-                { label: "Next step", value: "Resubmit your KYC" },
+                { label: "What to fix", value: String(rejectionReason ?? "").trim() || "Upload clearer documents that match your details." },
               ],
-              sections: [
-                { label: "Review outcome", value: "Returned for correction by the verification team" },
-                { label: "Why this was returned", value: String(rejectionReason ?? "Please review your submission and upload clearer or matching documents.").trim() },
-                { label: "Team note", value: String(adminNote ?? "").trim() },
-                { label: "Next step", value: "Open your dashboard, update the requested details, and resubmit your verification packet." },
+              sections: [{ label: "Note from the team", value: teamNote }],
+              cta: { label: "Update my KYC", href: kycHref },
+              steps: [
+                { title: "Open your KYC", body: "Review the reason above and replace the documents or details it mentions." },
+                { title: "Take a fresh selfie", body: "Use the live camera in good light, with your face fully visible." },
+                { title: "Resubmit", body: "The team reviews it again and emails you the result." },
               ],
-              cta: { label: "Review and update KYC", href: kycHref },
-              note: "This is an automated notification from Reelencer Operations. Once you resubmit corrected details, your verification will return to the review queue.",
+              note: "Questions about what to change? Reply to this email and the verification team will help.",
             });
       const result = await sendKycEmail(recipient.email, subject, html, text);
       mailStatus = result.sent

@@ -40,7 +40,7 @@ function resolveSiteUrl() {
       // ignore malformed values
     }
   }
-  return "https://reelencer.app";
+  return "https://reelencer.com";
 }
 
 /** Canonical origin, without a trailing slash. */
