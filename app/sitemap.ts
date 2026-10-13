@@ -1,26 +1,13 @@
 import type { MetadataRoute } from "next";
+import { SITE_URL } from "@/lib/site";
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "https://reelencer.app");
+// Only public, indexable pages. Signed-in and admin pages are noindex and stay out of the sitemap.
+const BUILT_AT = new Date();
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const routes = [
-    "/",
-    "/login",
-    "/signup",
-    "/post-login",
-    "/dashboard",
-    "/addgigs",
-    "/admin",
+  return [
+    { url: `${SITE_URL}/`, lastModified: BUILT_AT, changeFrequency: "weekly", priority: 1 },
+    { url: `${SITE_URL}/signup`, lastModified: BUILT_AT, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${SITE_URL}/login`, lastModified: BUILT_AT, changeFrequency: "yearly", priority: 0.4 },
   ];
-
-  return routes.map((route) => ({
-    url: `${siteUrl}${route}`,
-    lastModified: new Date(),
-    changeFrequency: route === "/" ? "daily" : "weekly",
-    priority: route === "/" ? 1 : 0.7,
-  }));
 }

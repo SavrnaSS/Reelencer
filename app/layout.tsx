@@ -1,38 +1,30 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { BRAND_ASSETS } from "@/lib/brand";
+import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, SITE_TAGLINE, SITE_TITLE, SITE_URL, absoluteUrl } from "@/lib/site";
 import "./globals.css";
 
-const siteName = "Reelencer";
-const siteDescription =
-  "Reelencer is a verified gig marketplace for creators and operations teams to manage assignments, compliance, and payouts.";
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "https://reelencer.app");
+const verification: Metadata["verification"] = {
+  ...(process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : {}),
+  ...(process.env.YANDEX_SITE_VERIFICATION ? { yandex: process.env.YANDEX_SITE_VERIFICATION } : {}),
+  ...(process.env.BING_SITE_VERIFICATION ? { other: { "msvalidate.01": process.env.BING_SITE_VERIFICATION } } : {}),
+};
 
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  metadataBase: new URL(SITE_URL),
   title: {
-    default: "Reelencer | Verified Creator Marketplace",
-    template: "%s | Reelencer",
+    default: SITE_TITLE,
+    template: `%s | ${SITE_NAME}`,
   },
-  description: siteDescription,
-  applicationName: siteName,
-  keywords: [
-    "creator marketplace",
-    "social media gigs",
-    "gig management",
-    "creator payouts",
-    "reelencer",
-  ],
-  authors: [{ name: "Reelencer" }],
-  creator: "Reelencer",
-  publisher: "Reelencer",
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: SITE_KEYWORDS,
+  authors: [{ name: SITE_NAME, url: SITE_URL }],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
   category: "business",
-  alternates: {
-    canonical: "/",
-  },
+  referrer: "strict-origin-when-cross-origin",
+  formatDetection: { telephone: false, email: false, address: false },
+  // No site-wide canonical: each public page declares its own, so inner pages aren't folded into the home page.
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -45,26 +37,23 @@ export const metadata: Metadata = {
     apple: [{ url: BRAND_ASSETS.apple180, sizes: "180x180", type: "image/png" }],
     shortcut: [BRAND_ASSETS.favicon],
   },
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+    statusBarStyle: "default",
+  },
   openGraph: {
     type: "website",
-    locale: "en_US",
-    url: "/",
-    siteName,
-    title: "Reelencer | Verified Creator Marketplace",
-    description: siteDescription,
-    images: [
-      {
-        url: BRAND_ASSETS.share,
-        width: 1200,
-        height: 630,
-        alt: "Reelencer",
-      },
-    ],
+    locale: "en_IN",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [{ url: BRAND_ASSETS.share, width: 1200, height: 630, alt: `${SITE_NAME}: ${SITE_TAGLINE}` }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Reelencer | Verified Creator Marketplace",
-    description: siteDescription,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
     images: [BRAND_ASSETS.share],
   },
   robots: {
@@ -78,11 +67,15 @@ export const metadata: Metadata = {
       "max-video-preview": -1,
     },
   },
+  ...(Object.keys(verification).length ? { verification } : {}),
 };
 
-export const viewport = {
+export const viewport: Viewport = {
   themeColor: "#eaf7ff",
   colorScheme: "light",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -90,19 +83,31 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Site-wide structured data: who runs the site and what it is. Page-specific data (e.g. the home FAQ) lives on the page.
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
       {
         "@type": "Organization",
-        name: "Reelencer",
-        url: siteUrl,
-        logo: new URL(BRAND_ASSETS.logoPng, siteUrl).href,
+        "@id": `${SITE_URL}/#organization`,
+        name: SITE_NAME,
+        url: SITE_URL,
+        description: SITE_DESCRIPTION,
+        logo: {
+          "@type": "ImageObject",
+          url: absoluteUrl(BRAND_ASSETS.logoPng),
+        },
+        image: absoluteUrl(BRAND_ASSETS.share),
       },
       {
         "@type": "WebSite",
-        name: "Reelencer",
-        url: siteUrl,
+        "@id": `${SITE_URL}/#website`,
+        name: SITE_NAME,
+        alternateName: SITE_TAGLINE,
+        url: SITE_URL,
+        description: SITE_DESCRIPTION,
+        inLanguage: "en-IN",
+        publisher: { "@id": `${SITE_URL}/#organization` },
       },
     ],
   };
@@ -119,7 +124,7 @@ export default function RootLayout({
         />
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
         />
         {children}
       </body>

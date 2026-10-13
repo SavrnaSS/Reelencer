@@ -112,6 +112,8 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
    * below it moves when switching.
    */
   const renderView = (v: Audience, ghost: boolean) => {
+    // Only the visible copy is the page heading; the height-reserving ghost must not add a second <h1>.
+    const Heading = ghost ? "div" : "h1";
     const c = COPY[v];
     return (
       <div
@@ -120,7 +122,7 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
         inert={ghost || undefined}
         className={`flex flex-col [grid-area:1/1] ${ghost ? "invisible pointer-events-none select-none" : ""}`}
       >
-            <h1
+            <Heading
               key={ghost ? undefined : `h-${swapKey}`}
               id={ghost ? undefined : "hero-heading"}
               data-page-stagger={ghost ? undefined : true}
@@ -138,7 +140,7 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
                   <path d="M3 10C60 3.5 150 1.5 297 7" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" pathLength={1} />
                 </svg>
               </span>
-            </h1>
+            </Heading>
 
             <p key={ghost ? undefined : `p-${swapKey}`} style={ghost ? undefined : swapStyle(3)} data-page-stagger={ghost ? undefined : true} className={`mt-5 max-w-[36rem] md:max-lg:mx-auto text-pretty text-[0.98rem] font-medium leading-[1.65] text-white/70 sm:mt-6 sm:text-[1.08rem] xl:text-[1.14rem] land:mt-3 land:text-[0.95rem] lg-mid:mt-4 lg-short:mt-4 lg-short:text-[1rem] lg-short:leading-[1.55] ${!ghost && swap ? "rx-swap-line" : ""}`}>
               {c.body}
