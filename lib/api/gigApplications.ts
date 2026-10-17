@@ -3,7 +3,7 @@ import { findGigHref } from "@/lib/routes";
 import { isContentPostingType, readStoredAccountSetup, redactProposal, type StoredAccountSetup } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { linkSocialAccount } from "@/lib/api/socialLink";
-import { firstName, renderBrandEmail, type EmailTone } from "@/lib/email/brandEmail";
+import { firstName, renderBrandEmail, type EmailIllustration, type EmailTone } from "@/lib/email/brandEmail";
 import { emailBaseUrl, sendEmail, type EmailCategory } from "@/lib/email/send";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -246,9 +246,14 @@ export async function sendLifecycleNotification(
     eyebrow: string;
     title: string;
     tone?: EmailTone;
+    illustration?: EmailIllustration;
+    /** Inbox preview line; defaults to the intro. */
+    preheader?: string;
     intro: string;
     sections?: Array<{ label: string; value: string }>;
     highlights?: Array<{ label: string; value: string }>;
+    /** Numbered "What happens next" list. */
+    steps?: Array<{ title: string; body: string }>;
     ctaLabel?: string;
     ctaHref?: string;
     secondaryCtaLabel?: string;
@@ -265,11 +270,14 @@ export async function sendLifecycleNotification(
     eyebrow: config.eyebrow,
     title: config.title,
     tone: config.tone,
+    illustration: config.illustration,
+    preheader: config.preheader,
     // Titles that already name the person don't need a second greeting.
     greeting: first && !config.title.includes(first) ? `Hi ${first},` : undefined,
     intro: config.intro,
     highlights: config.highlights,
     sections: config.sections,
+    steps: config.steps,
     cta: { label: config.ctaLabel ?? "View my project", href: ctaHref },
     secondaryCta: config.secondaryCtaLabel && config.secondaryCtaHref ? { label: config.secondaryCtaLabel, href: config.secondaryCtaHref } : undefined,
     note: config.footer ?? `You're receiving this because you applied to ${context.gigTitle} on Reelencer. Your project panel always has the latest status.`,

@@ -164,15 +164,27 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
   return { checks, risk: riskFrom(checks) };
 }
 
+const ownershipProven = (checks: unknown) => Array.isArray(checks) && checks.some((c) => c?.id === "ownership" && c?.status === "pass");
+const PROVEN = JSON.stringify([{ id: "ownership", status: "pass" }]);
+
+/** Runs the checks and stores them. The first time the code is found, the creator gets the "verified" email. */
 async function saveChecks(sb: Sb, r: Row) {
   const { checks, risk } = await runChecks(sb, r);
-  const { data, error } = await sb
+  const foundNow = ownershipProven(checks) && !ownershipProven(r.checks);
+  let update = sb
     .from("social_account_requests")
     .update({ checks, risk, checked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("id", String(r.id))
-    .select("*")
-    .single();
+    .eq("id", String(r.id));
+  // Only the write that turns ownership to proven may send the email, so checks racing can't send it twice.
+  if (foundNow) update = update.not("checks", "cs", PROVEN);
+  const { data, error } = await update.select("*").maybeSingle();
   databaseError(error);
+  if (!data) {
+    const { data: current, error: readError } = await sb.from("social_account_requests").select("*").eq("id", String(r.id)).single();
+    databaseError(readError);
+    return current as Row;
+  }
+  if (foundNow) await notifyOwnershipConfirmed(sb, data as Row);
   return data as Row;
 }
 
@@ -321,8 +333,9 @@ export async function resubmitAccountRequest(actor: { aliases: string[] }, id: s
       handle,
       handle_key: handleKey,
       profile_url: input.profileUrl.trim(),
-      // Login details from an older, password-based request only stay with the same account.
-      ...(handleKey === String(current.handle_key) ? {} : { email: "", phone: "", password_enc: null }),
+      // Login details and checks from an older request only stay with the same account; a new handle starts fresh
+      // (so finding the code in its bio sends the "verified" email again).
+      ...(handleKey === String(current.handle_key) ? {} : { email: "", phone: "", password_enc: null, checks: [], risk: "unknown" }),
       notes: String(input.notes ?? "").trim(),
       status: "pending",
       revision: Number(current.revision ?? 1) + 1,
@@ -504,6 +517,49 @@ async function notifyCreator(sb: Sb, r: Row, status: AccountRequestStatus, note:
       sections: note ? [{ label: "Team note", value: note }] : undefined,
       ctaLabel: "Open your accounts",
       ctaHref: `${emailBaseUrl()}/dashboard?section=accounts`,
+    });
+  } catch (error) {
+    return { sent: false, reason: error instanceof Error ? error.message : "Notification failed." };
+  }
+}
+
+/** Sent once, when the code first shows up in the bio: ownership is proven and the team review is next. */
+async function notifyOwnershipConfirmed(sb: Sb, r: Row): Promise<MailStatus> {
+  try {
+    const [{ data: application }, gigs] = await Promise.all([
+      sb.from("gig_applications").select("*").eq("id", String(r.application_id)).maybeSingle(),
+      gigsById(sb, [String(r.gig_id)]),
+    ]);
+    if (!application) return { sent: false, reason: "Application not found." };
+    const { to, context } = await resolveNotificationContext(sb, application as Row);
+    const gig = gigs.get(String(r.gig_id));
+    const platform = accountPlatformFor(String(r.platform));
+    const handle = `@${String(r.handle)}`;
+    const code = String(r.verify_code);
+    const pay = gig ? payoutPhrase(str(gig.payout), str(gig.payout_type)) : "";
+    const gigTitle = context?.gigTitle ?? "this gig";
+    return await sendLifecycleNotification(to, context, {
+      eyebrow: "Account Verified",
+      tone: "success",
+      illustration: "verified",
+      title: `${handle} is verified`,
+      preheader: `We found ${code} in your ${platform.label} bio. The team will link ${handle} next.`,
+      intro: `We found ${code} in the bio of ${handle}, so we know the account is yours. The team will now review it and link it to ${gigTitle}.`,
+      highlights: [
+        { label: "Account", value: handle },
+        { label: "Ownership", value: "Confirmed" },
+        ...(pay ? [{ label: "It will earn", value: pay }] : []),
+      ],
+      steps: [
+        { title: "Team review", body: "The team checks the account and links it. You'll get an email when it's done." },
+        { title: "Start earning", body: `Once linked, reels you post on ${handle} count towards your earnings.` },
+        { title: "Remove the code", body: `After it's linked you can take ${code} out of the bio.` },
+      ],
+      sections: [{ label: "Until then", value: "Keep the code in the bio and don't change the account's username." }],
+      ctaLabel: "Open your accounts",
+      ctaHref: `${emailBaseUrl()}/dashboard?section=accounts`,
+      ...(str(r.profile_url) ? { secondaryCtaLabel: `Open ${handle}`, secondaryCtaHref: String(r.profile_url) } : {}),
+      footer: `You're receiving this because you asked to add ${handle} to ${gigTitle} on Reelencer.`,
     });
   } catch (error) {
     return { sent: false, reason: error instanceof Error ? error.message : "Notification failed." };

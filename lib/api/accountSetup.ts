@@ -113,6 +113,35 @@ async function readOwnership(platformName: string, handle: string, code: string)
   }
 }
 
+/** The email sent the first time the code is found in the bio: ownership is proven, the team review is next. */
+function ownershipConfirmedMail(setup: StoredAccountSetup, gig: DbRecord): Parameters<typeof sendLifecycleNotification>[2] {
+  const platform = accountPlatformFor(setup.platform);
+  const company = String(gig.company ?? "").trim() || "the brand";
+  const pay = payoutPhrase(String(gig.payout ?? ""), String(gig.payout_type ?? ""));
+  const code = setup.verifyCode ?? "the code";
+  return {
+    eyebrow: "Account Verified",
+    tone: "success",
+    illustration: "verified",
+    title: `@${setup.handle} is verified`,
+    preheader: `We found ${code} in your ${platform.label} bio. Your account is now with ${company} for review.`,
+    intro: `We found ${code} in the bio of @${setup.handle}, so we know the account is yours. It's now with ${company} for a final review.`,
+    highlights: [
+      { label: "Account", value: `@${setup.handle}` },
+      { label: "Ownership", value: "Confirmed" },
+      ...(pay ? [{ label: "You'll earn", value: pay }] : []),
+    ],
+    steps: [
+      { title: "Team review", body: "The team checks the profile against the brief. You'll get an email with the decision." },
+      { title: "Start posting", body: `Once approved, post ${company}'s reels on @${setup.handle}. Earnings go to your Reelencer wallet.` },
+      { title: "Remove the code", body: `After approval you can take ${code} out of the bio.` },
+    ],
+    sections: [{ label: "Until then", value: "Keep the code in the bio, don't post on the account and don't change its username." }],
+    ctaLabel: "View application",
+    ...(setup.profileUrl ? { secondaryCtaLabel: `Open @${setup.handle}`, secondaryCtaHref: setup.profileUrl } : {}),
+  };
+}
+
 /** Creator submits (or resubmits after a change request) the account they made, with the code in its bio. */
 export async function submitAccountSetup(actor: { userId: string; aliases: string[] }, applicationId: string, input: AccountOwnershipInput) {
   const { sb, row, gig } = await loadApplication(applicationId);
@@ -150,33 +179,40 @@ export async function submitAccountSetup(actor: { userId: string; aliases: strin
   const data = await writeProposal(sb, actor.userId, row, { ...(decoded.proposal ?? {}), accountSetup: setup });
   const resubmitted = previous?.status === "ChangesRequested";
   const owned = setup.ownership === "found";
-  const mailStatus = previous && !resubmitted ? null : await notify(sb, data, {
-    eyebrow: resubmitted ? "Account Updated" : "Account Received",
-    tone: "neutral",
-    title: resubmitted ? "Your updated account is back in screening" : "Your account is in screening",
-    intro: `Thanks for setting up the ${platform.label} account for ${String(gig.title ?? "this gig")}. ${owned ? "We found your code in the bio, so the team can review it now." : "The team is checking it now."}`,
-    highlights: [
-      { label: "Account", value: `@${setup.handle}` },
-      { label: "Verification code", value: owned ? `${verifyCode} · found` : verifyCode },
-    ],
-    sections: [
-      {
-        label: "What happens next",
-        value: owned
-          ? "The team reviews the profile against the brief. You'll get an email and a dashboard update with the decision."
-          : `Add ${verifyCode} anywhere in the ${platform.label} bio and save it. ${canReadBio(platform) ? "Your dashboard confirms it automatically." : "The team checks it when they open the profile."}`,
-      },
-      { label: "After it's verified", value: `You'll post the gig's reels on this account and earn ${payoutPhrase(String(gig.payout ?? ""), String(gig.payout_type ?? "")) || "the listed payout"}, paid to your wallet. You can remove the code from the bio then.` },
-      { label: "Until then", value: "Keep the code in the bio, don't post on the account and don't change its username." },
-    ],
-    ctaLabel: "Track your application",
-  });
+  // One email per milestone: the code found for the first time gets the "verified" email; otherwise a first
+  // submission (or an answer to a change request) gets the "received" one with the code to add.
+  const foundNow = owned && (resubmitted || previous?.ownership !== "found");
+  const mailStatus = foundNow
+    ? await notify(sb, data, ownershipConfirmedMail(setup, gig))
+    : previous && !resubmitted
+      ? null
+      : await notify(sb, data, {
+          eyebrow: resubmitted ? "Account Updated" : "Account Received",
+          tone: "neutral",
+          title: "One step left: add your code",
+          preheader: `Add ${verifyCode} to the @${setup.handle} bio to verify the account.`,
+          intro: `Thanks for setting up @${setup.handle} for ${String(gig.title ?? "this gig")}. To confirm it's yours, add your code anywhere in the ${platform.label} bio and save.`,
+          highlights: [
+            { label: "Your code", value: verifyCode },
+            { label: "Account", value: `@${setup.handle}` },
+          ],
+          steps: [
+            { title: "Add the code", body: `Paste ${verifyCode} anywhere in the ${platform.label} bio and save.` },
+            {
+              title: canReadBio(platform) ? "We confirm it" : "The team confirms it",
+              body: canReadBio(platform) ? "Your dashboard checks the bio automatically. You'll get an email once it's found." : "The reviewer looks for the code when they open the profile.",
+            },
+            { title: "Team review", body: "The team checks the profile against the brief and emails you the decision." },
+          ],
+          sections: [{ label: "Until then", value: "Don't post on the account or change its username." }],
+          ctaLabel: "Open my application",
+        });
   return { ...toApplication(data), mailStatus };
 }
 
 /** "Check again": re-reads the bio for the code. Creators are rate limited; admins aren't. */
 export async function checkAccountOwnership(actor: { userId: string; aliases: string[]; isAdmin: boolean }, applicationId: string) {
-  const { sb, row } = await loadApplication(applicationId);
+  const { sb, row, gig } = await loadApplication(applicationId);
   if (!actor.isAdmin && !actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
   const decoded = decodeWorkerName(row.worker_name);
   const previous = readStoredAccountSetup(decoded.proposal?.accountSetup);
@@ -188,8 +224,11 @@ export async function checkAccountOwnership(actor: { userId: string; aliases: st
   if (!actor.isAdmin && wait > 0) throw new ApiError(429, `Checked a moment ago. Try again in ${Math.ceil(wait / 1000)}s.`, "cooldown");
   const verifyCode = previous.verifyCode ?? accountVerifyCode(String(row.id));
   const setup: StoredAccountSetup = { ...previous, verifyCode, ...(await readOwnership(previous.platform, previous.handle, verifyCode)) };
+  // The write is compare-and-set, so two checks racing can't both see "not found" → "found" and send twice.
   const data = await writeProposal(sb, actor.userId, row, { ...(decoded.proposal ?? {}), accountSetup: setup });
-  return toApplication(data);
+  const foundNow = setup.ownership === "found" && previous.ownership !== "found";
+  const mailStatus = foundNow ? await notify(sb, data, ownershipConfirmedMail(setup, gig)) : null;
+  return { ...toApplication(data), mailStatus };
 }
 
 /** Admin asks the creator to fix something; the form reopens with the note on their side. */

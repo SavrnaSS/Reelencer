@@ -125,8 +125,8 @@ export default function AccountReview({
   // A code found in the bio is a fact, not a judgement: that check stays ticked, even if found after the panel opened.
   const ticked = checks.map((value, index) => value || (index === 0 && owned));
   const stats = [
-    setup.followers !== undefined ? `${setup.followers.toLocaleString("en-IN")} followers` : null,
-    setup.posts !== undefined ? `${setup.posts.toLocaleString("en-IN")} posts` : null,
+    setup.followers !== undefined ? `${setup.followers.toLocaleString("en-IN")} ${setup.followers === 1 ? "follower" : "followers"}` : null,
+    setup.posts !== undefined ? `${setup.posts.toLocaleString("en-IN")} ${setup.posts === 1 ? "post" : "posts"}` : null,
     setup.isPrivate === true ? "Private" : setup.isPrivate === false ? "Public" : null,
   ].filter(Boolean);
   const sendChanges = async () => {

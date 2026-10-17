@@ -383,8 +383,8 @@ export default function AccountSetupPanel({
       neutral: { panel: "border-[#e3e5e1] bg-[#fafbf9]", icon: "bg-[#eef0ed] text-[#4b544e]", pill: "bg-[#eef0ed] text-[#4b544e]" },
     }[status.tone];
     const stats = [
-      setup.followers !== undefined ? `${formatCompact(setup.followers)} followers` : null,
-      setup.posts !== undefined ? `${formatCompact(setup.posts)} posts` : null,
+      setup.followers !== undefined ? `${formatCompact(setup.followers)} ${setup.followers === 1 ? "follower" : "followers"}` : null,
+      setup.posts !== undefined ? `${formatCompact(setup.posts)} ${setup.posts === 1 ? "post" : "posts"}` : null,
     ].filter(Boolean);
     const editHref = platform.id === "instagram" ? INSTAGRAM_EDIT_PROFILE : setup.profileUrl || undefined;
     const actions = [
