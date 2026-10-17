@@ -37,10 +37,11 @@ const navItems = [
   },
 ] as const;
 
+// Headline marketing figures for the hero. Update these when the campaign numbers change.
 const trustStats = [
-  { value: "18K+", label: "Verified creator workflows launched" },
-  { value: "94%", label: "Campaign approval confidence" },
-  { value: "36h", label: "Average payout visibility cycle" },
+  { value: "18K+", label: "Creator reels delivered" },
+  { value: "94%", label: "Submissions approved" },
+  { value: "36h", label: "Average review turnaround" },
 ] as const;
 
 const reelNicheRows = [
@@ -1726,7 +1727,7 @@ export default function HomePage() {
                     <div className="earn-meter-fill h-full rounded-full bg-[linear-gradient(90deg,#5fbf45,#b4f28a)]" />
                   </div>
                   <p className="mt-3 text-sm font-medium leading-6 text-white/66">
-                    Approved reels are grouped into payout cycles, so you can always see what's pending and what's been paid.
+                    Approved reels are grouped into payout cycles, so you can always see what&apos;s pending and what&apos;s been paid.
                   </p>
                 </div>
               </div>
