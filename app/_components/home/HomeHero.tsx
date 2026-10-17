@@ -106,6 +106,20 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
     swap ? ({ ["--rx-dir" as string]: swap.dir, ["--i" as string]: index } as React.CSSProperties) : undefined;
 
 
+  // Shown under the CTAs in every view, so a first-time visitor always has a low-commitment next step.
+  const faqPrompt = (
+    <p className="mt-3.5 text-[0.88rem] text-white/60 min-[400px]:text-[0.92rem] md:max-lg:text-center lg:mt-3">
+      Have questions first?{" "}
+      <button
+        type="button"
+        onClick={() => onScrollTo("#resources", "Help Center")}
+        className="font-bold text-[#9eea6d] underline-offset-4 transition hover:text-white hover:underline"
+      >
+        Read the FAQ
+      </button>
+    </p>
+  );
+
   /**
    * One audience's copy + CTAs + social row. Both audiences are rendered stacked in the same grid cell (the
    * inactive one invisible, inert and id-free), so the panel is always as tall as the taller view and nothing
@@ -146,8 +160,9 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
               {c.body}
             </p>
 
-            {/* CTAs */}
-            <div key={ghost ? undefined : `c-${swapKey}`} style={ghost ? undefined : swapStyle(4)} data-page-stagger={ghost ? undefined : true} className={`mt-7 max-w-[40rem] md:max-lg:mx-auto sm:mt-8 land:mt-5 lg-mid:mt-6 lg-short:mt-5 ${!ghost && swap ? "rx-swap-line" : ""}`}>
+            {/* CTAs. Their auto margins split the shorter view's reserved space above and below them, so the social row and
+                stats stay in the same place in both views without one large gap opening up. */}
+            <div key={ghost ? undefined : `c-${swapKey}`} style={ghost ? undefined : swapStyle(4)} data-page-stagger={ghost ? undefined : true} className={`my-auto max-w-[40rem] pt-7 md:max-lg:mx-auto sm:pt-8 land:pt-5 lg-mid:pt-6 lg-short:pt-5 ${!ghost && swap ? "rx-swap-line" : ""}`}>
               {v === "brands" ? (
                 <>
                 <div className="flex flex-col gap-3 min-[480px]:flex-row md:max-lg:justify-center">
@@ -167,23 +182,12 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
                     See how it works
                   </button>
                 </div>
-                {/* Brand perks: mirrors the creator perks so both views carry the same weight. */}
-                <ul className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 text-[0.8rem] font-semibold text-white/70 sm:text-[0.84rem] md:max-lg:justify-center lg:hidden">
-                  {["Fully managed", "Organic reach, no ad spend", "Weekly reporting"].map((perk) => (
-                    <li key={perk} className="inline-flex items-center gap-1.5">
-                      <span className="grid h-4 w-4 place-items-center rounded-full bg-[#8fe05f]/25 text-[#8fe05f]" aria-hidden>
-                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5">
-                          <path d="m5 10.5 3.2 3.2L15 7" />
-                        </svg>
-                      </span>
-                      {perk}
-                    </li>
-                  ))}
-                </ul>
+                {faqPrompt}
                 </>
               ) : !authResolved ? (
                 <div className="h-14 w-full max-w-md animate-pulse rounded-full bg-white/10" />
               ) : role ? (
+                <>
                 <div className="flex flex-col gap-3 min-[480px]:flex-row min-[480px]:flex-wrap md:max-lg:justify-center">
                   <Link
                     href={role === "Admin" ? dashboardHref : findHref}
@@ -197,6 +201,8 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
                     Open dashboard
                   </Link>
                 </div>
+                {role !== "Admin" && faqPrompt}
+                </>
               ) : (
                 <>
                   {renderLeadForm(ghost)}
@@ -233,13 +239,14 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
                       </span>
                     </Link>
                   </div>
+                  {faqPrompt}
                 </>
               )}
             </div>
 
-        {/* Social row sits at the bottom of the view, so any reserved space falls between the CTAs and it. */}
-        <div className="mt-auto">
-            <div className={`flex items-center gap-3 pt-9 sm:pt-10 md:max-lg:justify-center land:pt-6 lg-mid:pt-7 lg-short:pt-6 lg-tiny:hidden ${v === "creators" && authResolved && !role ? "lg:hidden" : ""}`}>
+        {/* Social row sits at the bottom of the view, so it never moves when switching audiences. */}
+        <div>
+            <div className={`flex items-center gap-3 pt-8 sm:pt-9 md:max-lg:justify-center land:pt-6 lg-mid:pt-7 lg-short:pt-6 lg-tiny:hidden ${v === "creators" && authResolved && !role ? "lg:hidden" : ""}`}>
               <div className="flex shrink-0 items-center -space-x-2.5">
                 {REELS.slice(0, 4).map((reel, index) => (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -329,7 +336,7 @@ export function HomeHero({ role, authResolved, findHref, dashboardHref, loginHre
           </div>
 
           {/* Stats */}
-          <div data-page-stagger className="mt-5 lg-mid:mt-4 lg-short:mt-4">
+          <div data-page-stagger className="mt-7 sm:mt-8 land:mt-5 lg:mt-9 lg-mid:mt-7 lg-short:mt-6">
             <dl className="grid max-w-[40rem] grid-cols-3 md:max-lg:mx-auto md:max-lg:w-full overflow-hidden rounded-[1.35rem] border border-white/10 bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm">
               {stats.map((stat, index) => (
                 <StatTile key={stat.label} value={stat.value} label={stat.label} index={index} />
