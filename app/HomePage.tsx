@@ -1706,15 +1706,15 @@ export default function HomePage() {
                     How Reelencer turns your reels into <span className="earn-gradient-text">reliable income.</span>
                   </h2>
                   <p className="mt-4 max-w-2xl text-pretty text-[clamp(0.98rem,3.6vw,1.12rem)] leading-[1.7] text-white/68 sm:mt-5">
-                    Pick a brand gig, create the reel, and get paid once it&apos;s approved. Every step from discovery to payout stays in one place.
+                    Apply to a brand gig, post the reel, and get paid for every approved submission. Your applications, reviews and payouts are all in your dashboard.
                   </p>
                 </div>
 
                 <div data-page-stagger className="hidden rounded-[1.4rem] border border-white/10 bg-[#0b2f27]/70 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm sm:p-5 md:block">
                   <div className="flex items-end justify-between gap-4">
                     <div>
-                      <div className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-white/46 sm:text-xs">Workflow confidence</div>
-                      <div className="mt-1 text-[clamp(2.2rem,8vw,2.8rem)] font-black leading-none tracking-[-0.05em] text-white">100%</div>
+                      <div className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-white/46 sm:text-xs">Every payout</div>
+                      <div className="mt-1 text-[clamp(2.2rem,8vw,2.8rem)] font-black leading-none tracking-[-0.05em] text-white">Tracked</div>
                     </div>
                     <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#8fe05f] text-[#0b1914] shadow-[0_10px_24px_rgba(143,224,95,0.28)]">
                       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden>
@@ -1726,7 +1726,7 @@ export default function HomePage() {
                     <div className="earn-meter-fill h-full rounded-full bg-[linear-gradient(90deg,#5fbf45,#b4f28a)]" />
                   </div>
                   <p className="mt-3 text-sm font-medium leading-6 text-white/66">
-                    Client satisfaction stays at the center of every approved delivery and every payout-ready submission.
+                    Approved reels are grouped into payout cycles, so you can always see what's pending and what's been paid.
                   </p>
                 </div>
               </div>
@@ -1735,26 +1735,26 @@ export default function HomePage() {
                 {[
                   {
                     step: "01",
-                    title: "Find the right gigs faster.",
-                    body: "Browse verified opportunities with clear deliverables, realistic deadlines, and transparent payout expectations.",
+                    title: "Pick a gig that fits.",
+                    body: "Every open gig shows the deliverables, the deadline and the payout before you apply.",
                     tag: "Discover",
                   },
                   {
                     step: "02",
-                    title: "Accept with full context.",
-                    body: "Start with clean briefs, organized assets, and a workflow that makes expectations obvious from day one.",
-                    tag: "Brief",
+                    title: "Apply and get set up.",
+                    body: "Send your application. For posting gigs, verify your account by adding a code to your bio. We never ask for your password.",
+                    tag: "Apply",
                   },
                   {
                     step: "03",
-                    title: "Submit your reel for review.",
-                    body: "Upload deliverables, respond to feedback quickly, and keep progress visible without losing momentum.",
+                    title: "Post and submit for review.",
+                    body: "Create the reel to the brief and submit it. If it needs a change, you'll see exactly what to fix.",
                     tag: "Create",
                   },
                   {
                     step: "04",
-                    title: "Track approval and cash out.",
-                    body: "See payout status clearly, know what is pending, and withdraw earnings without second-guessing the process.",
+                    title: "Get paid for approved work.",
+                    body: "Approved reels go into a payout cycle. You can follow every payment from pending to paid.",
                     tag: "Get paid",
                   },
                 ].map((item, index, steps) => {
@@ -1796,7 +1796,7 @@ export default function HomePage() {
                 <div className="flex flex-col gap-3 px-2 pb-1 pt-2 md:flex-row md:items-center md:justify-between md:gap-6 md:py-0 md:pl-5 md:pr-0">
                   <div className="flex items-center gap-3 text-[0.95rem] font-medium leading-6 text-white/76 sm:text-base">
                     <span className="earn-live-dot hidden shrink-0 min-[380px]:block" aria-hidden />
-                    Ready to turn accepted gigs into paid work with less friction?
+                    New gigs are open now. Find one that fits you.
                   </div>
                   <Link
                     href={primaryHref}
