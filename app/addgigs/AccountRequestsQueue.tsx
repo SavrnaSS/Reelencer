@@ -4,6 +4,8 @@ import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { REVIEW_TARGET_HOURS, RISK_LABEL, REQUEST_STATUS_LABEL, type AccountRequestRisk, type AdminAccountRequest, type RequestCheck } from "@/lib/accountRequests";
 import { accountPlatformFor } from "@/lib/accountSetup";
+import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
+import { isCurrentAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
 import PlatformGlyph from "../dashboard/PlatformGlyph";
 import { Banner, ConfirmDialog, CopyButton, ICONS, Icon, Spinner, StatusChip, btnDanger, btnGhost, btnPrimary, cardClass, fieldClass, formatDateTime, formatRelative, type Tone } from "./adminUi";
@@ -13,6 +15,12 @@ import { Banner, ConfirmDialog, CopyButton, ICONS, Icon, Spinner, StatusChip, bt
 
 type Filter = "review" | "creator" | "decided";
 type Decision = "approve" | "changes" | "reject";
+type RequestData = { requests: AdminAccountRequest[]; unavailable: boolean };
+const validRequests = (value: unknown): value is RequestData => {
+  const data = value as RequestData | null;
+  return !!data && typeof data.unavailable === "boolean" && Array.isArray(data.requests)
+    && data.requests.every(row => !!row && typeof row.id === "string" && typeof row.handle === "string" && Array.isArray(row.checks) && ["low", "medium", "high", "unknown"].includes(row.risk));
+};
 
 const RISK_TONE: Record<AccountRequestRisk, Tone> = { low: "success", medium: "warning", high: "danger", unknown: "neutral" };
 const CHECK_TONE: Record<RequestCheck["status"], string> = { pass: "text-[#226b40]", warn: "text-[#9a5b00]", fail: "text-[#b42318]", pending: "text-[#8a928c]" };
@@ -283,40 +291,57 @@ function RequestRow({
   );
 }
 
-export default function AccountRequestsQueue({ onLinked }: { onLinked?: () => void }) {
-  const [requests, setRequests] = useState<AdminAccountRequest[] | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export default function AccountRequestsQueue({ adminId, onLinked }: { adminId: string; onLinked?: () => void }) {
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [filter, setFilter] = useState<Filter>("review");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/social-accounts/requests", { cache: "no-store" });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(payload?.error || "Account requests couldn't be loaded.");
-      setRequests(payload?.requests ?? []);
-      setUnavailable(payload?.unavailable === true);
-      setError(null);
-      setNow(Date.now());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Account requests couldn't be loaded.");
+  const read = useCallback(async (signal: AbortSignal): Promise<RequestData> => {
+    const res = await fetch("/api/admin/social-accounts/requests", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+    const payload = await res.json().catch(() => null);
+    if ((res.status === 401 || res.status === 403) && !signal.aborted && isCurrentAdminCacheIdentity(adminId)) window.dispatchEvent(new Event("admin-auth-invalidated"));
+    if (!res.ok || !Array.isArray(payload?.requests) || payload.requests.some((row: Partial<AdminAccountRequest> | null) => !row || typeof row.id !== "string" || typeof row.handle !== "string" || !Array.isArray(row.checks) || !["low", "medium", "high", "unknown"].includes(row.risk ?? ""))) {
+      throw new Error(payload?.error || "Account requests couldn't be loaded.");
     }
-  }, []);
+    return { requests: payload.requests, unavailable: payload.unavailable === true };
+  }, [adminId]);
+  // Requests contain creator contact details; reuse them in memory, never in browser storage.
+  const resource = useAdminCachedResource<RequestData>({ scope: adminId, key: "account-requests", load: read, ttlMs: 10_000, maxAgeMs: 5 * 60_000, persist: false, validate: validRequests });
+  const { refresh, update } = resource;
+  const requests = resource.data?.requests ?? null;
+  const unavailable = resource.data?.unavailable === true;
+  const error = resource.error?.message ?? null;
+  const poll = useCallback(async () => {
+    if (!navigator.onLine) return;
+    await refresh({ force: false });
+    setNow(Date.now());
+  }, [refresh]);
   useEffect(() => {
-    void load();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (timer !== undefined) return;
+      // Header refresh also emits an admin-live event; both signals share one new read.
+      timer = setTimeout(() => { timer = undefined; void refresh({ afterCurrent: true }); }, 100);
+    };
     // Instant refresh when a creator submits, edits or withdraws a request (admin live channel).
     const onLive = (event: Event) => {
       const kinds = (event as CustomEvent<string[] | null>).detail;
-      if (!kinds || kinds.includes("social_account_requests")) void load();
+      if ((!kinds || kinds.includes("social_account_requests")) && !document.hidden && navigator.onLine) schedule();
     };
+    const manual = schedule;
     window.addEventListener("admin-live", onLive);
-    return () => window.removeEventListener("admin-live", onLive);
-  }, [load]);
+    window.addEventListener("admin-refresh", manual);
+    window.addEventListener("admin-linked-accounts-refresh", manual);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("admin-live", onLive);
+      window.removeEventListener("admin-refresh", manual);
+      window.removeEventListener("admin-linked-accounts-refresh", manual);
+    };
+  }, [refresh]);
   // The review queue is time-sensitive; refresh often while the tab is visible.
-  useVisibleRefresh(load, 10_000);
+  useVisibleRefresh(poll, adminId ? 10_000 : null);
 
   const groups = useMemo(() => {
     const list = requests ?? [];
@@ -341,7 +366,8 @@ export default function AccountRequestsQueue({ onLinked }: { onLinked?: () => vo
 
   const visible = groups[filter];
   const replace = (next: AdminAccountRequest) => {
-    setRequests((prev) => (prev ?? []).map((r) => (r.id === next.id ? next : r)));
+    // Confirmed decisions cancel older reads, so an in-flight poll cannot restore the previous status.
+    update(previous => ({ requests: (previous?.requests ?? requests ?? []).map(r => r.id === next.id ? next : r), unavailable: false }));
     if (next.status === "approved") onLinked?.();
   };
 
@@ -391,15 +417,15 @@ export default function AccountRequestsQueue({ onLinked }: { onLinked?: () => vo
       ) : null}
       {error ? (
         <div className="px-3.5 pt-3 sm:px-4">
-          <Banner tone="danger">{error}</Banner>
+          <Banner tone="danger">{error} <button type="button" onClick={() => void refresh()} className="font-semibold underline underline-offset-2">Try again</button></Banner>
         </div>
       ) : null}
 
-      {requests === null ? (
+      {requests === null && !error ? (
         <div className="grid place-items-center py-8">
           <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" />
         </div>
-      ) : visible.length ? (
+      ) : requests === null ? null : visible.length ? (
         <ul className="divide-y divide-[#eef0ec]">
           {filter === "review" && stats.ready ? (
             <li className="bg-[#f4f9f2] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-[#226b40]">Ready to approve · ownership proven, no flags</li>

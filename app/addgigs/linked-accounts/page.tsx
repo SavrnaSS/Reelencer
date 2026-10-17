@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import GigAdminConsole from "../GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
 export const metadata: Metadata = { title: "Linked accounts" };
 
-export default function LinkedAccountsPage() {
-  return <GigAdminConsole view="linked-accounts" nextPath="/addgigs/linked-accounts" />;
+export default async function LinkedAccountsPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("linked-accounts", await searchParams));
 }

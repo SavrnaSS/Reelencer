@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import GigAdminConsole from "../GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
 export const metadata: Metadata = { title: "Create a gig" };
 
-export default function CreateNewGigPage() {
-  return <GigAdminConsole view="create-new-gig" nextPath="/addgigs/create-new-gig" />;
+export default async function CreateNewGigPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("create-new-gig", await searchParams));
 }

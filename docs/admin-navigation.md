@@ -1,0 +1,21 @@
+# Admin navigation
+
+The admin console uses `/admin?section=<section>` for all Operations, People & money, and Platform sections. The six gig tools share the same sidebar, header, and authenticated session as the worker operations screens. The former `/addgigs` routes redirect to their corresponding sections; application `gig` filters and gig `edit` links are preserved.
+
+Sidebar navigation updates browser history without reloading the console. Back, forward, refresh, and opening a link in another tab retain the selected section. Gig forms, filters, and loaded rows stay in memory while navigating within the console. Private applications, credential submissions, KYC records, and review drafts are not cached in localStorage; old console caches are removed after admin verification.
+
+Linked-account display data and connection health use a versioned cache scoped to the verified admin ID. These reviewed response projections survive reloads in the current tab through sessionStorage, with a 15-minute display lifetime and bounded entry/total sizes. Linked-account reads are fresh for 30 seconds; connection health is fresh for one minute. Account requests contain contact details and reuse only memory. Secret fields, KYC documents, signed links, arbitrary response extras, and typed connection credentials never enter persistent caches. Malformed/expired data is discarded; blocked or full browser storage falls back to memory. Sign-out, account changes, or a rejected admin session clear and cancel cached reads before another account can render them. An initial session event on reload preserves the same verified admin's cache.
+
+The small `reelencer_admin_view` cookie remembers only an allowlisted Linked accounts filter. It uses SameSite=Lax, the /admin path, Secure on HTTPS, and a 30-day maximum age. Account records and authentication tokens are not stored in it; it is cleared with the admin cache on sign-out or account changes.
+
+Linked accounts first renders cached data, then reads saved database rows through `scope=all`. External profile readers run separately in the background through `sync=1`, at most once per five-minute client window across mounts/reloads while visible and online. The server's stale-data and provider cooldown rules still apply. Manual Refresh bypasses the client window. Live events refresh saved rows without triggering external profile readers. Failed or malformed refreshes retain the last valid rows with retry; confirmed account changes cancel older saved/sync reads and update the cache.
+
+Below 1024px, the sidebar opens as a scrollable modal drawer with focus containment, Escape support, focus restoration, and background scroll locking. Queue/detail split views start at 1280px to account for the sidebar width. Narrower screens use the existing detail sheets.
+
+Initial independent gig resources load in parallel after admin verification. In-flight reads are coalesced per resource, stale reads are cancelled around mutations, and failures preserve previously loaded rows with an explicit retry. The shell and gig console share one private `admin:live` connection and one visibility-aware fallback poller. Hidden or offline tabs retain invalidations until they can refresh. Self-loading panels mount only while their section is active.
+
+Applications shows a responsive skeleton matching its summary tiles, queue, and desktop detail panel during the first read. Later manual, header, or live refreshes retain rows and selection while a narrow animated queue progress bar runs. Loading announcements are separate from the busy records region, decorative placeholders are hidden from assistive technology, and shimmer/spin/progress motion stops for reduced-motion preferences.
+
+This release requires the normal production build and redeployment. It does not require database migrations or new environment variables. Validate `/admin?section=applications`, a legacy `/addgigs/applications?gig=…` link, mobile navigation, and a read/retry cycle after deployment.
+
+Regression checks live in `tests/backend/adminNavigation.test.ts`, `tests/backend/adminLoading.test.ts`, `tests/backend/adminSessionCache.test.ts`, and `tests/backend/linkedAccountCache.test.ts`. Run the full suite on the supported Node.js version (22–24), plus type checking and a production build.

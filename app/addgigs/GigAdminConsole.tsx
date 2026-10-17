@@ -5,8 +5,11 @@ import { apiFetch as fetch } from "@/lib/api/client";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { BrandLogo } from "@/app/_components/BrandLogo";
+import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
+import loadingStyles from "@/app/_components/adminLoading.module.css";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
+import { createAdminReadQueue } from "@/lib/adminReadQueue";
+import { adminSectionHref, type GigAdminView } from "@/lib/adminNavigation";
 import LinkedAccountsPanel from "./LinkedAccountsPanel";
 import KycReviewPanel, { type KycRow } from "./KycReviewPanel";
 import CredentialSubmissionsPanel, { type Assignment } from "./CredentialSubmissionsPanel";
@@ -36,7 +39,6 @@ import {
   readGigApplicationMode,
   resolveGigApplicationMode,
 } from "@/lib/gigApplicationMode";
-import { FIND_GIGS_HREF } from "@/lib/routes";
 import { GigSampleVideosField } from "./GigSampleVideosField";
 import { Field, FormSection, Segmented, SwitchRow, inputCls, textareaCls } from "./gigFormUi";
 import { accountPlatformFor, encodeAccountInstructions, parseAccountInstructions, type AccountSetupView } from "@/lib/accountSetup";
@@ -112,8 +114,8 @@ const LS_KEYS = {
 const PLATFORMS: Platform[] = ["Instagram", "X", "YouTube", "LinkedIn", "TikTok"];
 const PAYOUTS: PayoutType[] = ["Per task", "Per post", "Monthly", "Per 1k Views"];
 const STATUSES: GigStatus[] = ["Open", "Paused", "Closed"];
-// Split view (queue + detail side by side) from 1024px; below that the detail opens as a full-screen sheet.
-const DESKTOP_QUERY = "(min-width: 1024px)";
+// Leave room for the shared sidebar before showing queue and detail side by side.
+const DESKTOP_QUERY = "(min-width: 1280px)";
 const subscribeDesktop = (callback: () => void) => {
   const mq = window.matchMedia(DESKTOP_QUERY);
   mq.addEventListener("change", callback);
@@ -132,16 +134,6 @@ function PillChevron() {
     </svg>
   );
 }
-
-// Admin console tabs. `attention` tabs show an amber count of items waiting on an admin decision.
-const ADMIN_TABS = [
-  { href: "/addgigs/create-new-gig", id: "create-new-gig", label: "Create gig", short: "Create", title: "Create gig", icon: "M10 4.5v11M4.5 10h11", attention: "" },
-  { href: "/addgigs/gig-listings", id: "gig-listings", label: "Gig listings", short: "Listings", title: "Gig listings", icon: "M4 5.5h12v3H4zM4 11.5h12v3H4z", attention: "" },
-  { href: "/addgigs/applications", id: "applications", label: "Applications", short: "Applications", title: "Applications", icon: "M5 5.5h10M5 10h10M5 14.5h6", attention: "awaiting review" },
-  { href: "/addgigs/kyc-review", id: "kyc-review", label: "KYC review", short: "KYC", title: "KYC review", icon: "M10 3.5 15.5 5.5v4c0 3.4-2.3 6-5.5 7-3.2-1-5.5-3.6-5.5-7v-4L10 3.5Z", attention: "pending verification" },
-  { href: "/addgigs/credential-submissions", id: "credential-submissions", label: "Credential submissions", short: "Credentials", title: "Credential submissions", icon: "M6.5 9V7a3.5 3.5 0 0 1 7 0v2M5 9h10v7.5H5z", attention: "submitted for review" },
-  { href: "/addgigs/linked-accounts", id: "linked-accounts", label: "Linked accounts", short: "Accounts", title: "Linked accounts", icon: "M4 6.5A2.5 2.5 0 0 1 6.5 4h3A2.5 2.5 0 0 1 12 6.5v3A2.5 2.5 0 0 1 9.5 12h-3A2.5 2.5 0 0 1 4 9.5zM12 13.5l2-2 1.5 1.5 2.5-3M8 15.5h8", attention: "need a check-in or reel review" },
-] as const;
 
 const GIG_TYPE_HINTS: Record<string, string> = {
   "Email Creator": "Workers set up and verify accounts in the activation workspace.",
@@ -383,15 +375,13 @@ function readLS<T>(key: string, fallback: T): T {
 
 function writeLS<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
+  // Only public gig listings may persist. Admin records and review drafts stay in memory.
+  if (key !== LS_KEYS.GIGS) return;
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // ignore
   }
-}
-
-function toArray<T>(value: unknown, fallback: T[]): T[] {
-  return Array.isArray(value) ? (value as T[]) : fallback;
 }
 
 function nowLabel() {
@@ -403,17 +393,35 @@ function makeId() {
   return `GIG-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
-export type GigAdminView = "create-new-gig" | "gig-listings" | "applications" | "kyc-review" | "credential-submissions" | "linked-accounts";
+export type { GigAdminView } from "@/lib/adminNavigation";
 
 export default function GigAdminConsole({
   view = "create-new-gig",
   nextPath = "/addgigs/create-new-gig",
+  authorized = false,
+  active = true,
+  onCountsChange,
+  searchKey,
+  adminId,
 }: {
   view?: GigAdminView;
   nextPath?: string;
+  authorized?: boolean;
+  active?: boolean;
+  onCountsChange?: (counts: Partial<Record<GigAdminView, number>>) => void;
+  searchKey?: string;
+  adminId?: string;
 }) {
-  const [sessionLoaded, setSessionLoaded] = useState(false);
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [sessionLoaded, setSessionLoaded] = useState(authorized);
+  const [session, setSession] = useState<AuthSession | null>(() => authorized ? { role: "Admin", at: "" } : null);
+  const adminReady = authorized || (sessionLoaded && session?.role === "Admin");
+  const [reads] = useState(createAdminReadQueue);
+  const readable = useRef(adminReady);
+  const [loadedResources, setLoadedResources] = useState({ gigs: false, applications: false, assignments: false, kyc: false });
+  const [loadErrors, setLoadErrors] = useState<Partial<Record<"gigs" | "applications" | "assignments", string>>>({});
+  const dataLoadError = Object.values(loadErrors).filter(Boolean).join(" ");
+  const appsLoading = !loadedResources.applications && !loadErrors.applications;
+  const assignmentsLoading = !loadedResources.assignments && !loadErrors.assignments;
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [apps, setApps] = useState<GigApplication[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -429,10 +437,10 @@ export default function GigAdminConsole({
   const [selectedGigId, setSelectedGigId] = useState<string | "All">("All");
   // Deep link from Gig listings: /addgigs/applications?gig=<id> opens that gig's applications.
   useEffect(() => {
-    if (view !== "applications") return;
-    const gigParam = new URLSearchParams(window.location.search).get("gig");
-    if (gigParam) queueMicrotask(() => setSelectedGigId(gigParam));
-  }, [view]);
+    if (!active || view !== "applications") return;
+    const gigParam = new URLSearchParams(searchKey ?? window.location.search).get("gig");
+    queueMicrotask(() => setSelectedGigId(gigParam || "All"));
+  }, [active, view, searchKey]);
   const [applicationStatusFilter, setApplicationStatusFilter] = useState<ApplicationStatus | "All">("All");
   const [applicationQueueQuery, setApplicationQueueQuery] = useState("");
   const [applicationQueueSort, setApplicationQueueSort] = useState<"latest" | "oldest" | "worker_asc" | "gig_asc">("latest");
@@ -451,50 +459,16 @@ export default function GigAdminConsole({
   // Success banner after publishing/updating, with links to the listings page.
   const [lastSaved, setLastSaved] = useState<{ kind: "created" | "updated"; id: string; title: string } | null>(null);
   const [spotlightCollapsed, setSpotlightCollapsed] = useState(false);
-  // Linked accounts load inside their own panel; the badge only needs two counts.
+  // The sidebar only needs counts; account data loads inside its own panel.
   const [linkedSummary, setLinkedSummary] = useState<{ due: number; reelsToReview: number; accountRequests: number } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch("/api/social-accounts?scope=summary");
-        if (!res.ok) return;
-        const payload = await res.json();
-        if (!cancelled) setLinkedSummary({ due: Number(payload?.due ?? 0), reelsToReview: Number(payload?.reelsToReview ?? 0), accountRequests: Number(payload?.accountRequests ?? 0) });
-      } catch {
-        // Badge only: a failed refresh keeps the last counts.
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 60_000);
-    const onLive = (event: Event) => {
-      const kinds = (event as CustomEvent<AdminLiveKind[] | null>).detail;
-      if (!kinds || kinds.includes("social_account_requests")) void load();
-    };
-    window.addEventListener("admin-live", onLive);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("admin-live", onLive);
-    };
-  }, [view]);
-  const tabCounts: Partial<Record<GigAdminView, number>> = {
-    "linked-accounts": linkedSummary ? linkedSummary.due + linkedSummary.reelsToReview + linkedSummary.accountRequests : 0,
-    "gig-listings": gigs.length,
-    applications: apps.filter((app) => app.status === "Applied" || app.status === "Pending").length,
-    "kyc-review": kycRows.filter((row) => String(row.status ?? "").toLowerCase() === "pending").length,
-    "credential-submissions": assignments.filter((assignment) => assignment.status === "Submitted").length,
-  };
-  // On phones the tab row scrolls: bring the current tab into view.
-  // Re-run when badges load, since they change the row's width.
-  const tabCountKey = Object.values(tabCounts).join(",");
-  useEffect(() => {
-    const activeTab = document.querySelector<HTMLElement>("[data-admin-tab-active]");
-    const scroller = activeTab?.parentElement;
-    if (!activeTab || !scroller || scroller.scrollWidth <= scroller.clientWidth) return;
-    // Scroll only the tab row; scrollIntoView would also nudge the page.
-    scroller.scrollTo({ left: activeTab.offsetLeft - (scroller.clientWidth - activeTab.offsetWidth) / 2 });
-  }, [view, tabCountKey]);
+  const tabCounts = useMemo<Partial<Record<GigAdminView, number>>>(() => ({
+    ...(linkedSummary ? { "linked-accounts": linkedSummary.due + linkedSummary.reelsToReview + linkedSummary.accountRequests } : {}),
+    ...(loadedResources.gigs ? { "gig-listings": gigs.length } : {}),
+    ...(loadedResources.applications ? { applications: apps.filter(app => app.status === "Applied" || app.status === "Pending").length } : {}),
+    ...(loadedResources.kyc ? { "kyc-review": kycRows.filter(row => String(row.status ?? "").toLowerCase() === "pending").length } : {}),
+    ...(loadedResources.assignments ? { "credential-submissions": assignments.filter(assignment => assignment.status === "Submitted").length } : {}),
+  }), [apps, assignments, gigs.length, kycRows, linkedSummary, loadedResources]);
+  useEffect(() => { onCountsChange?.(tabCounts); }, [onCountsChange, tabCounts]);
   const [gigQuery, setGigQuery] = useState("");
   const [gigStatusFilter, setGigStatusFilter] = useState<"All" | GigStatus>("All");
   const [gigSort, setGigSort] = useState<"recent" | "title" | "payout" | "applicants">("recent");
@@ -587,235 +561,197 @@ export default function GigAdminConsole({
   }, [form]);
 
   useEffect(() => {
+    if (authorized) return;
     let alive = true;
     void getMyRole().then(role => {
       if (!alive) return;
       const cached = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
       setSession(role ? { ...cached, role, at: new Date().toISOString() } : null);
       setSessionLoaded(true);
+    }).catch(() => {
+      if (!alive) return;
+      setSession(null);
+      setSessionLoaded(true);
     });
     return () => { alive = false; };
-  }, []);
+  }, [authorized]);
 
   useEffect(() => {
-    const cachedGigs = toArray<Gig>(readLS(LS_KEYS.GIGS, []), []);
-    const cachedApps = toArray<GigApplication>(readLS(LS_KEYS.GIG_APPS, []), []);
-    const cachedAssignments = toArray<Assignment>(readLS(LS_KEYS.GIG_ASSIGNMENTS, []), []);
-    const cachedKyc = toArray<KycRow>(readLS<KycRow[]>(LS_KEYS.GIG_KYC_ROWS, []), []);
-    const cachedKycSync = readLS<string | null>(LS_KEYS.GIG_KYC_SYNC_AT, null);
-    const cachedProposalDraft = readLS<
-      Record<string, { adminNote: string; adminExplanation: string; whatsappLink: string; onboardingSteps?: string }>
-    >(
-      LS_KEYS.PROPOSAL_REVIEW_DRAFT,
-      {}
-    );
-
-    if (cachedGigs.length) setGigs(cachedGigs);
-    if (cachedApps.length) setApps(cachedApps);
-    if (cachedAssignments.length) setAssignments(cachedAssignments);
-    if (cachedKyc.length) setKycRows(cachedKyc);
-    if (cachedKycSync) setKycLastSyncAt(cachedKycSync);
-    if (Object.keys(cachedProposalDraft).length) setProposalReviewDraft(cachedProposalDraft);
-    if (cachedGigs.length || cachedApps.length || cachedAssignments.length || cachedKyc.length) setLoading(false);
-  }, []);
+    if (!adminReady) return;
+    // Remove older persistent admin records. Sensitive rows and drafts now live only in this mounted console.
+    try {
+      for (const key of [LS_KEYS.GIG_APPS, LS_KEYS.GIG_ASSIGNMENTS, LS_KEYS.GIG_KYC_ROWS, LS_KEYS.GIG_KYC_SYNC_AT, LS_KEYS.PROPOSAL_REVIEW_DRAFT]) {
+        window.localStorage.removeItem(key);
+      }
+    } catch { /* Browser storage may be unavailable. */ }
+  }, [adminReady]);
 
   useEffect(() => {
-    writeLS(LS_KEYS.PROPOSAL_REVIEW_DRAFT, proposalReviewDraft);
-  }, [proposalReviewDraft]);
-
-  useEffect(() => {
-    let alive = true;
-    const run = async () => {
-      if (!alive) return;
-      await fetchKyc({ preserveFeedback: true });
-    };
-    const id = window.setInterval(run, 15000);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionLoaded) return;
+    if (authorized || !sessionLoaded) return;
     if (!session) {
       window.location.replace(`/login?next=${encodeURIComponent(nextPath)}`);
-      return;
-    }
-    if (session.role !== "Admin") {
+    } else if (session.role !== "Admin") {
       window.location.replace("/dashboard");
-      return;
     }
-  }, [nextPath, sessionLoaded, session]);
+  }, [authorized, nextPath, sessionLoaded, session]);
 
   useEffect(() => {
-    let alive = true;
-
-    const loadAssignments = async () => {
-      try {
-        const res = await fetch("/api/gig-assignments?all=1", { method: "GET" });
-        if (res.ok) {
-          const data = await res.json();
-          if (!alive) return;
-          const safe = toArray<Assignment>(data, []);
-          setAssignments(safe);
-          writeLS(LS_KEYS.GIG_ASSIGNMENTS, safe);
-        } else {
-          throw new Error("Failed assignments");
-        }
-      } catch {
-        setAssignments([]);
-      }
-    };
-
-    (async () => {
-      try {
-        const res = await fetch("/api/gigs", { method: "GET" });
-        if (res.ok) {
-          const data = await res.json();
-          if (!alive) return;
-          const safe = toArray<Gig>(data, []);
-          setGigs(safe);
-          writeLS(LS_KEYS.GIGS, safe);
-        } else {
-          throw new Error("Failed gigs");
-        }
-      } catch {
-        const cached = toArray<Gig>(readLS(LS_KEYS.GIGS, []), []);
-        setGigs(cached);
-      }
-
-      try {
-        const res = await fetch("/api/gig-applications", { method: "GET" });
-        if (res.ok) {
-          const data = await res.json();
-          if (!alive) return;
-          const safe = toArray<GigApplication>(data, []);
-          setApps(safe);
-          writeLS(LS_KEYS.GIG_APPS, safe);
-        } else {
-          throw new Error("Failed apps");
-        }
-      } catch {
-        const cached = toArray<GigApplication>(readLS(LS_KEYS.GIG_APPS, []), []);
-        setApps(cached);
-      }
-
-      await loadAssignments();
-      if (alive) setLastRefreshAt(new Date().toISOString());
-      if (alive) fetchKyc();
-
-      if (alive) setLoading(false);
-    })();
-
+    readable.current = adminReady;
+    if (!adminReady) reads.abortAll();
     return () => {
-      alive = false;
+      readable.current = false;
+      reads.abortAll();
     };
-  }, []);
+  }, [adminReady, reads]);
 
-  // Live admin signals (lib/useAdminLive): refresh what changed here and tell self-loading panels too.
-  // Applications (incl. instant Email Creator approvals) and assignments/submissions reload quietly, without the
-  // refresh spinner; new applications are announced.
   const seenAppIds = useRef<Set<string> | null>(null);
-  // Baseline from whatever loaded first (cache or initial fetch), so the next new application is announced.
-  useEffect(() => {
-    if (seenAppIds.current === null && apps.length) seenAppIds.current = new Set(apps.map((app) => String(app.id)));
-  }, [apps]);
-  const syncAppsLive = async () => {
+  const applicationReadVersion = useRef(0);
+  const pendingApplicationWrites = useRef(0);
+  const gigTitles = useRef(gigs);
+  useEffect(() => { gigTitles.current = gigs; }, [gigs]);
+  const loadGigs = useCallback(async ({ afterCurrent = false } = {}) => reads.run("gigs", async signal => {
+    if (!readable.current) return;
     try {
-      const res = await fetch("/api/gig-applications", { method: "GET" });
-      if (!res.ok) return;
-      const safe = toArray<GigApplication>(await res.json(), []);
+      const res = await fetch("/api/gigs", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      const payload = await res.json();
+      if (!res.ok || !Array.isArray(payload)) throw new Error("Gig listings could not be refreshed.");
+      if (signal.aborted) return;
+      setGigs(payload);
+      writeLS(LS_KEYS.GIGS, payload);
+      setLoadedResources(previous => ({ ...previous, gigs: true }));
+      setLoadErrors(previous => ({ ...previous, gigs: undefined }));
+    } catch {
+      if (!signal.aborted) setLoadErrors(previous => ({ ...previous, gigs: "Gig listings could not be refreshed." }));
+    } finally {
+      if (!signal.aborted) setLoading(false);
+    }
+  }, { afterCurrent }), [reads]);
+
+  const loadApps = useCallback(async ({ announce = false, afterCurrent = false } = {}) => reads.run("applications", async signal => {
+    if (!readable.current || pendingApplicationWrites.current) return;
+    const version = ++applicationReadVersion.current;
+    setAppsRefreshing(true);
+    try {
+      const res = await fetch("/api/gig-applications", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      const payload = await res.json();
+      if (!res.ok || !Array.isArray(payload)) throw new Error("Applications could not be refreshed.");
+      if (signal.aborted || pendingApplicationWrites.current) return;
+      const safe = payload as GigApplication[];
       const previous = seenAppIds.current;
-      const fresh = previous ? safe.filter((app) => !previous.has(String(app.id))) : [];
-      seenAppIds.current = new Set(safe.map((app) => String(app.id)));
+      const fresh = previous && announce ? safe.filter(app => !previous.has(String(app.id))) : [];
+      seenAppIds.current = new Set(safe.map(app => String(app.id)));
       setApps(safe);
-      writeLS(LS_KEYS.GIG_APPS, safe);
       setAppsSyncedAt(new Date().toISOString());
+      setLoadedResources(previous => ({ ...previous, applications: true }));
+      setLoadErrors(previous => ({ ...previous, applications: undefined }));
       if (fresh.length) {
         const first = fresh[0];
-        const gigTitle = gigs.find((gig) => String(gig.id) === String(first.gigId))?.title;
+        const gigTitle = gigTitles.current.find(gig => String(gig.id) === String(first.gigId))?.title;
         const instant = String(first.status ?? "").toLowerCase() === "accepted";
         setApplicationNotice({
           tone: "success",
-          text:
-            fresh.length === 1
-              ? `New application from ${first.workerName || first.workerId}${gigTitle ? ` for ${gigTitle}` : ""}${instant ? " · approved instantly" : ""}.`
-              : `${fresh.length} new applications.`,
+          text: fresh.length === 1
+            ? `New application from ${first.workerName || first.workerId}${gigTitle ? ` for ${gigTitle}` : ""}${instant ? " · approved instantly" : ""}.`
+            : `${fresh.length} new applications.`,
         });
       }
     } catch {
-      /* keep the current list */
+      if (!signal.aborted) setLoadErrors(previous => ({ ...previous, applications: "Applications could not be refreshed." }));
+    } finally {
+      if (applicationReadVersion.current === version) setAppsRefreshing(false);
     }
-  };
-  const syncAssignmentsLive = async () => {
-    try {
-      const res = await fetch("/api/gig-assignments?all=1", { method: "GET" });
-      if (!res.ok) return;
-      const safe = toArray<Assignment>(await res.json(), []);
-      setAssignments(safe);
-      writeLS(LS_KEYS.GIG_ASSIGNMENTS, safe);
-      setLastRefreshAt(new Date().toISOString());
-    } catch {
-      /* keep the current list */
-    }
-  };
-  useAdminLive(true, (kinds) => {
-    if (!kinds || kinds.has("worker_kyc")) void fetchKyc({ preserveFeedback: true });
-    if (!kinds || kinds.has("gig_applications")) void syncAppsLive();
-    if (!kinds || kinds.has("gig_assignments") || kinds.has("gig_account_credentials")) void syncAssignmentsLive();
-    window.dispatchEvent(new CustomEvent<AdminLiveKind[] | null>("admin-live", { detail: kinds ? [...kinds] : null }));
-  });
+  }, { afterCurrent }), [reads]);
 
-  const fetchKyc = async ({ preserveFeedback = false }: { preserveFeedback?: boolean } = {}) => {
-    setKycLoading(true);
+  const loadAssignments = useCallback(async ({ afterCurrent = false } = {}) => reads.run("assignments", async signal => {
+    if (!readable.current) return;
+    try {
+      const res = await fetch("/api/gig-assignments?all=1", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      const payload = await res.json();
+      if (!res.ok || !Array.isArray(payload)) throw new Error("Credential submissions could not be refreshed.");
+      if (signal.aborted) return;
+      setAssignments(payload);
+      setLastRefreshAt(new Date().toISOString());
+      setLoadedResources(previous => ({ ...previous, assignments: true }));
+      setLoadErrors(previous => ({ ...previous, assignments: undefined }));
+    } catch {
+      if (!signal.aborted) setLoadErrors(previous => ({ ...previous, assignments: "Credential submissions could not be refreshed." }));
+    }
+  }, { afterCurrent }), [reads]);
+
+  const fetchKyc = useCallback(async ({ preserveFeedback = false, afterCurrent = false }: { preserveFeedback?: boolean; afterCurrent?: boolean } = {}) => reads.run("kyc", async signal => {
+    if (!readable.current) return;
     if (!preserveFeedback) {
+      setKycLoading(true);
       setKycError(null);
       setKycNotice(null);
     }
     try {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) throw new Error("Missing session");
-      const res = await fetch("/api/admin/kyc", { headers: { Authorization: `Bearer ${token}` } });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(payload?.error || "Failed to load KYC");
-      const safeRows = toArray<KycRow>(payload.rows, []);
-      const syncedAt = new Date().toISOString();
-      setKycRows(safeRows);
-      setKycLastSyncAt(syncedAt);
-      writeLS(LS_KEYS.GIG_KYC_ROWS, safeRows);
-      writeLS(LS_KEYS.GIG_KYC_SYNC_AT, syncedAt);
-    } catch (e: unknown) {
-      setKycError(e instanceof Error ? e.message : "Failed to load KYC");
+      const token = await getAdminToken();
+      signal.throwIfAborted();
+      const res = await fetch("/api/admin/kyc", {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(payload?.rows)) throw new Error(payload?.error || "KYC review could not be refreshed.");
+      if (signal.aborted) return;
+      setKycRows(payload.rows);
+      setKycLastSyncAt(new Date().toISOString());
+      setLoadedResources(previous => ({ ...previous, kyc: true }));
+      setKycError(null);
+    } catch (error) {
+      if (!signal.aborted) setKycError(error instanceof Error ? error.message : "KYC review could not be refreshed.");
     } finally {
-      setKycLoading(false);
+      if (!signal.aborted) setKycLoading(false);
     }
-  };
+  }, { afterCurrent }), [getAdminToken, reads]);
+
+  const loadLinkedSummary = useCallback(async ({ afterCurrent = false } = {}) => reads.run("summary", async signal => {
+    if (!readable.current) return;
+    try {
+      const res = await fetch("/api/social-accounts?scope=summary", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+      if (!res.ok) return;
+      const payload = await res.json();
+      if (signal.aborted) return;
+      const count = (value: unknown) => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+      setLinkedSummary({ due: count(payload?.due), reelsToReview: count(payload?.reelsToReview), accountRequests: count(payload?.accountRequests) });
+    } catch { /* Keep the previous badge count on transient errors. */ }
+  }, { afterCurrent }), [reads]);
+
+  const refreshData = useCallback((afterCurrent = false) => Promise.allSettled([
+    loadGigs({ afterCurrent }),
+    loadApps({ afterCurrent }),
+    loadAssignments({ afterCurrent }),
+    fetchKyc({ preserveFeedback: loadedResources.kyc, afterCurrent }),
+    loadLinkedSummary({ afterCurrent }),
+  ]), [fetchKyc, loadApps, loadAssignments, loadGigs, loadLinkedSummary, loadedResources.kyc]);
+  const refreshDataRef = useRef(refreshData);
+  useEffect(() => { refreshDataRef.current = refreshData; }, [refreshData]);
 
   useEffect(() => {
-    let alive = true;
-    const run = async () => {
-      if (!alive) return;
-      try {
-        const res = await fetch("/api/gig-assignments?all=1", { method: "GET" });
-        if (res.ok) {
-          const data = await res.json();
-          if (!alive) return;
-          const safe = toArray<Assignment>(data, []);
-          setAssignments(safe);
-          writeLS(LS_KEYS.GIG_ASSIGNMENTS, safe);
-        }
-      } catch {
-        // ignore
-      }
+    if (!adminReady || !active) return;
+    // Independent resources arrive as soon as each request finishes; navigation retains previous rows.
+    void refreshDataRef.current();
+  }, [active, adminReady]);
+
+  useEffect(() => {
+    if (!adminReady || !active) return;
+    const refresh = () => {
+      void refreshDataRef.current(true);
+      window.dispatchEvent(new CustomEvent<AdminLiveKind[] | null>("admin-live", { detail: null }));
     };
-    const id = window.setInterval(run, 10000);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
-  }, []);
+    window.addEventListener("admin-refresh", refresh);
+    return () => window.removeEventListener("admin-refresh", refresh);
+  }, [active, adminReady]);
+
+  useAdminLive(adminReady && active, kinds => {
+    if (!kinds) void loadGigs({ afterCurrent: true });
+    if (!kinds || kinds.has("worker_kyc")) void fetchKyc({ preserveFeedback: true, afterCurrent: true });
+    if (!kinds || kinds.has("gig_applications")) void loadApps({ announce: true, afterCurrent: true });
+    if (!kinds || kinds.has("gig_assignments") || kinds.has("gig_account_credentials")) void loadAssignments({ afterCurrent: true });
+    if (!kinds || kinds.has("social_account_requests")) void loadLinkedSummary({ afterCurrent: true });
+    window.dispatchEvent(new CustomEvent<AdminLiveKind[] | null>("admin-live", { detail: kinds ? [...kinds] : null }));
+  }, { refreshOnConnect: true });
 
   const appsForGig = useMemo(() => {
     if (selectedGigId === "All") return apps;
@@ -910,7 +846,7 @@ export default function GigAdminConsole({
   // J/K step through the queue on desktop (arrows too inside the mobile sheet). Decisions stay click-only:
   // approving or rejecting emails the worker, so a stray keypress shouldn't send one.
   useEffect(() => {
-    if (view !== "applications") return;
+    if (!active || view !== "applications") return;
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey || appDrawer) return;
       const target = event.target as HTMLElement | null;
@@ -928,8 +864,8 @@ export default function GigAdminConsole({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, appDrawer, detailSheetOpen, stepApplication]);
-  const sheetVisible = !isDesktop && detailSheetOpen && view === "applications";
+  }, [active, view, appDrawer, detailSheetOpen, stepApplication]);
+  const sheetVisible = active && !isDesktop && detailSheetOpen && view === "applications";
   useEffect(() => {
     if (!sheetVisible) return;
     const previous = document.body.style.overflow;
@@ -1047,29 +983,41 @@ export default function GigAdminConsole({
       postedAt: nowLabel(),
     };
 
+    reads.abort("gigs");
     setGigs((prev) => {
       const next = [payload, ...prev];
       writeLS(LS_KEYS.GIGS, next);
       return next;
     });
-    setLastSaved({ kind: "created", id: payload.id, title: payload.title });
-
     try {
       const res = await fetch("/api/gigs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setGigs((prev) => {
-          const next = prev.map((gig) => (gig.id === payload.id ? { ...data, applicationMode: normalizeGigApplicationMode(data) } : gig));
-          writeLS(LS_KEYS.GIGS, next);
-          return next;
-        });
-      }
-    } catch {
-      // keep optimistic
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.id) throw new Error(data?.error || "The gig could not be published. Please try again.");
+      reads.abort("gigs");
+      setGigs(previous => {
+        const saved = { ...data, applicationMode: normalizeGigApplicationMode(data) } as Gig;
+        const next = previous.some(gig => gig.id === payload.id)
+          ? previous.map(gig => gig.id === payload.id ? saved : gig)
+          : [saved, ...previous];
+        writeLS(LS_KEYS.GIGS, next);
+        return next;
+      });
+      setLastSaved({ kind: "created", id: data.id, title: data.title || payload.title });
+      void loadGigs();
+    } catch (error) {
+      reads.abort("gigs");
+      setGigs(previous => {
+        const next = previous.filter(gig => gig.id !== payload.id);
+        writeLS(LS_KEYS.GIGS, next);
+        return next;
+      });
+      void loadGigs();
+      setFormError(error instanceof Error ? error.message : "The gig could not be published. Please try again.");
+      return;
     }
 
     setForm({
@@ -1100,7 +1048,7 @@ export default function GigAdminConsole({
   };
 
   // Listings page links here with ?edit=<id>: open that gig in the form once gigs have loaded.
-  const editParamHandledRef = useRef(false);
+  const editParamHandledRef = useRef<string | null>(null);
   const startEdit = (gig: Gig) => {
     setEditingGig(gig);
     const normalizedType = normalizeGigType(gig.gigType);
@@ -1139,16 +1087,23 @@ export default function GigAdminConsole({
   };
 
   useEffect(() => {
-    if (view !== "create-new-gig" || editParamHandledRef.current || gigs.length === 0) return;
-    const editId = new URLSearchParams(window.location.search).get("edit");
-    if (!editId) return;
-    editParamHandledRef.current = true;
-    // Drop the param so a reload or "Publish" afterwards doesn't re-open the edit.
-    window.history.replaceState(window.history.state, "", window.location.pathname);
+    if (view !== "create-new-gig") return;
+    const params = new URLSearchParams(searchKey ?? window.location.search);
+    const editId = params.get("edit");
+    if (!editId) {
+      editParamHandledRef.current = null;
+      return;
+    }
+    if (editParamHandledRef.current === editId || gigs.length === 0) return;
     const gig = gigs.find((item) => item.id === editId);
-    if (gig) queueMicrotask(() => startEdit(gig));
-    // startEdit is recreated every render; the ref guard above makes this run once, so it isn't a dependency.
-  }, [view, gigs]);
+    if (!gig) return;
+    editParamHandledRef.current = editId;
+    params.delete("edit");
+    const query = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    queueMicrotask(() => startEdit(gig));
+    // The handled ID prevents repeated form resets while retaining support for a later edit link.
+  }, [view, gigs, searchKey]);
 
   const updateGig = async () => {
     if (!editingGig) return;
@@ -1185,6 +1140,8 @@ export default function GigAdminConsole({
       status: form.status,
     };
 
+    reads.abort("gigs");
+
     setGigs((prev) => {
       const next = prev.map((gig) => (gig.id === editingGig.id ? { ...gig, ...updates } : gig));
       writeLS(LS_KEYS.GIGS, next);
@@ -1202,12 +1159,15 @@ export default function GigAdminConsole({
         throw new Error(payload?.error || "Failed to update gig.");
       }
       const data = await res.json();
+      reads.abort("gigs");
       setGigs((prev) => {
         const next = prev.map((gig) => (gig.id === editingGig.id ? { ...data, applicationMode: normalizeGigApplicationMode(data) } : gig));
         writeLS(LS_KEYS.GIGS, next);
         return next;
       });
     } catch {
+      reads.abort("gigs");
+      setGigs(previous => previous.map(gig => gig.id === editingGig.id ? editingGig : gig));
       setFormError("Failed to update gig. Please try again.");
       return;
     }
@@ -1245,6 +1205,8 @@ export default function GigAdminConsole({
     const confirmed = window.confirm("Delete this gig? This will remove all related applications.");
     if (!confirmed) return;
 
+    reads.abort("gigs");
+    reads.abort("applications");
     setGigs((prev) => {
       const next = prev.filter((gig) => gig.id !== gigId);
       writeLS(LS_KEYS.GIGS, next);
@@ -1257,12 +1219,19 @@ export default function GigAdminConsole({
     });
 
     try {
-      await fetch(`/api/gigs?id=${encodeURIComponent(gigId)}`, { method: "DELETE" });
+      const res = await fetch(`/api/gigs?id=${encodeURIComponent(gigId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("The gig could not be deleted.");
     } catch {
-      // ignore
+      setBrowseControlNotice({ tone: "danger", text: "The gig could not be deleted. Please try again." });
+    } finally {
+      reads.abort("gigs");
+      reads.abort("applications");
+      void loadGigs();
+      void loadApps();
     }
   };
   const updateGigStatus = async (gigId: string, status: GigStatus) => {
+    reads.abort("gigs");
     setGigs((prev) => {
       const next = prev.map((gig) => (gig.id === gigId ? { ...gig, status } : gig));
       writeLS(LS_KEYS.GIGS, next);
@@ -1270,13 +1239,17 @@ export default function GigAdminConsole({
     });
 
     try {
-      await fetch("/api/gigs", {
+      const res = await fetch("/api/gigs", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: gigId, updates: { status } }),
       });
+      if (!res.ok) throw new Error("The gig status could not be saved.");
     } catch {
-      // ignore
+      setBrowseControlNotice({ tone: "danger", text: "The gig status could not be saved. Please try again." });
+    } finally {
+      reads.abort("gigs");
+      void loadGigs();
     }
   };
 
@@ -1288,6 +1261,7 @@ export default function GigAdminConsole({
         : normalized === "Project"
           ? "Project"
         : normalized;
+    reads.abort("gigs");
     setGigs((prev) => {
       const next = prev.map((gig) => (gig.id === gigId ? { ...gig, gigType: resolved } : gig));
       writeLS(LS_KEYS.GIGS, next);
@@ -1295,13 +1269,17 @@ export default function GigAdminConsole({
     });
 
     try {
-      await fetch("/api/gigs", {
+      const res = await fetch("/api/gigs", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: gigId, updates: { gigType: resolved } }),
       });
+      if (!res.ok) throw new Error("The gig type could not be saved.");
     } catch {
-      // ignore
+      setBrowseControlNotice({ tone: "danger", text: "The gig type could not be saved. Please try again." });
+    } finally {
+      reads.abort("gigs");
+      void loadGigs();
     }
   };
 
@@ -1327,6 +1305,8 @@ export default function GigAdminConsole({
       kycRequired: isCustomGigType || isProjectStyleGig(normalizedType) ? customFields.kycRequired : projectFields.kycRequired,
     });
 
+    reads.abort("gigs");
+
     setGigs((prev) => {
       const next = prev.map((item) => (item.id === gig.id ? { ...item, requirements: nextRequirements } : item));
       writeLS(LS_KEYS.GIGS, next);
@@ -1344,12 +1324,15 @@ export default function GigAdminConsole({
         throw new Error(payload?.error || "Failed to update application flow.");
       }
       const data = await res.json();
+      reads.abort("gigs");
       setGigs((prev) => {
         const next = prev.map((item) => (item.id === gig.id ? { ...data, applicationMode: normalizeGigApplicationMode(data) } : item));
         writeLS(LS_KEYS.GIGS, next);
         return next;
       });
     } catch {
+      reads.abort("gigs");
+      setGigs(previous => previous.map(item => item.id === gig.id ? gig : item));
       setBrowseControlNotice({ tone: "danger", text: "Could not save application flow. Please retry." });
     }
   };
@@ -1389,6 +1372,7 @@ export default function GigAdminConsole({
       const nextRequirements = mergeBrowseSpotlightConfig(gig.requirements, updates);
       setBrowseControlSavingId(gig.id);
       setBrowseControlNotice(null);
+      reads.abort("gigs");
       setGigs((prev) => {
         const next = prev.map((item) =>
           item.id === gig.id
@@ -1419,11 +1403,16 @@ export default function GigAdminConsole({
           const payload = await res.json().catch(() => null);
           throw new Error(payload?.error || "Failed to update browse spotlight controls.");
         }
+        const data = await res.json();
+        reads.abort("gigs");
+        setGigs(previous => previous.map(item => item.id === gig.id ? { ...data, applicationMode: normalizeGigApplicationMode(data) } : item));
         setBrowseControlNotice({
           tone: "success",
           text: updates.pinned === false ? "Gig removed from Browse spotlight." : "Browse spotlight settings updated.",
         });
       } catch (error) {
+        reads.abort("gigs");
+        setGigs(previous => previous.map(item => item.id === gig.id ? gig : item));
         setBrowseControlNotice({
           tone: "danger",
           text: error instanceof Error ? error.message : "Failed to update Browse spotlight controls.",
@@ -1432,7 +1421,7 @@ export default function GigAdminConsole({
         setBrowseControlSavingId(null);
       }
     },
-    []
+    [reads]
   );
 
   const toggleGigPinned = useCallback(
@@ -1471,6 +1460,8 @@ export default function GigAdminConsole({
       onboardingSteps: review?.onboardingSteps ?? app.proposal?.onboardingSteps ?? "",
       reviewedAt: decidedAt,
     };
+    pendingApplicationWrites.current++;
+    reads.abort("applications");
     setApps((prev) => {
       const next = prev.map((a) => (a.id === app.id ? { ...a, status, decidedAt, proposal: nextProposal } : a));
       writeLS(LS_KEYS.GIG_APPS, next);
@@ -1497,6 +1488,8 @@ export default function GigAdminConsole({
       if (!res.ok) {
         throw new Error(payload?.error || "Unable to update recruiter workflow.");
       }
+      reads.abort("applications");
+      setApps(previous => previous.map(item => item.id === app.id ? { ...item, status, decidedAt, proposal: nextProposal } : item));
       if (!options?.quiet) {
         if (payload?.mailStatus?.sent) {
           setApplicationNotice({ tone: "success", text: `Worker notification sent to ${payload.mailStatus.recipient}.` });
@@ -1507,6 +1500,7 @@ export default function GigAdminConsole({
       return { ok: true, mailSent: !!payload?.mailStatus?.sent };
     } catch (err: unknown) {
       // Roll back the optimistic update so the queue reflects what the server actually has.
+      reads.abort("applications");
       setApps((prev) => {
         const next = prev.map((a) => (a.id === app.id ? app : a));
         writeLS(LS_KEYS.GIG_APPS, next);
@@ -1515,6 +1509,9 @@ export default function GigAdminConsole({
       const message = err instanceof Error ? err.message : "Unable to update recruiter workflow.";
       if (!options?.quiet) setApplicationNotice({ tone: "danger", text: message });
       return { ok: false, error: message };
+    } finally {
+      pendingApplicationWrites.current--;
+      if (!pendingApplicationWrites.current) void loadApps();
     }
   };
 
@@ -1617,33 +1614,13 @@ export default function GigAdminConsole({
   };
 
   const refreshApps = useCallback(async () => {
-    setAppsRefreshing(true);
-    try {
-      const res = await fetch("/api/gig-applications", { method: "GET" });
-      if (!res.ok) return;
-      const safe = toArray<GigApplication>(await res.json(), []);
-      setApps(safe);
-      writeLS(LS_KEYS.GIG_APPS, safe);
-      setAppsSyncedAt(new Date().toISOString());
-    } catch {
-      /* keep cached data */
-    } finally {
-      setAppsRefreshing(false);
-    }
-  }, []);
+    await loadApps({ afterCurrent: true });
+  }, [loadApps]);
 
   const refreshAssignments = async () => {
     setAssignmentsRefreshing(true);
-    try {
-      const res = await fetch("/api/gig-assignments?all=1", { method: "GET" });
-      const data = res.ok ? await res.json() : [];
-      const safe = Array.isArray(data) ? data : [];
-      setAssignments(safe);
-      writeLS(LS_KEYS.GIG_ASSIGNMENTS, safe);
-      setLastRefreshAt(new Date().toISOString());
-    } finally {
-      setAssignmentsRefreshing(false);
-    }
+    try { await loadAssignments({ afterCurrent: true }); }
+    finally { setAssignmentsRefreshing(false); }
   };
 
 
@@ -1742,6 +1719,7 @@ export default function GigAdminConsole({
                       });
                       const payload = await res.json().catch(() => null);
                       if (!res.ok) throw new Error(payload?.error || "Couldn't read the bio.");
+                      reads.abort("applications");
                       setApps((prev) => {
                         const next = prev.map((a) => (a.id === app.id ? { ...a, ...payload, status: payload.status ?? a.status } : a));
                         writeLS(LS_KEYS.GIG_APPS, next);
@@ -1756,6 +1734,7 @@ export default function GigAdminConsole({
                       });
                       const payload = await res.json().catch(() => null);
                       if (!res.ok) throw new Error(payload?.error || "Couldn't send the request.");
+                      reads.abort("applications");
                       setApps((prev) => {
                         const next = prev.map((a) => (a.id === app.id ? { ...a, ...payload, status: payload.status ?? a.status } : a));
                         writeLS(LS_KEYS.GIG_APPS, next);
@@ -1775,107 +1754,37 @@ export default function GigAdminConsole({
       })()
     : null;
 
-  return (
-    <div className="ops-dashboard-skin min-h-screen text-slate-900">
-      <header className="sticky top-0 z-40 border-b border-[#e3e5e1] bg-white/92 backdrop-blur-md">
-        <div className="mx-auto flex h-[60px] w-full max-w-[1440px] items-center justify-between gap-3 px-3.5 sm:px-6 lg:h-[64px]">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link href="/admin" className="flex shrink-0 items-center gap-2.5 rounded-lg px-1 py-1 transition hover:bg-[#f3f4f1]" aria-label="Back to admin console">
-              <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]">
-                <BrandLogo className="h-8 w-8" sizes="32px" />
-              </span>
-            </Link>
-            <div className="min-w-0 leading-tight">
-              <nav aria-label="Breadcrumb" className="hidden items-center gap-1 text-[11.5px] font-medium text-[#7a827c] sm:flex">
-                <Link href="/admin" className="transition hover:text-[#1a201c]">Admin console</Link>
-                <span aria-hidden="true">/</span>
-                <span>Gig operations</span>
-              </nav>
-              <div className="truncate text-[16px] font-semibold text-[#1a201c] lg:text-[17px]">{view === "create-new-gig" && editingGig ? "Edit gig" : ADMIN_TABS.find((tab) => tab.id === view)?.title}</div>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {/* Live data indicator: everything here polls in the background */}
-            <span
-              className="hidden h-8 items-center gap-1.5 rounded-full border border-[#e3e5e1] bg-white px-2.5 text-[12px] font-semibold text-[#4b544e] md:inline-flex"
-              title={lastRefreshAt ? `Synced ${formatRelative(lastRefreshAt)}` : "Syncing…"}
-            >
-              <span className="relative flex h-2 w-2" aria-hidden>
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2e7d4f]/60 motion-reduce:hidden" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2e7d4f]" />
-              </span>
-              Live
-            </span>
-            <Link
-              href={FIND_GIGS_HREF}
-              aria-label="Open the creator Browse view"
-              title="See Browse as creators do"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold text-[#4b544e] transition hover:bg-[#f1f3f0] hover:text-[#1a201c]"
-            >
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
-                <path d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5Z" />
-                <circle cx="10" cy="10" r="2.2" />
-              </svg>
-              <span className="hidden sm:inline">Browse view</span>
-            </Link>
-            <Link
-              href="/admin"
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d9ddd8] bg-white px-3 text-[13px] font-semibold text-[#1a201c] shadow-[0_1px_2px_rgba(26,32,28,0.06)] transition hover:bg-[#f7f8f6]"
-            >
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
-                <path d="m12 5-5 5 5 5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="hidden min-[400px]:inline">Admin</span>
-            </Link>
-          </div>
-        </div>
-        <nav aria-label="Gig operations" className="relative mx-auto w-full max-w-[1440px] px-3.5 sm:px-6">
-          {/* Fade edges hint that the tab row scrolls on narrow screens */}
-          <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-gradient-to-r from-white to-transparent md:hidden" />
-          <span aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-10 w-6 bg-gradient-to-l from-white to-transparent md:hidden" />
-          <div className="dashboard-chip-scroller relative -mb-px flex gap-4 overflow-x-auto pr-4 sm:gap-5">
-            {ADMIN_TABS.map((tab) => {
-              const active = view === tab.id;
-              const count = tabCounts[tab.id] ?? 0;
-              return (
-                <Link
-                  key={tab.id}
-                  href={tab.href}
-                  aria-current={active ? "page" : undefined}
-                  data-admin-tab-active={active ? "" : undefined}
-                  className={`group inline-flex shrink-0 items-center gap-1.5 border-b-2 pb-2.5 pt-1 text-[13.5px] font-semibold transition ${
-                    active ? "border-[#1f2b24] text-[#1a201c]" : "border-transparent text-[#7a827c] hover:border-[#d9ddd8] hover:text-[#1a201c]"
-                  }`}
-                >
-                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
-                    <path d={tab.icon} strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="sm:hidden">{tab.short}</span>
-                  <span className="hidden sm:inline">{tab.label}</span>
-                  {count > 0 ? (
-                    <span
-                      className={`rounded-full px-1.5 text-[11px] font-bold leading-[18px] tabular-nums ${
-                        active ? "bg-[#1f2b24] text-white" : tab.attention ? "bg-[#fdf1dc] text-[#9a5b00]" : "bg-[#eef0ed] text-[#616a64]"
-                      }`}
-                    >
-                      {count > 99 ? "99+" : count}
-                      <span className="sr-only"> {tab.attention ? tab.attention : "total"}</span>
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
-      </header>
+  if (!active) return null;
+  const initialLoading =
+    (view === "applications" && appsLoading) ||
+    (view === "credential-submissions" && assignmentsLoading) ||
+    (view === "gig-listings" && loading) ||
+    (view === "kyc-review" && !loadedResources.kyc && !kycError);
+  if (initialLoading) return <AdminSectionLoading label={view === "applications" ? "Loading applications" : "Loading live records"} variant={view === "applications" ? "applications" : "section"} />;
 
-      <main className="mx-auto w-full max-w-[1440px] px-3.5 py-5 sm:px-6 sm:py-7">
+  const initialError =
+    (view === "applications" && !loadedResources.applications && loadErrors.applications) ||
+    (view === "credential-submissions" && !loadedResources.assignments && loadErrors.assignments) ||
+    (view === "gig-listings" && !loadedResources.gigs && loadErrors.gigs);
+  const loadFeedback = dataLoadError ? (
+    <Banner tone="danger">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span>{dataLoadError} Any previously loaded records are still shown.</span>
+        <button type="button" onClick={() => void refreshData(true)} className="shrink-0 rounded-lg border border-current px-3 py-1.5 text-[12px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current">Retry</button>
+      </div>
+    </Banner>
+  ) : null;
+  if (initialError) return <div role="alert">{loadFeedback}</div>;
+
+  return (
+    <div className="min-w-0 space-y-5 text-slate-900">
+        {loadFeedback}
         {view === "create-new-gig" && (
-            <section className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.85fr)] lg:items-start">
+            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.85fr)] xl:items-start">
           <div className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-sm">
             {/* Header + section navigator (sticks under the admin header while scrolling the form) */}
-            {/* Sticks flush under the admin header (96px tablet / 100px desktop); on phones it scrolls away to save space. */}
-            <div className="z-10 rounded-t-3xl border-b border-slate-100 bg-white/95 px-4 pb-3 pt-4 backdrop-blur sm:px-6 sm:pt-5 md:sticky md:top-24 lg:top-[6.25rem]">
+            {/* Sticks below the shared admin header; on phones it scrolls away to save space. */}
+            <div className="z-10 rounded-t-3xl border-b border-slate-100 bg-white/95 px-4 pb-3 pt-4 backdrop-blur sm:px-6 sm:pt-5 md:sticky md:top-[60px] lg:top-16">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-slate-900 sm:text-[18px]">{editingGig ? "Edit gig" : "Create new gig"}</h2>
@@ -1926,7 +1835,7 @@ export default function GigAdminConsole({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <Link href="/addgigs/gig-listings" className="inline-flex h-8 items-center rounded-full bg-[#1f2b24] px-3 text-[12px] font-semibold text-white hover:bg-[#2b3a31]">
+                  <Link href={adminSectionHref("gig-listings")} className="inline-flex h-8 items-center rounded-full bg-[#1f2b24] px-3 text-[12px] font-semibold text-white hover:bg-[#2b3a31]">
                     View in listings
                   </Link>
                   <button type="button" onClick={() => setLastSaved(null)} className="inline-flex h-8 items-center rounded-full border border-[#c8e0cf] bg-white px-3 text-[12px] font-semibold text-[#1f5131] hover:bg-[#f7fbf7]">
@@ -2320,7 +2229,7 @@ export default function GigAdminConsole({
           </div>
 
           {/* Sidebar: quick stats + recent gigs with shortcuts into the listings page */}
-          <aside className="space-y-4 lg:sticky lg:top-[7.5rem]">
+          <aside className="space-y-4 xl:sticky xl:top-20">
             {/* Live creator preview: how the Find gigs card will read, updated as the form changes */}
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-2">
@@ -2372,16 +2281,16 @@ export default function GigAdminConsole({
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold text-slate-900">Marketplace</div>
-                <Link href="/addgigs/gig-listings" className="text-xs font-semibold text-[#2f6655] hover:underline">
+                <Link href={adminSectionHref("gig-listings")} className="text-xs font-semibold text-[#2f6655] hover:underline">
                   Manage listings →
                 </Link>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-3">
                 {[
-                  { label: "Open gigs", value: gigStatusCounts.Open, href: "/addgigs/gig-listings" },
-                  { label: "Applications", value: apps.length, href: "/addgigs/applications" },
-                  { label: "Accepted", value: apps.filter((a) => a.status === "Accepted").length, href: "/addgigs/applications" },
-                  { label: "Pending review", value: apps.filter((a) => a.status === "Applied" || a.status === "Pending").length, href: "/addgigs/applications" },
+                  { label: "Open gigs", value: gigStatusCounts.Open, href: adminSectionHref("gig-listings") },
+                  { label: "Applications", value: apps.length, href: adminSectionHref("applications") },
+                  { label: "Accepted", value: apps.filter((a) => a.status === "Accepted").length, href: adminSectionHref("applications") },
+                  { label: "Pending review", value: apps.filter((a) => a.status === "Applied" || a.status === "Pending").length, href: adminSectionHref("applications") },
                 ].map((stat) => (
                   <Link key={stat.label} href={stat.href} className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 transition hover:border-slate-300 hover:bg-white">
                     <div className="text-[11.5px] text-slate-500">{stat.label}</div>
@@ -2423,7 +2332,7 @@ export default function GigAdminConsole({
                 </ul>
               )}
               <Link
-                href="/addgigs/gig-listings"
+                href={adminSectionHref("gig-listings")}
                 className="mt-3 flex h-9 items-center justify-center rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
               >
                 View all listings
@@ -2444,7 +2353,7 @@ export default function GigAdminConsole({
               </p>
             </div>
             <Link
-              href="/addgigs/create-new-gig"
+              href={adminSectionHref("create-new-gig")}
               className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[10px] bg-[#1f2b24] px-4 text-[13.5px] font-semibold text-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] transition hover:bg-[#2b3a31]"
             >
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4" aria-hidden>
@@ -2718,7 +2627,7 @@ export default function GigAdminConsole({
                                 </span>
                               ))}
                             <Link
-                              href={`/addgigs/applications?gig=${encodeURIComponent(gig.id)}`}
+                              href={adminSectionHref("applications", { gig: gig.id })}
                               className="rounded-md border border-[#d6e3f5] bg-[#f3f7fd] px-2 py-0.5 font-semibold text-[#2a5b9b] hover:border-[#b9cdea]"
                               title="Open this gig's applications"
                             >
@@ -2734,7 +2643,7 @@ export default function GigAdminConsole({
                       {/* Primary actions */}
                       <div className="flex gap-2 sm:pl-14 md:hidden lg:flex lg:justify-end lg:pl-0">
                         <Link
-                          href={`/addgigs/create-new-gig?edit=${encodeURIComponent(gig.id)}`}
+                          href={adminSectionHref("create-new-gig", { edit: gig.id })}
                           className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[10px] bg-[#1f2b24] px-4 text-[13px] font-semibold text-white transition hover:bg-[#2b3a31] sm:flex-none"
                         >
                           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
@@ -2830,7 +2739,7 @@ export default function GigAdminConsole({
                       {/* Tablets: actions join the control row instead of taking their own line */}
                       <div className="ml-auto hidden shrink-0 items-center gap-1.5 md:flex lg:hidden">
                         <Link
-                          href={`/addgigs/create-new-gig?edit=${encodeURIComponent(gig.id)}`}
+                          href={adminSectionHref("create-new-gig", { edit: gig.id })}
                           className="inline-flex h-9 items-center gap-1.5 rounded-[10px] bg-[#1f2b24] px-3 text-[12.5px] font-semibold text-white transition hover:bg-[#2b3a31]"
                         >
                           Edit
@@ -2898,7 +2807,7 @@ export default function GigAdminConsole({
                   )}
                 </button>
                 <button type="button" className={`${btnGhost} px-2.5`} onClick={() => void refreshApps()} disabled={appsRefreshing} aria-label="Refresh applications" title={appsSyncedAt ? `Synced ${formatRelative(appsSyncedAt)}` : "Refresh"}>
-                  <Icon d={ICONS.refresh} className={`h-4 w-4 ${appsRefreshing ? "animate-spin" : ""}`} />
+                  <Icon d={ICONS.refresh} className={`h-4 w-4 ${appsRefreshing ? "motion-safe:animate-spin" : ""}`} />
                 </button>
               </div>
             </div>
@@ -2966,9 +2875,11 @@ export default function GigAdminConsole({
               </Banner>
             )}
 
-            <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
+            <span role="status" className="sr-only">{appsRefreshing ? "Refreshing applications…" : ""}</span>
+            <div aria-busy={appsRefreshing} className="grid gap-4 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
               {/* Queue */}
-              <div className="min-w-0 self-start rounded-[16px] border border-[#e3e5e1] bg-[#fff] shadow-[0_1px_2px_rgba(26,32,28,0.05)] lg:sticky lg:top-[124px]">
+              <div className="relative min-w-0 self-start rounded-[16px] border border-[#e3e5e1] bg-[#fff] shadow-[0_1px_2px_rgba(26,32,28,0.05)] xl:sticky xl:top-20">
+                {appsRefreshing && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-0.5 overflow-hidden rounded-t-[16px] bg-[#ebf5ee]"><div className={loadingStyles.progress} /></div>}
                 <div className="space-y-2.5 border-b border-[#eef0ec] p-3">
                   <div className="flex items-center gap-2.5 px-1">
                     <SelectAllCheckbox
@@ -3042,7 +2953,7 @@ export default function GigAdminConsole({
                     <p className="mt-1 text-[12.5px] text-[#7a827c]">{appsForGig.length === 0 ? "Applications for your gigs show up here." : "Try another status, gig or search."}</p>
                   </div>
                 ) : (
-                  <div className="space-y-1 p-2 lg:max-h-[calc(100vh-330px)] lg:overflow-y-auto lg:overscroll-contain">
+                  <div className="space-y-1 p-2 xl:max-h-[calc(100dvh-260px)] xl:overflow-y-auto xl:overscroll-contain">
                       {filteredApps.map((app) => {
                         const relatedGig = gigById.get(String(app.gigId));
                         const active = selectedApplication?.id === app.id;
@@ -3135,7 +3046,7 @@ export default function GigAdminConsole({
               </div>
 
               {/* Detail: inline beside the queue on desktop; phones and tablets open it as a full-screen sheet */}
-              <div id="application-detail" className="hidden min-w-0 lg:block">
+              <div id="application-detail" className="hidden min-w-0 xl:block">
                 {isDesktop ? (
                   selectedApplicationPanel ? (
                     <>
@@ -3149,7 +3060,7 @@ export default function GigAdminConsole({
               </div>
               {sheetVisible && selectedApplicationPanel
                 ? createPortal(
-                    <div role="dialog" aria-modal="true" aria-label="Application details" className="ops-dashboard-skin fixed inset-0 z-[60] flex flex-col bg-[#f6f7f5] text-slate-900 lg:hidden">
+                    <div role="dialog" aria-modal="true" aria-label="Application details" className="ops-dashboard-skin fixed inset-0 z-[60] flex flex-col bg-[#f6f7f5] text-slate-900 xl:hidden">
                       {renderDetailNav("sheet")}
                       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-3 sm:px-5 sm:pt-5">{selectedApplicationPanel}</div>
                     </div>,
@@ -3226,25 +3137,27 @@ export default function GigAdminConsole({
             error={kycError}
             notice={kycNotice}
             lastSyncAt={kycLastSyncAt}
-            onRefresh={fetchKyc}
+            onRefresh={(options) => fetchKyc({ ...options, afterCurrent: true })}
             setError={setKycError}
             setNotice={setKycNotice}
           />
         )}
 
-        {view === "linked-accounts" && <LinkedAccountsPanel isDesktop={isDesktop} />}
+        {view === "linked-accounts" && adminId && <LinkedAccountsPanel key={adminId} adminId={adminId} isDesktop={isDesktop} />}
 
         {view === "credential-submissions" && (
           <CredentialSubmissionsPanel
             assignments={assignments}
-            setAssignments={setAssignments}
+            setAssignments={(next) => {
+              reads.abort("assignments");
+              setAssignments(next);
+            }}
             gigTitle={gigTitleById}
             lastRefreshAt={lastRefreshAt}
             refreshing={assignmentsRefreshing}
             onRefresh={refreshAssignments}
           />
         )}
-      </main>
     </div>
   );
 }

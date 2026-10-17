@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import GigAdminConsole from "../GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
 export const metadata: Metadata = { title: "KYC review" };
 
-export default function KycReviewPage() {
-  return <GigAdminConsole view="kyc-review" nextPath="/addgigs/kyc-review" />;
+export default async function KycReviewPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("kyc-review", await searchParams));
 }

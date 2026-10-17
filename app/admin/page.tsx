@@ -1,27 +1,26 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
+import AdminNavigationDrawer from "./AdminNavigationDrawer";
+import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
 import { BrandLogo } from "@/app/_components/BrandLogo";
 import ViewPayoutClaims from "@/app/_components/ViewPayoutClaims";
 import { apiFetch as fetch } from "@/lib/api/client";
 // app/admin/page.tsx
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, { Suspense, useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { getMyRole } from "@/lib/role";
 import { buildFeedbackSubject, feedbackCategoryLabel } from "@/lib/feedback";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
-import { usePathname, useRouter } from "next/navigation";
-import { FIND_GIGS_HREF } from "@/lib/routes";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, type WorkTiming } from "@/lib/workDates";
+import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
+import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 
-/** Keep in sync with workspace page */
-type Role = "Admin" | "Worker";
-type AuthSession = {
-  role: Role;
-  workerId?: string;
-  email?: string;
-  at: string;
-};
+const GigAdminConsole = dynamic(() => import("@/app/addgigs/GigAdminConsole"), {
+  loading: () => <AdminSectionLoading />,
+});
 
 const LS_KEYS = {
   AUTH: "igops:auth",
@@ -447,6 +446,19 @@ function Icon({ name, className }: { name: string; className?: string }) {
           <path d="M9 5V3.8h6V5M9 11h6M9 15h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
       );
+    case "link":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m10 13 4-4M8.5 15.5l-1 1a4 4 0 0 1-5.7-5.6l4-4a4 4 0 0 1 5.7 0m1 1 1-1a4 4 0 0 1 5.7 5.6l-4 4a4 4 0 0 1-5.7 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "lock":
+      return (
+        <svg className={c} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="5" y="10" width="14" height="11" rx="2" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M8 10V7a4 4 0 1 1 8 0v3m-4 5v2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
     case "hamburger":
       return (
         <svg className={c} viewBox="0 0 24 24" fill="none">
@@ -762,6 +774,7 @@ async function fetchWithAuth<T>(url: string, init?: RequestInit): Promise<T | nu
     const r = await fetch(url, {
       ...(init || {}),
       headers,
+      signal: init?.signal ?? (!init?.method || init.method === "GET" ? AbortSignal.timeout(20_000) : undefined),
     });
     if (!r.ok) return null;
     return (await r.json()) as T;
@@ -937,35 +950,6 @@ function AdminReviewList({
 }
 
 /** ===================== Sidebar ===================== */
-type AdminSection = "Overview" | "Workers" | "Assignments" | "Work" | "Reviews" | "Payouts" | "Feedback" | "Gigs" | "Email Access";
-
-const ADMIN_NAV_GROUPS: Array<{ label: string; items: Array<{ id: AdminSection; label: string; icon: string }> }> = [
-  {
-    label: "Operations",
-    items: [
-      { id: "Overview", label: "Overview", icon: "grid" },
-      { id: "Reviews", label: "Reviews", icon: "shield" },
-      { id: "Work", label: "Work items", icon: "list" },
-      { id: "Assignments", label: "Assignments", icon: "clip" },
-    ],
-  },
-  {
-    label: "People & money",
-    items: [
-      { id: "Workers", label: "Workers", icon: "users" },
-      { id: "Payouts", label: "Payouts", icon: "wallet" },
-    ],
-  },
-  {
-    label: "Platform",
-    items: [
-      { id: "Gigs", label: "Gigs", icon: "briefcase" },
-      { id: "Feedback", label: "Feedback", icon: "comment" },
-      { id: "Email Access", label: "Email access", icon: "mail" },
-    ],
-  },
-];
-
 function AdminSidebar({
   active,
   onPick,
@@ -979,6 +963,16 @@ function AdminSidebar({
   counts?: Partial<Record<AdminSection, number>>;
   onClose?: () => void;
 }) {
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = navRef.current;
+    const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !current) return;
+    const bounds = nav.getBoundingClientRect();
+    const selected = current.getBoundingClientRect();
+    if (selected.top < bounds.top) nav.scrollTop -= bounds.top - selected.top + 12;
+    else if (selected.bottom > bounds.bottom) nav.scrollTop += selected.bottom - bounds.bottom + 12;
+  }, [active]);
   return (
     <div className="flex h-full flex-col bg-white">
       <div className="flex h-[60px] shrink-0 items-center justify-between gap-2 border-b border-[#ebedea] px-3 lg:h-[64px]">
@@ -1006,7 +1000,7 @@ function AdminSidebar({
         ) : null}
       </div>
 
-      <nav aria-label="Admin sections" className="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-4">
+      <nav ref={navRef} aria-label="Admin sections" className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-3 py-4">
         {ADMIN_NAV_GROUPS.map((group) => (
           <div key={group.label}>
             <div className="px-2.5 pb-1 text-[11.5px] font-semibold text-[#7a827c]">{group.label}</div>
@@ -1015,22 +1009,27 @@ function AdminSidebar({
                 const isActive = active === item.id;
                 const count = counts?.[item.id] ?? 0;
                 return (
-                  <button
+                  <Link
                     key={item.id}
-                    type="button"
-                    onClick={() => onPick(item.id)}
+                    href={adminSectionHref(item.id)}
+                    prefetch={false}
+                    onClick={(event) => {
+                      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
+                      onPick(item.id);
+                    }}
                     aria-current={isActive ? "page" : undefined}
                     className={cx(
-                      "group flex h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 lg:h-9",
+                      "group flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 lg:min-h-9 lg:py-1.5",
                       isActive ? "bg-[#eceeea] text-[#1a201c]" : "text-[#4b544e] hover:bg-[#f3f4f1] hover:text-[#1a201c]"
                     )}
                   >
                     <Icon name={item.icon} className={cx("h-[18px] w-[18px] shrink-0", isActive ? "text-[#1a201c]" : "text-[#7a827c] group-hover:text-[#1a201c]")} />
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    <span className="min-w-0 flex-1 leading-5">{item.label}</span>
                     {count > 0 ? (
-                      <span className="rounded-full bg-[#1f2b24] px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-white">{count > 99 ? "99+" : count}</span>
+                      <span className={cx("shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums", isActive ? "bg-[#1f2b24] text-white" : item.attention ? "bg-[#fdf1dc] text-[#9a5b00]" : "bg-[#eef0ed] text-[#616a64]")}>{count > 99 ? "99+" : count}<span className="sr-only"> {item.attention ?? "total"}</span></span>
                     ) : null}
-                  </button>
+                  </Link>
                 );
               })}
             </div>
@@ -1449,16 +1448,42 @@ const activateOnKey = (event: React.KeyboardEvent<HTMLElement>, action: () => vo
   }
 };
 
-function AdminConsole() {
+function AdminConsole({ adminId }: { adminId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const today = isoToday();
 
   // global UI
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const sectionSwitcherRef = useRef<HTMLElement | null>(null);
-  const [activeSection, setActiveSection] = useState<AdminSection>("Overview");
+  const closeNavigation = useCallback(() => setMobileNavOpen(false), []);
+  const [activeSection, setActiveSectionState] = useState<AdminSection>(() => parseAdminSection(searchParams));
+  const sectionRef = useRef(activeSection);
+  const [gigView, setGigView] = useState<GigAdminView | null>(() => {
+    const section = parseAdminSection(searchParams);
+    return isGigAdminSection(section) ? section : null;
+  });
+  const [gigSectionCounts, setGigSectionCounts] = useState<Partial<Record<GigAdminView, number>>>({});
+  const isGigSection = isGigAdminSection(activeSection);
+  const setActiveSection = useCallback((section: AdminSection) => {
+    sectionRef.current = section;
+    setActiveSectionState(section);
+    if (isGigAdminSection(section)) setGigView(section);
+    const href = adminSectionHref(section);
+    if (window.location.pathname + window.location.search !== href) window.history.pushState(null, "", href);
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+  // Next links, bookmarked sections and browser back/forward share the same state.
+  useEffect(() => {
+    const section = parseAdminSection(searchParams);
+    const changed = sectionRef.current !== section;
+    sectionRef.current = section;
+    setActiveSectionState(section);
+    if (isGigAdminSection(section)) setGigView(section);
+    if (changed) setMobileNavOpen(false);
+  }, [searchParams]);
   const [q, setQ] = useState("");
   const [tick, setTick] = useState(0);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -1588,6 +1613,7 @@ function AdminConsole() {
   const [newAccountHashtagsCsv, setNewAccountHashtagsCsv] = useState("");
 
   const logout = useCallback(() => {
+    bindAdminCacheIdentity(null);
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LS_KEYS.AUTH);
     }
@@ -1598,6 +1624,8 @@ function AdminConsole() {
   }, [router]);
 
   const refreshLock = useRef(false);
+  const [snapshotLoaded, setSnapshotLoaded] = useState(false);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const scheduleLock = useRef(false);
   const loadSnapshot = useCallback(async () => {
     if (refreshLock.current) return;
@@ -1609,6 +1637,7 @@ function AdminConsole() {
       const payoutsReq = fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches", { method: "GET" });
       // 1) try API snapshot first (kept)
       const snap = await fetchWithAuth<ApiSnapshot>("/api/admin/snapshot", { method: "GET" });
+      setSnapshotError(snap ? null : "Some admin records could not be refreshed. Try again.");
       if (snap) {
         const snapErrors = snap.errors;
         const accountsErrored = !!snapErrors?.some((e) => e.table === "accounts");
@@ -1646,12 +1675,11 @@ function AdminConsole() {
               ? "Live worker directory could not be refreshed. Local sandbox workers are available for testing."
               : "Live worker directory could not be refreshed."
           );
-          setWorkers([]);
-          setSelectedWorkerId(null);
         }
         if (!scheduleLock.current) {
           scheduleLock.current = true;
-          await fetchWithAuth<{ ok: boolean }>("/api/admin/schedule-work", {
+          // Scheduling must not delay rendering records that have already loaded.
+          void fetchWithAuth<{ ok: boolean }>("/api/admin/schedule-work", {
             method: "POST",
             body: JSON.stringify({ schedule: scheduleConfig }),
           });
@@ -1675,7 +1703,7 @@ function AdminConsole() {
         }
         if (!scheduleLock.current) {
           scheduleLock.current = true;
-          await fetchWithAuth<{ ok: boolean }>("/api/admin/schedule-work", {
+          void fetchWithAuth<{ ok: boolean }>("/api/admin/schedule-work", {
             method: "POST",
             body: JSON.stringify({ schedule: scheduleConfig }),
           });
@@ -1687,6 +1715,7 @@ function AdminConsole() {
       setToast({ message: "Live admin data unavailable. Check connectivity.", tone: "danger" });
       toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
     } finally {
+      setSnapshotLoaded(true);
       if (typeof window !== "undefined") {
         window.setTimeout(() => {
           refreshLock.current = false;
@@ -1699,9 +1728,9 @@ function AdminConsole() {
 
   // initial load
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || isGigSection) return;
     loadSnapshot();
-  }, [mounted, loadSnapshot, today]);
+  }, [mounted, loadSnapshot, today, isGigSection]);
 
   // tick for SLA / due meta
   useEffect(() => {
@@ -1763,6 +1792,8 @@ function AdminConsole() {
   // content-free signal on the admin-only "admin:live" topic and we re-read just what changed.
   const devBypass = mounted && hasDevAdminBypassSession();
   const adminLive = useAdminLive(mounted && !devBypass, (kinds: Set<AdminLiveKind> | null) => {
+    // Gig tools own their visible data; avoid loading the worker snapshot behind them.
+    if (isGigSection) return;
     if (!kinds) {
       void loadSnapshot();
       if (activeSection === "Feedback") void loadFeedback();
@@ -1771,7 +1802,7 @@ function AdminConsole() {
     if (kinds.has("upi_configs")) void loadUpiConfigs();
     if (kinds.has("payout_batches") || kinds.has("view_payout_claims")) void loadPayoutsAdmin();
     if (kinds.has("work_items")) void loadSnapshot();
-  });
+  }, { refreshOnConnect: true });
   // Local dev bypass has no realtime session: poll instead.
   useEffect(() => {
     if (!devBypass) return;
@@ -1781,26 +1812,6 @@ function AdminConsole() {
     }, 5_000);
     return () => window.clearInterval(intervalId);
   }, [activeSection, devBypass, loadFeedback, loadSnapshot]);
-
-  // Payout rows are server-only, so refresh through the authenticated API even if websocket events are unavailable.
-  useEffect(() => {
-    if (!mounted) return;
-    let alive = true, running = false;
-    const update = async () => {
-      if (!alive || running || document.hidden || payoutActionsRunning.current.size) return;
-      running = true;
-      const version = payoutVersion.current;
-      try {
-        const result = await fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches");
-        if (alive && !payoutActionsRunning.current.size && payoutVersion.current === version && result?.ok) setPayoutBatchesAdmin(result.payoutBatches);
-      } finally { running = false; }
-    };
-    const timer = window.setInterval(() => void update(), 10_000);
-    const onVisible = () => void update();
-    window.addEventListener("focus", onVisible);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => { alive = false; window.clearInterval(timer); window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
-  }, [mounted]);
 
   const refresh = () => {
     setTick((t) => t + 1);
@@ -2804,7 +2815,7 @@ function AdminConsole() {
       if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
       return compareWorkDeadlines(a.dueAt, b.dueAt);
     });
-  }, [workItems, selectedWorkerId, ql, accountById]);
+  }, [workItems, selectedWorkerId, ql, accountById, showCancelled]);
 
   const scheduleRowsForSelected = useMemo(() => {
     if (!selectedWorkerId) return [];
@@ -2874,19 +2885,11 @@ function AdminConsole() {
       });
     }
     return arr.sort((a, b) => compareWorkDeadlines(a.dueAt, b.dueAt));
-  }, [workItems, ql, workerById, accountById]);
+  }, [workItems, ql, workerById, accountById, showCancelled]);
 
   /** ---------- Render (UI unchanged) ---------- */
-  // Keep the active tab visible in the phone/tablet section switcher.
-  useEffect(() => {
-    const nav = sectionSwitcherRef.current;
-    const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!nav || !active) return;
-    // Instant: smooth programmatic scrolling stalls on this snap-enabled strip.
-    nav.scrollTo({ left: Math.max(0, active.offsetLeft - (nav.clientWidth - active.offsetWidth) / 2), behavior: "auto" });
-  }, [activeSection]);
-
   const adminSectionCounts: Partial<Record<AdminSection, number>> = {
+    ...gigSectionCounts,
     Reviews: reviewQueue.length,
     Feedback: feedbackItems.filter((item) => item.status === "new").length,
     Payouts: payoutBatchesAdmin.filter((batch) => String(batch.status).toLowerCase() !== "paid").length,
@@ -2896,23 +2899,18 @@ function AdminConsole() {
 
   return (
     <div className="ops-dashboard-skin min-h-screen">
+      <a href="#admin-main" className="sr-only z-[90] rounded-lg bg-[#1f2b24] px-4 py-3 font-semibold text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">Skip to content</a>
       {/* Mobile nav drawer */}
       {mobileNavOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-[#0f1411]/45 backdrop-blur-[2px]" onClick={() => setMobileNavOpen(false)} />
-          <div role="dialog" aria-modal="true" aria-label="Admin navigation" className="absolute inset-y-0 left-0 w-[min(320px,86vw)] shadow-xl" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+        <AdminNavigationDrawer onClose={closeNavigation}>
             <AdminSidebar
               active={activeSection}
               counts={adminSectionCounts}
-              onClose={() => setMobileNavOpen(false)}
-              onPick={(section) => {
-                setActiveSection(section);
-                setMobileNavOpen(false);
-              }}
+              onClose={closeNavigation}
+              onPick={setActiveSection}
               onLogout={logout}
             />
-          </div>
-        </div>
+        </AdminNavigationDrawer>
       )}
 
       {/* Mobile details drawer */}
@@ -2932,9 +2930,9 @@ function AdminConsole() {
         </div>
       )}
 
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen" inert={mobileNavOpen || undefined}>
         {/* Desktop sidebar */}
-        <aside className="sticky top-0 hidden h-screen w-[248px] shrink-0 border-r border-[#e3e5e1] lg:block 2xl:w-[264px]">
+        <aside className="sticky top-0 hidden h-dvh w-[248px] shrink-0 border-r border-[#e3e5e1] lg:block 2xl:w-[264px]">
           <AdminSidebar active={activeSection} onPick={setActiveSection} onLogout={logout} counts={adminSectionCounts} />
         </aside>
 
@@ -2947,6 +2945,8 @@ function AdminConsole() {
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[#1a201c] transition hover:bg-[#eceeea] lg:hidden"
                 onClick={() => setMobileNavOpen(true)}
                 aria-label="Open navigation"
+                aria-expanded={mobileNavOpen}
+                aria-controls="admin-navigation-drawer"
               >
                 <Icon name="hamburger" />
               </button>
@@ -2955,7 +2955,7 @@ function AdminConsole() {
                 <h1 className="truncate text-[16px] font-semibold text-[#1a201c] lg:text-[18px]">{activeSectionLabel}</h1>
               </div>
 
-              <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
+              {!isGigSection && <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
                 <span className="sr-only">Search workers, accounts, work IDs and handles</span>
                 <span className="relative w-full max-w-[460px]">
                   <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
@@ -2966,7 +2966,7 @@ function AdminConsole() {
                     className="h-9 w-full rounded-lg border border-[#e3e5e1] bg-[#f3f4f1] pl-9 pr-3 text-[13.5px] text-[#1a201c] outline-none transition placeholder:text-[#7a827c] focus:bg-white"
                   />
                 </span>
-              </label>
+              </label>}
 
               <div className="ml-auto flex shrink-0 items-center gap-1.5">
                 {!devBypass ? (
@@ -2984,33 +2984,42 @@ function AdminConsole() {
                     {adminLive === "live" ? "Live" : adminLive === "offline" ? "Auto-refresh" : "Connecting"}
                   </span>
                 ) : null}
-                <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
+                {!isGigSection && <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
                   <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
                   <span className="xl:hidden">Cancelled</span>
                   <span className="hidden xl:inline">Show cancelled</span>
-                </label>
+                </label>}
                 <button
                   type="button"
-                  onClick={refresh}
+                  onClick={() => {
+                    if (isGigSection) window.dispatchEvent(new CustomEvent("admin-refresh"));
+                    else refresh();
+                  }}
                   title="Refresh data"
                   aria-label="Refresh data"
                   className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#4b544e] transition hover:bg-[#f1f3f0] hover:text-[#1a201c] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
                 >
                   <Icon name="refresh" className="h-[18px] w-[18px]" />
                 </button>
-                <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
+                {!isGigSection && <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Worker</span>
-                </Button>
-                <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
+                </Button>}
+                {!isGigSection && <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Account</span>
-                </Button>
+                </Button>}
+                {isGigSection && activeSection !== "create-new-gig" && (
+                  <Button variant="primary" onClick={() => setActiveSection("create-new-gig")} title="Create gig" className="px-2.5 sm:px-3.5">
+                    <Icon name="plus" className="h-4 w-4" />
+                    <span className="hidden min-[400px]:inline">Create gig</span>
+                  </Button>
+                )}
               </div>
             </div>
 
             {/* Phones/tablets: search + section switcher */}
-            <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
+            {!isGigSection && <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
               <label className="relative block min-w-0 flex-1">
                 <span className="sr-only">Search</span>
                 <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
@@ -3025,30 +3034,7 @@ function AdminConsole() {
                 <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
                 Cancelled
               </label>
-            </div>
-            <nav ref={sectionSwitcherRef} aria-label="Admin sections" className="dashboard-chip-scroller flex gap-1 overflow-x-auto scroll-px-3.5 px-3.5 pb-2 sm:px-5 lg:hidden">
-              {adminNavItems.map((item) => {
-                const isActive = item.id === activeSection;
-                const count = adminSectionCounts[item.id] ?? 0;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveSection(item.id)}
-                    aria-current={isActive ? "page" : undefined}
-                    className={cx(
-                      "inline-flex h-8 shrink-0 snap-start items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold transition",
-                      isActive ? "bg-[#1f2b24] text-white" : "text-[#4b544e] hover:bg-[#f1f3f0]"
-                    )}
-                  >
-                    {item.label}
-                    {count > 0 ? (
-                      <span className={cx("rounded-full px-1.5 text-[11px] leading-[18px] tabular-nums", isActive ? "bg-white/20 text-white" : "bg-[#eef0ed] text-[#4b544e]")}>{count}</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
+            </div>}
           </header>
 
       {toast && (
@@ -3061,7 +3047,20 @@ function AdminConsole() {
       )}
 
           <div className="mx-auto w-full max-w-[1440px] px-3.5 py-4 sm:px-6 sm:py-6">
-          <main className="min-w-0 space-y-5">
+          <main id="admin-main" className="min-w-0 space-y-5">
+            {gigView && (
+              <div hidden={!isGigSection}>
+                <GigAdminConsole view={gigView} adminId={adminId} authorized active={isGigSection} onCountsChange={setGigSectionCounts} searchKey={searchParams?.toString() ?? ""} />
+              </div>
+            )}
+            {!isGigSection && !snapshotLoaded && <AdminSectionLoading label="Loading admin records" />}
+            {!isGigSection && snapshotError && (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#f3d19e] bg-[#fff8ec] px-4 py-3 text-[13px] text-[#825317]">
+                <span>{snapshotError}</span>
+                <button type="button" onClick={refresh} className="rounded-lg border border-current px-3 py-1.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current">Retry</button>
+              </div>
+            )}
+            <div hidden={isGigSection || !snapshotLoaded} className="space-y-5">
             {/* KPI tiles */}
             {activeSection === "Overview" && (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -4490,67 +4489,6 @@ function AdminConsole() {
               </div>
             )}
 
-            {/* Gigs */}
-            {activeSection === "Gigs" && (
-              <div className="space-y-4 sm:space-y-5">
-                {/* Primary action */}
-                <section className="relative overflow-hidden rounded-xl bg-[#1f2b24] p-5 text-white shadow-[0_12px_32px_-16px_rgba(15,20,17,0.6)] sm:p-6">
-                  <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-[#2e7d4f]/35 blur-3xl" aria-hidden="true" />
-                  <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-3.5">
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
-                        <Icon name="briefcase" className="h-5 w-5 text-white" />
-                      </span>
-                      <div className="min-w-0">
-                        <h2 className="text-[17px] font-semibold">Publish a new gig</h2>
-                        <p className="mt-0.5 max-w-[56ch] text-[13px] leading-5 text-white/70">
-                          Set the brief, deliverables, payout and application mode. It goes live in the creator marketplace once published.
-                        </p>
-                      </div>
-                    </div>
-                    <Link
-                      href="/addgigs/create-new-gig"
-                      className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-white px-4 text-[13.5px] font-semibold text-[#1f2b24] transition hover:bg-[#f1f3f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                    >
-                      <Icon name="plus" className="h-4 w-4" />
-                      Create new gig
-                    </Link>
-                  </div>
-                </section>
-
-                {/* Related tools */}
-                <section aria-labelledby="gig-tools-title">
-                  <h2 id="gig-tools-title" className="mb-2.5 px-0.5 text-[13px] font-semibold text-[#616a64]">
-                    Gig operations
-                  </h2>
-                  <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-                    {[
-                      { href: "/addgigs/applications", icon: "users", title: "Applications", body: "Review creator applications and proposals, then approve or request changes." },
-                      { href: "/addgigs/kyc-review", icon: "shield", title: "KYC review", body: "Verify creator identity documents before protected gigs and payouts unlock." },
-                      { href: "/addgigs/credential-submissions", icon: "clip", title: "Credential submissions", body: "Check account credentials creators submitted for credential-based gigs." },
-                      { href: "/addgigs/linked-accounts", icon: "users", title: "Linked accounts", body: "Record weekly insights for creators' Content Posting accounts. Creators see them in their dashboard." },
-                      { href: FIND_GIGS_HREF, icon: "search", title: "View marketplace", body: "See the public gig feed exactly as creators see it." },
-                    ].map((tool) => (
-                      <Link
-                        key={tool.href}
-                        href={tool.href}
-                        className="group flex min-w-0 flex-col rounded-xl border border-[#e3e5e1] bg-white p-4 shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:border-[#cfd5cf] hover:shadow-[0_6px_18px_-8px_rgba(26,32,28,0.2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-5"
-                      >
-                        <span className="flex items-center justify-between gap-3">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#eef1ed] text-[#2b5d4a]">
-                            <Icon name={tool.icon} className="h-[18px] w-[18px]" />
-                          </span>
-                          <Icon name="chevRight" className="h-4 w-4 text-[#a3aaa4] transition group-hover:translate-x-0.5 group-hover:text-[#1a201c]" />
-                        </span>
-                        <span className="mt-3 text-[14px] font-semibold text-[#1a201c]">{tool.title}</span>
-                        <span className="mt-1 text-[12.5px] leading-5 text-[#616a64]">{tool.body}</span>
-                      </Link>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            )}
-
             {/* Reviews */}
             {activeSection === "Reviews" && (
               <Card title="Reviews & enforcement" subtitle="Approve, Needs fix, or Hard reject submitted work.">
@@ -4565,6 +4503,7 @@ function AdminConsole() {
                 {reviewQueue.length === 0 && <AdminEmpty icon="check" title="Nothing to review" body="When workers submit work, it lands here for approve, needs fix or hard reject." />}
               </Card>
             )}
+            </div>
           </main>
           </div>
         </div>
@@ -5154,33 +5093,51 @@ export default function AdminPage() {
   const router = useRouter();
   const pathname = usePathname();
   const [ok, setOk] = useState(false);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     let version = 0;
+    let verifiedUserId: string | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const verify = async () => {
       const request = ++version;
+      const { data } = await supabase.auth.getSession();
       const role = await getMyRole();
       if (!alive || request !== version) return;
+      verifiedUserId = role === "Admin" ? data.session?.user.id ?? null : null;
+      bindAdminCacheIdentity(verifiedUserId);
+      setAuthUserId(verifiedUserId);
       setOk(role === "Admin");
-      if (role !== "Admin") router.replace(role === "Worker" ? "/dashboard" : "/login");
+      if (role !== "Admin") router.replace(role === "Worker" ? "/dashboard" : `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
     };
     void verify();
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      // The explicit initial verification already covers INITIAL_SESSION; do not duplicate its API read.
+      if (_event === "INITIAL_SESSION") return;
       version++;
-      setOk(false);
+      // INITIAL_SESSION also fires on reload: keep this admin's session cache intact.
+      if (_event === "SIGNED_OUT" || (verifiedUserId && session?.user.id !== verifiedUserId)) bindAdminCacheIdentity(null);
+      // A refreshed token for the same admin must not destroy in-progress forms and loaded rows.
+      if (!session || session.user.id !== verifiedUserId) setOk(false);
       clearTimeout(timer);
       // Leave the Auth callback before reading the refreshed session.
       timer = setTimeout(() => { void verify(); }, 0);
     });
+    const recheck = () => {
+      bindAdminCacheIdentity(null);
+      setOk(false);
+      void verify();
+    };
+    window.addEventListener("admin-auth-invalidated", recheck);
     return () => {
       alive = false;
       clearTimeout(timer);
       sub.subscription.unsubscribe();
+      window.removeEventListener("admin-auth-invalidated", recheck);
     };
   }, [router, pathname]);
 
-  if (!ok) return null;
-  return <AdminConsole />;
+  if (!ok || !authUserId) return <div className="ops-dashboard-skin min-h-screen p-5 sm:p-8"><AdminSectionLoading /></div>;
+  return <Suspense fallback={<AdminSectionLoading />}><AdminConsole key={authUserId} adminId={authUserId} /></Suspense>;
 }

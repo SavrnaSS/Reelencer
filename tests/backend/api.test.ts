@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createHmac } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { withApi } from '../../lib/api/route';
 import { authenticate } from '../../lib/api/auth';
@@ -95,7 +96,7 @@ test('every private API method rejects unauthenticated calls before database acc
     const mod=await import(pathToFileURL(path.resolve(file)).href);
     for(const method of ['GET','POST','PUT','PATCH','DELETE']) {
       if(typeof mod[method]!=='function') continue;
-      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready'].includes(route) || (route==='/api/gigs' && method==='GET'))continue;
+      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready'].includes(route) || (route==='/api/gigs' && method==='GET') || (route==='/api/webhooks/resend' && method==='POST'))continue;
       requests.length=0;
       const result:Response=await mod[method](req(route,method),ctx);
       assert.equal(result.status,401,method+' '+route);
@@ -105,6 +106,35 @@ test('every private API method rejects unauthenticated calls before database acc
     }
   }
   assert.ok(checked>=70,'Expected complete route coverage, got '+checked);
+});
+
+test('public delivery webhook requires a valid signature before database access',async()=>{
+  const { POST }=await import('../../app/api/webhooks/resend/route');
+  const previous=process.env.RESEND_WEBHOOK_SECRET;
+  const key=Buffer.from('test-only-delivery-webhook-signing-key');
+  process.env.RESEND_WEBHOOK_SECRET='whsec_'+key.toString('base64');
+  const body=JSON.stringify({type:'email.delivered',data:{to:['worker@example.test']}});
+  const id='msg_test_delivery';
+  const timestamp=String(Math.floor(Date.now()/1000));
+  const unsignedHeaders:Record<string,string>[]=[{},{'svix-id':id,'svix-timestamp':timestamp,'svix-signature':'v1,invalid'}];
+  try {
+    for(const headers of unsignedHeaders) {
+      requests.length=0;
+      const response=await POST(req('/api/webhooks/resend','POST',body,undefined,headers),ctx);
+      assert.equal(response.status,401);
+      assert.equal(requests.length,0,'Reject unsigned or forged webhooks before database access');
+      assert.match(response.headers.get('cache-control')??'',/no-store/);
+    }
+    const signature=createHmac('sha256',key).update(`${id}.${timestamp}.${body}`).digest('base64');
+    requests.length=0;
+    const response=await POST(req('/api/webhooks/resend','POST',body,undefined,{'svix-id':id,'svix-timestamp':timestamp,'svix-signature':`v1,${signature}`}),ctx);
+    assert.equal(response.status,200,'A provider signature authenticates the public webhook without a user session');
+    assert.deepEqual(await response.json(),{ok:true,handled:'ignored'});
+    assert.equal(requests.length,0,'Delivery acknowledgements need no database reads');
+  } finally {
+    if(previous===undefined)delete process.env.RESEND_WEBHOOK_SECRET;
+    else process.env.RESEND_WEBHOOK_SECRET=previous;
+  }
 });
 
 test('admin authorization ignores spoofed headers and user metadata',async()=>{

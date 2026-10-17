@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import GigAdminConsole from "../GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
 export const metadata: Metadata = { title: "Applications" };
 
-export default function ApplicationsPage() {
-  return <GigAdminConsole view="applications" nextPath="/addgigs/applications" />;
+export default async function ApplicationsPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("applications", await searchParams));
 }

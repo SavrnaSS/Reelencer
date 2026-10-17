@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import GigAdminConsole from "../GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
 export const metadata: Metadata = { title: "Credential submissions" };
 
-export default function CredentialSubmissionsPage() {
-  return <GigAdminConsole view="credential-submissions" nextPath="/addgigs/credential-submissions" />;
+export default async function CredentialSubmissionsPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("credential-submissions", await searchParams));
 }

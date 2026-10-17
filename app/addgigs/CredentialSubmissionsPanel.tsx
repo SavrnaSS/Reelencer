@@ -68,8 +68,8 @@ type Props = {
 
 const FILTERS = ["Submitted", "Assigned", "Pending", "Accepted", "Rejected", "All"] as const;
 
-// Split view from 1024px; below that the detail opens as a full-screen sheet.
-const DESKTOP_QUERY = "(min-width: 1024px)";
+// Leave room for the admin sidebar; narrower screens open details in a full-screen sheet.
+const DESKTOP_QUERY = "(min-width: 1280px)";
 const subscribeDesktop = (callback: () => void) => {
   const mq = window.matchMedia(DESKTOP_QUERY);
   mq.addEventListener("change", callback);
@@ -403,7 +403,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
 
   const renderDetail = (inSheet: boolean) =>
     !current ? null : (
-            <article className={inSheet ? cardClass : `${cardClass} overflow-hidden lg:sticky lg:top-[140px]`}>
+            <article className={inSheet ? cardClass : `${cardClass} overflow-hidden xl:sticky xl:top-20`}>
               <header className="flex flex-wrap items-start gap-3 border-b border-[#eef0ec] px-4 py-4 sm:px-5">
                 <Avatar name={current.workerId} />
                 <div className="min-w-0 flex-1">
@@ -605,7 +605,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
                     </button>
                   </div>
                 </div>
-                <p className="mt-2.5 hidden text-[11.5px] text-[#8a928c] lg:block">
+                <p className="mt-2.5 hidden text-[11.5px] text-[#8a928c] xl:block">
                   Shortcuts: <Kbd>J</Kbd>/<Kbd>K</Kbd> next/prev · <Kbd>A</Kbd> approve · <Kbd>R</Kbd> reject · <Kbd>P</Kbd> pending · <Kbd>X</Kbd> select
                 </p>
               </footer>
@@ -667,7 +667,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
         </Banner>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="grid items-start gap-4 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[380px_minmax(0,1fr)]">
         {/* Queue */}
         <div className={`${cardClass} min-w-0 p-3`}>
           <div className="flex items-center gap-2.5 px-2 pb-2.5">
@@ -703,7 +703,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
               <p className="mt-1 text-[12.5px] text-[#7a827c]">{query ? "Try another worker ID, gig or email." : "New submissions appear here automatically."}</p>
             </div>
           ) : (
-            <ul className="space-y-1.5 lg:max-h-[68vh] lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+            <ul className="space-y-1.5 xl:max-h-[calc(100dvh-17rem)] xl:overflow-y-auto xl:overscroll-contain xl:pr-1">
               {filtered.map((a) => {
                 const active = current?.id === a.id;
                 const isNew = !!a.submittedAt && !!lastRefreshAt && new Date(a.submittedAt).getTime() > new Date(lastRefreshAt).getTime();
@@ -758,7 +758,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
         </div>
 
         {/* Detail */}
-        <div id="credential-detail" className="hidden min-w-0 lg:block">
+        <div id="credential-detail" className="hidden min-w-0 xl:block">
           {!isDesktop ? null : !current ? (
             <EmptyState icon={ICONS.lock} title="No submission selected" body="Pick a submission from the queue to inspect credentials and decide." />
           ) : (
@@ -769,7 +769,7 @@ export default function CredentialSubmissionsPanel({ assignments, setAssignments
 
       {sheetVisible
         ? createPortal(
-            <div role="dialog" aria-modal="true" aria-label="Submission details" className="ops-dashboard-skin fixed inset-0 z-[55] flex flex-col bg-[#f6f7f5] text-slate-900 lg:hidden">
+            <div role="dialog" aria-modal="true" aria-label="Submission details" className="ops-dashboard-skin fixed inset-0 z-[55] flex flex-col bg-[#f6f7f5] text-slate-900 xl:hidden">
               <div className="flex items-center justify-between gap-2 border-b border-[#e3e5e1] bg-[#fff]/95 px-3 pb-2.5 pt-[max(0.625rem,env(safe-area-inset-top))] backdrop-blur sm:px-5">
                 <button type="button" onClick={() => setSheetOpen(false)} className="inline-flex h-9 items-center gap-1.5 rounded-[10px] px-2 text-[13.5px] font-semibold text-[#1a201c] hover:bg-[#f1f3f0]">
                   <Icon d={ICONS.chevronLeft} />

@@ -1,5 +1,6 @@
-import GigAdminConsole from "./GigAdminConsole";
+import { redirect } from "next/navigation";
+import { legacyGigAdminHref, type AdminSearchParams } from "@/lib/adminNavigation";
 
-export default function AddGigsPage() {
-  return <GigAdminConsole view="create-new-gig" nextPath="/addgigs" />;
+export default async function AddGigsPage({ searchParams }: { searchParams: Promise<AdminSearchParams> }) {
+  redirect(legacyGigAdminHref("create-new-gig", await searchParams));
 }

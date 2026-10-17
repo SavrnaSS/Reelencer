@@ -2,6 +2,9 @@
 
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useState } from "react";
+import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
+import { isCurrentAdminCacheIdentity } from "@/lib/adminCacheIdentity";
+import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
 import PlatformGlyph from "../dashboard/PlatformGlyph";
 import { ICONS, Icon, Spinner, btnGhost, btnPrimary, cardClass, fieldClass, formatRelative } from "./adminUi";
 
@@ -16,6 +19,36 @@ type Status = {
   health: { active: number; ok: number; failing: number; lastSyncedAt: string | null };
 };
 type Provider = "youtube" | "instagram" | "vision";
+
+/** Persist connection state only: API keys and values typed into ProviderForm never enter this model. */
+function connectionStatus(value: unknown): Status {
+  const payload = value as Partial<Status> | null;
+  if (!payload || typeof payload.youtube?.connected !== "boolean" || typeof payload.instagram?.connected !== "boolean") {
+    throw new Error("Couldn't load auto-sync status.");
+  }
+  const field = (candidate: unknown): FieldState => {
+    const source = (candidate as Partial<FieldState> | null)?.source;
+    return { source: source === "app" || source === "env" ? source : "none", hint: source === "app" ? "••••" : source === "env" ? "set on server" : "" };
+  };
+  const count = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0 ? Math.floor(candidate) : 0;
+  const date = payload.health?.lastSyncedAt;
+  return {
+    youtube: { connected: payload.youtube.connected, fields: { youtubeApiKey: field(payload.youtube.fields?.youtubeApiKey) } },
+    instagram: { connected: payload.instagram.connected, fields: { metaAccessToken: field(payload.instagram.fields?.metaAccessToken), metaIgBusinessId: field(payload.instagram.fields?.metaIgBusinessId) } },
+    vision: { connected: payload.vision?.connected === true, fields: { anthropicApiKey: field(payload.vision?.fields?.anthropicApiKey) } },
+    health: { active: count(payload.health?.active), ok: count(payload.health?.ok), failing: count(payload.health?.failing), lastSyncedAt: typeof date === "string" && Number.isFinite(Date.parse(date)) ? date : null },
+  };
+}
+
+function validConnectionStatus(value: unknown): value is Status {
+  const data = value as Status | null;
+  if (!data || !data.health || !["active", "ok", "failing"].every(key => typeof data.health[key as "active"] === "number" && Number.isFinite(data.health[key as "active"]))) return false;
+  return (["youtube", "instagram", "vision"] as const).every(provider => {
+    const current = data[provider];
+    return current && typeof current.connected === "boolean" && current.fields && typeof current.fields === "object"
+      && Object.values(current.fields).every(field => field && ["env", "app", "none"].includes(field.source) && typeof field.hint === "string");
+  }) && (data.health.lastSyncedAt === null || typeof data.health.lastSyncedAt === "string");
+}
 
 const PROVIDERS: Record<
   Provider,
@@ -69,7 +102,7 @@ function SourceBadge({ connected, fields }: { connected: boolean; fields: FieldS
   );
 }
 
-function ProviderForm({ provider, status, onSaved, onClose }: { provider: Provider; status: Status; onSaved: (next: Status) => void; onClose: () => void }) {
+function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId: string; provider: Provider; status: Status; onSaved: (next: Status) => void; onClose: () => void }) {
   const def = PROVIDERS[provider];
   const fieldStates = status[provider].fields as Record<string, FieldState>;
   const pinned = def.fields.some((f) => fieldStates[f.name]?.source === "env");
@@ -85,6 +118,7 @@ function ProviderForm({ provider, status, onSaved, onClose }: { provider: Provid
   const call = async (body: Record<string, unknown>) => {
     const res = await fetch("/api/admin/integrations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const payload = await res.json().catch(() => null);
+    if ((res.status === 401 || res.status === 403) && isCurrentAdminCacheIdentity(adminId)) window.dispatchEvent(new Event("admin-auth-invalidated"));
     if (!res.ok) throw new Error(payload?.error || "Request failed.");
     return payload;
   };
@@ -236,25 +270,38 @@ function ProviderForm({ provider, status, onSaved, onClose }: { provider: Provid
   );
 }
 
-export default function AutoSyncCard({ onChanged }: { onChanged: () => void }) {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export default function AutoSyncCard({ adminId, onChanged }: { adminId: string; onChanged: () => void }) {
   const [open, setOpen] = useState<Provider | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/admin/integrations");
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(payload?.error || "Couldn't load auto-sync status.");
-      setStatus(payload as Status);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't load auto-sync status.");
-    }
-  }, []);
+  const read = useCallback(async (signal: AbortSignal) => {
+    const res = await fetch("/api/admin/integrations", { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+    const payload = await res.json().catch(() => null);
+    if ((res.status === 401 || res.status === 403) && !signal.aborted && isCurrentAdminCacheIdentity(adminId)) window.dispatchEvent(new Event("admin-auth-invalidated"));
+    if (!res.ok) throw new Error(payload?.error || "Couldn't load auto-sync status.");
+    return connectionStatus(payload);
+  }, [adminId]);
+  const resource = useAdminCachedResource({ scope: adminId, key: "integration-status", load: read, ttlMs: 60_000, maxAgeMs: 15 * 60_000, persist: true, validate: validConnectionStatus });
+  const { refresh, update } = resource;
+  const status = resource.data ?? null;
+  const error = resource.error?.message ?? null;
+  const poll = useCallback(async () => {
+    if (navigator.onLine) await refresh({ force: false });
+  }, [refresh]);
+  useVisibleRefresh(poll, adminId ? 60_000 : null);
   useEffect(() => {
-    queueMicrotask(() => void load());
-  }, [load]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const manual = () => {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => { timer = undefined; void refresh({ afterCurrent: true }); }, 100);
+    };
+    window.addEventListener("admin-refresh", manual);
+    window.addEventListener("admin-linked-accounts-refresh", manual);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("admin-refresh", manual);
+      window.removeEventListener("admin-linked-accounts-refresh", manual);
+    };
+  }, [refresh]);
 
   const connectedCount = status ? Number(status.youtube.connected) + Number(status.instagram.connected) + Number(status.vision?.connected ?? false) : 0;
   const health = status?.health;
@@ -273,7 +320,7 @@ export default function AutoSyncCard({ onChanged }: { onChanged: () => void }) {
           </h2>
           <p className="mt-0.5 text-[12.5px] text-[#616a64]">
             {error
-              ? error
+              ? <>{error} <button type="button" onClick={() => void refresh()} className="font-semibold underline underline-offset-2">Try again</button></>
               : !status
                 ? "Checking connections…"
                 : connectedCount && health
@@ -289,6 +336,7 @@ export default function AutoSyncCard({ onChanged }: { onChanged: () => void }) {
               <button
                 key={p}
                 type="button"
+                disabled={!status}
                 onClick={() => setOpen((cur) => (cur === p ? null : p))}
                 aria-expanded={open === p}
                 className={`flex min-w-0 items-center gap-2.5 rounded-[12px] border px-3 py-2 text-left transition ${open === p ? "border-[#1f2b24] bg-[#f4f6f3]" : "border-[#e3e5e1] bg-white hover:bg-[#fafbf9]"}`}
@@ -308,12 +356,14 @@ export default function AutoSyncCard({ onChanged }: { onChanged: () => void }) {
       </div>
       {open && status ? (
         <ProviderForm
-          key={open}
+          key={`${adminId}:${open}`}
+          adminId={adminId}
           provider={open}
           status={status}
           onClose={() => setOpen(null)}
           onSaved={(next) => {
-            setStatus(next);
+            // Saving a connection wins over an older GET, and only its redacted status is cached.
+            update(connectionStatus(next));
             onChanged();
           }}
         />

@@ -1,8 +1,15 @@
 "use client";
 
 import { apiFetch as fetch } from "@/lib/api/client";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
+import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
+import { adminSessionCache } from "@/lib/adminSessionCache";
+import { isCurrentAdminCacheIdentity } from "@/lib/adminCacheIdentity";
+import { readAdminFilter, saveAdminFilter } from "@/lib/adminPreferences";
+import { LINKED_ACCOUNTS_CACHE_KEY, LINKED_ACCOUNTS_FRESH_MS, LINKED_SYNC_CACHE_KEY, LINKED_SYNC_ATTEMPT_KEY, isLinkedAccountsData, isLinkedSyncAttempt, linkedAccountsData, linkedSyncDue, type LinkedAccountsData } from "@/lib/linkedAccountCache";
+import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
+import type { AdminLiveKind } from "@/lib/useAdminLive";
 import { accountPlatformFor } from "@/lib/accountSetup";
 import {
   SNAPSHOT_FIELDS,
@@ -730,39 +737,79 @@ function AccountDetail({
   );
 }
 
-export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean }) {
-  const [accounts, setAccounts] = useState<LinkedSocialAccount[] | null>(null);
-  const [screenshotReader, setScreenshotReader] = useState(false);
-  const [error, setError] = useState<{ message: string; unavailable: boolean } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState<Filter>("all");
+export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop: boolean; adminId: string }) {
+  const [filter, setFilter] = useState<Filter>(() => readAdminFilter());
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [now] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<Error | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
-  const requestRunning = useRef(false);
-
-  const load = useCallback(async (silent = false) => {
-    if (requestRunning.current) return;
-    requestRunning.current = true;
-    if (!silent) setLoading(true);
-    try {
-      const res = await fetch("/api/social-accounts?scope=all&sync=1", { signal: AbortSignal.timeout(20_000) });
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) throw Object.assign(new Error(payload?.error || "Linked accounts couldn't be loaded."), { unavailable: payload?.code === "schema_outdated" });
-      setAccounts(payload?.accounts ?? []);
-      setScreenshotReader(payload?.screenshotReader === true);
-      setError(null);
-    } catch (e) {
-      setError({ message: e instanceof Error ? e.message : "Linked accounts couldn't be loaded.", unavailable: !!(e as { unavailable?: boolean }).unavailable });
-    } finally {
-      requestRunning.current = false;
-      if (!silent) setLoading(false);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const read = useCallback(async (signal: AbortSignal, sync = false) => {
+    const res = await fetch(`/api/social-accounts?scope=all${sync ? "&sync=1" : ""}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
+    const payload = await res.json().catch(() => null);
+    if ((res.status === 401 || res.status === 403) && !signal.aborted && isCurrentAdminCacheIdentity(adminId)) {
+      adminSessionCache.clear(adminId);
+      window.dispatchEvent(new Event("admin-auth-invalidated"));
     }
-  }, []);
+    if (!res.ok) throw Object.assign(new Error(payload?.error || "Linked accounts couldn't be refreshed."), { unavailable: payload?.code === "schema_outdated" });
+    return linkedAccountsData(payload);
+  }, [adminId]);
+  const resource = useAdminCachedResource<LinkedAccountsData>({
+    scope: adminId, key: LINKED_ACCOUNTS_CACHE_KEY, load: read,
+    ttlMs: LINKED_ACCOUNTS_FRESH_MS, maxAgeMs: 15 * 60_000, persist: true, validate: isLinkedAccountsData,
+  });
+  const { refresh: refreshSaved, update: updateSaved } = resource;
+  const accounts = resource.data?.accounts ?? null;
+  const screenshotReader = resource.data?.screenshotReader ?? false;
+  const error = resource.error ?? syncError;
+  const loading = resource.refreshing || syncing || resource.loading;
 
-  const refreshVisible = useCallback(async () => { await load(true); }, [load]);
-  useVisibleRefresh(refreshVisible, 5 * 60_000);
+  const syncAccounts = useCallback(async (force = false) => {
+    if (!isCurrentAdminCacheIdentity(adminId) || document.hidden || !navigator.onLine) return;
+    const lastAttempt = adminSessionCache.read<{ at: number }>(adminId, LINKED_SYNC_ATTEMPT_KEY, { maxAgeMs: 30 * 60_000, validate: isLinkedSyncAttempt })?.data.at;
+    if (!linkedSyncDue(lastAttempt, Date.now(), force)) return;
+    adminSessionCache.write(adminId, LINKED_SYNC_ATTEMPT_KEY, { at: Date.now() }, { persist: true });
+    if (mounted.current) { setSyncing(true); setSyncError(null); }
+    try {
+      const data = await adminSessionCache.load(adminId, LINKED_SYNC_CACHE_KEY, signal => read(signal, true), { force: true, validate: isLinkedAccountsData });
+      // Confirmed sync wins over any older saved-data read still in flight.
+      updateSaved(data);
+      if (mounted.current) setNow(Date.now());
+    } catch (error) {
+      if (mounted.current && !(error instanceof Error && error.name === "AbortError")) setSyncError(error instanceof Error ? error : new Error("Profile checks couldn't finish. Saved data is still shown."));
+    } finally { if (mounted.current) setSyncing(false); }
+  }, [adminId, read, updateSaved]);
+  const refreshVisible = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const data = await refreshSaved({ force: false });
+    if (data && mounted.current) { setNow(Date.now()); void syncAccounts(); }
+  }, [refreshSaved, syncAccounts]);
+  // Saved reads are cheap; expensive platform readers run only when their five-minute window is due.
+  useVisibleRefresh(refreshVisible, 60_000);
+  useEffect(() => {
+    const refresh = () => { void syncAccounts(true); };
+    const live = (event: Event) => {
+      const kinds = (event as CustomEvent<AdminLiveKind[] | null>).detail;
+      if (!kinds) void refreshSaved({ force: false });
+      else if (kinds.includes("gig_applications") || kinds.includes("social_account_requests")) void refreshSaved({ force: true, afterCurrent: true });
+    };
+    const online = () => { void refreshVisible(); };
+    window.addEventListener("admin-refresh", refresh);
+    window.addEventListener("admin-live", live);
+    window.addEventListener("online", online);
+    return () => {
+      window.removeEventListener("admin-refresh", refresh);
+      window.removeEventListener("admin-live", live);
+      window.removeEventListener("online", online);
+    };
+  }, [refreshSaved, refreshVisible, syncAccounts]);
+  const refreshAll = () => {
+    window.dispatchEvent(new Event("admin-linked-accounts-refresh"));
+    void syncAccounts(true);
+  };
 
   const counts = useMemo(() => {
     const list = accounts ?? [];
@@ -794,7 +841,13 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
   }, [accounts, filter, query, now]);
 
   const selected = visible.find((a) => a.id === selectedId) ?? (isDesktop ? visible[0] : undefined);
-  const update = (next: LinkedSocialAccount) => setAccounts((prev) => (prev ?? []).map((a) => (a.id === next.id ? next : a)));
+  const update = (next: LinkedSocialAccount) => {
+    adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+    updateSaved(previous => linkedAccountsData({
+      accounts: (previous?.accounts ?? accounts ?? []).map(account => account.id === next.id ? next : account),
+      screenshotReader: previous?.screenshotReader ?? screenshotReader,
+    }));
+  };
 
   const select = (id: string) => {
     setSelectedId(id);
@@ -807,30 +860,36 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[#1a201c] sm:text-[24px]">Linked accounts</h1>
           <p className="mt-1 max-w-[70ch] text-[13px] text-[#616a64]">
-            Accounts creators set up for Content Posting gigs, linked when you approve them. Instagram reads public profiles automatically. Other connected platforms sync by themselves; add private insights from screenshots or weekly check-ins. Updates refresh every 30 seconds while this page is open. Creators see everything in their dashboard.
+            Accounts creators set up for Content Posting gigs, linked when you approve them. Instagram reads public profiles automatically. Other connected platforms sync by themselves; add private insights from screenshots or weekly check-ins. Updates refresh automatically while this page is open. Creators see everything in their dashboard.
           </p>
         </div>
-        <button type="button" className={`${btnGhost} self-start sm:self-auto`} onClick={() => void load()} disabled={loading}>
+        <button type="button" className={`${btnGhost} self-start sm:self-auto`} onClick={refreshAll} disabled={loading}>
           {loading ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.refresh} />}
           Refresh
         </button>
       </div>
 
-      <AccountRequestsQueue onLinked={() => void load(true)} />
+      <AccountRequestsQueue adminId={adminId} onLinked={() => {
+        adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+        void refreshSaved({ force: true, afterCurrent: true });
+      }} />
 
-      <AutoSyncCard onChanged={() => void load()} />
+      <AutoSyncCard adminId={adminId} onChanged={() => {
+        adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+        void syncAccounts(true);
+      }} />
 
       {error ? (
-        <Banner tone="danger">{error.unavailable ? "Linked accounts need the latest database migration. Run npm run db:migrate, then refresh." : error.message}</Banner>
+        <Banner tone="danger"><div className="flex flex-wrap items-center justify-between gap-3"><span>{(error as Error & { unavailable?: boolean }).unavailable ? "Linked accounts need the latest database update." : error.message}{accounts ? " Saved data is still shown." : ""}</span><button type="button" className="rounded-lg border border-current px-3 py-1.5 font-semibold" onClick={() => { setSyncError(null); void refreshSaved({ force: true }); }}>Retry</button></div></Banner>
       ) : null}
 
-      <div className={`${cardClass} flex flex-col gap-2.5 p-2.5 sm:flex-row sm:items-center`}>
-        <div className="dashboard-chip-scroller flex gap-1 overflow-x-auto">
+      <div className={`${cardClass} flex flex-col gap-2.5 p-2.5 xl:flex-row xl:items-center`}>
+        <div className="dashboard-chip-scroller flex min-w-0 gap-1 overflow-x-auto">
           {FILTERS.map((f) => (
             <button
               key={f.id}
               type="button"
-              onClick={() => setFilter(f.id)}
+              onClick={() => { setFilter(f.id); saveAdminFilter(f.id); }}
               aria-pressed={filter === f.id}
               className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[9px] px-2.5 text-[12.5px] font-semibold transition ${
                 filter === f.id ? "bg-[#1f2b24] text-white" : "text-[#4b544e] hover:bg-[#f1f3f0]"
@@ -840,12 +899,12 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
               <span
                 className={`rounded-full px-1.5 text-[10.5px] tabular-nums ${filter === f.id ? "bg-white/20" : (f.id === "due" || f.id === "reels") && counts[f.id] ? "bg-[#fdf1dc] text-[#9a5b00]" : "bg-[#eef0ed]"}`}
               >
-                {counts[f.id]}
+                {accounts === null ? "–" : counts[f.id]}
               </span>
             </button>
           ))}
         </div>
-        <label className="relative min-w-0 flex-1 sm:max-w-xs sm:ml-auto">
+        <label className="relative min-w-0 xl:ml-auto xl:w-64 xl:shrink-0">
           <span className="sr-only">Search accounts</span>
           <Icon d={ICONS.search} className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a928c]" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search handle, gig, creator" className={`${fieldClass} h-9 pl-8`} />
@@ -853,9 +912,7 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
       </div>
 
       {accounts === null && !error ? (
-        <div className="grid place-items-center py-16">
-          <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" />
-        </div>
+        <AdminSectionLoading label="Loading saved accounts" />
       ) : accounts && !visible.length ? (
         <EmptyState
           icon={ICONS.user}
@@ -863,9 +920,9 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
           body={accounts.length ? "Try another filter or search." : "Approve a Content Posting application with a verified account and it appears here."}
         />
       ) : accounts ? (
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
           <ul
-            className={`${cardClass} divide-y divide-[#eef0ec] overflow-hidden lg:sticky lg:top-[8.5rem] lg:max-h-[calc(100vh-10rem)] lg:overflow-y-auto ${
+            className={`${cardClass} divide-y divide-[#eef0ec] overflow-hidden xl:sticky xl:top-20 xl:max-h-[calc(100dvh-6rem)] xl:overflow-y-auto xl:overscroll-contain ${
               selected && !isDesktop ? "hidden" : ""
             }`}
           >
@@ -906,11 +963,11 @@ export default function LinkedAccountsPanel({ isDesktop }: { isDesktop: boolean 
               );
             })}
           </ul>
-          <div ref={detailRef} className="min-w-0 scroll-mt-28">
+          <div ref={detailRef} className="min-w-0 scroll-mt-20">
             {selected ? (
               <AccountDetail key={selected.id} account={selected} now={now} screenshotReader={screenshotReader} onChange={update} onBack={isDesktop ? undefined : () => setSelectedId(null)} />
             ) : (
-              <p className="hidden rounded-[14px] border border-dashed border-[#e3e5e1] px-4 py-10 text-center text-[13px] text-[#7a827c] lg:block">Select an account to record its numbers.</p>
+              <p className="hidden rounded-[14px] border border-dashed border-[#e3e5e1] px-4 py-10 text-center text-[13px] text-[#7a827c] xl:block">Select an account to record its numbers.</p>
             )}
           </div>
         </div>
