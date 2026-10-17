@@ -329,9 +329,18 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
 export async function fetchInstagramProfileSummary(input: string, lookFor?: string): Promise<Omit<InstagramProfile, "media"> & { codeFound?: boolean }> {
   const handle = normalizeInstagramHandle(input);
   const html = await readPage(`/${handle}/`, AbortSignal.timeout(6000));
-  const { media: _media, ...profile } = extractInstagramProfile(html, handle);
-  void _media;
   const needle = lookFor?.trim().toUpperCase();
-  const codeFound = needle ? (profile.biography ?? "").toUpperCase().includes(needle) || decode(html).toUpperCase().includes(needle) : undefined;
-  return { ...profile, codeFound };
+  const inPage = needle ? decode(html).toUpperCase().includes(needle) : undefined;
+  let summary: Omit<InstagramProfile, "media">;
+  try {
+    const { media: _media, ...profile } = extractInstagramProfile(html, handle);
+    void _media;
+    summary = profile;
+  } catch (error) {
+    // Counts can be hidden from logged-out reads while the bio still renders; the code alone proves ownership.
+    if (!inPage) throw error;
+    return { note: "Counts weren't readable.", codeFound: true };
+  }
+  const codeFound = needle ? (summary.biography ?? "").toUpperCase().includes(needle) || !!inPage : undefined;
+  return { ...summary, codeFound };
 }

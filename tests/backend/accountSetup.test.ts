@@ -5,11 +5,13 @@ import {
   encodeAccountInstructions,
   instructionLines,
   normalizeHandle,
+  ownershipProven,
   parseAccountInstructions,
   payoutPhrase,
   publicAccountSetup,
   readStoredAccountSetup,
   redactProposal,
+  validateAccountOwnership,
   validateAccountSetup,
 } from '../../lib/accountSetup';
 
@@ -75,4 +77,30 @@ test('payout wording follows the gig payout type', () => {
   assert.equal(payoutPhrase('₹40,000', 'Monthly'), '₹40,000 a month');
   assert.equal(payoutPhrase('₹5,000', 'Project'), '₹5,000');
   assert.equal(payoutPhrase('', 'Per post'), '');
+});
+
+test('bio-code verification needs only the username and profile link', () => {
+  assert.deepEqual(validateAccountOwnership({ handle: 'glowco.pune', profileUrl: valid.profileUrl }, ig), {});
+  const errors = validateAccountOwnership({ handle: 'bad handle!', profileUrl: 'https://x.com/a', notes: 'x'.repeat(601) }, ig);
+  assert.deepEqual(Object.keys(errors).sort(), ['handle', 'notes', 'profileUrl']);
+  // loginOptional drops the login requirements but still checks values that are given.
+  assert.deepEqual(validateAccountSetup({ ...valid, email: '', password: '' }, ig, { loginOptional: true }), {});
+  assert.ok(validateAccountSetup({ ...valid, email: 'nope', password: '' }, ig, { loginOptional: true }).email);
+});
+
+test('stored setups carry the bio code and the last read, and need no login', () => {
+  const stored = readStoredAccountSetup({
+    platform: 'Instagram', handle: 'glowco.pune', profileUrl: valid.profileUrl, status: 'Submitted', submittedAt: '2026-10-17T00:00:00.000Z',
+    verifyCode: 'RL-ABC234', ownership: 'found', ownershipDetail: 'RL-ABC234 found in the bio.', checkedAt: '2026-10-17T00:01:00.000Z', followers: 0, posts: 0, isPrivate: false,
+  })!;
+  assert.equal(stored.email, '');
+  assert.equal(stored.verifyCode, 'RL-ABC234');
+  assert.equal(stored.ownership, 'found');
+  assert.equal(stored.followers, 0);
+  assert.equal(ownershipProven(publicAccountSetup(stored)), true);
+  const odd = readStoredAccountSetup({ handle: 'x', status: 'Submitted', verifyCode: 'nope', ownership: 'hacked', followers: -4 })!;
+  assert.equal(odd.verifyCode, undefined, 'malformed codes are dropped');
+  assert.equal(odd.ownership, undefined, 'unknown ownership states are dropped');
+  assert.equal(odd.followers, undefined);
+  assert.equal(ownershipProven(publicAccountSetup(odd)), false);
 });

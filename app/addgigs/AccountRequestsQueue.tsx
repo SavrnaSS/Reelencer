@@ -20,7 +20,7 @@ const CHECK_ICON: Record<RequestCheck["status"], string> = { pass: ICONS.check, 
 
 const CHANGE_TEMPLATES = [
   (r: AdminAccountRequest) => `Add ${r.verifyCode} to the bio of @${r.handle}, then tap "Check again".`,
-  () => "The login details didn't work. Update the email or password.",
+  (r: AdminAccountRequest) => `We couldn't read the bio of @${r.handle}. Make the account public for a moment, then tap "Check again".`,
   () => "The profile link opens a different account. Paste the link from the account's own profile page.",
 ];
 const REJECT_TEMPLATES = [
@@ -158,9 +158,9 @@ function RequestRow({
               </p>
             </div>
 
-            {/* Login and context */}
+            {/* Account and context */}
             <div className="rounded-[12px] border border-[#e3e5e1] bg-white p-3">
-              <p className="text-[12px] font-semibold text-[#3b443e]">Login</p>
+              <p className="text-[12px] font-semibold text-[#3b443e]">Account</p>
               <dl className="mt-2 space-y-1.5 text-[12px]">
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-[#7a827c]">Profile</dt>
@@ -171,12 +171,20 @@ function RequestRow({
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
+                  <dt className="text-[#7a827c]">Verification</dt>
+                  <dd className={`min-w-0 truncate font-medium ${owned ? "text-[#226b40]" : "text-[#9a5b00]"}`}>{owned ? "Code found in bio" : "Code not found yet"}</dd>
+                </div>
+                {/* Older requests were sent with a login; new ones are verified by the bio code only. */}
+                {request.email ? (
+                <div className="flex items-center justify-between gap-2">
                   <dt className="text-[#7a827c]">Email</dt>
                   <dd className="flex min-w-0 items-center gap-1.5">
                     <span className="truncate font-medium text-[#1a201c]">{request.email}</span>
                     <CopyButton value={request.email} />
                   </dd>
                 </div>
+                ) : null}
+                {request.hasPassword ? (
                 <div className="flex items-center justify-between gap-2">
                   <dt className="text-[#7a827c]">Password</dt>
                   <dd className="flex min-w-0 items-center gap-1.5">
@@ -185,15 +193,14 @@ function RequestRow({
                         <span className="truncate font-mono text-[#1a201c]">{password}</span>
                         <CopyButton value={password} />
                       </>
-                    ) : request.hasPassword ? (
+                    ) : (
                       <button type="button" className="font-semibold text-[#2b5d4a] hover:underline disabled:opacity-50" onClick={() => void reveal()} disabled={busy !== null}>
                         {busy === "reveal" ? "Revealing…" : "Reveal (logged)"}
                       </button>
-                    ) : (
-                      <span className="text-[#8a928c]">Not provided</span>
                     )}
                   </dd>
                 </div>
+                ) : null}
                 {request.phone ? (
                   <div className="flex items-center justify-between gap-2">
                     <dt className="text-[#7a827c]">Phone</dt>
@@ -214,7 +221,7 @@ function RequestRow({
           {open ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-[11.5px] text-[#7a827c]">
-                {owned ? "Ownership is proven. Log in to confirm the account is fresh and unused, then approve." : "Ownership isn't proven yet. Confirm the code in the bio when you log in, or ask the creator to add it."}
+                {owned ? "Ownership is proven. Open the profile to confirm the account is fresh and unused, then approve." : "Ownership isn't proven yet. Open the profile and look for the code in the bio, or ask the creator to add it."}
               </p>
               <div className="flex flex-wrap gap-2 sm:justify-end">
                 <button type="button" className={btnDanger} onClick={() => setDialog("reject")} disabled={busy !== null}>

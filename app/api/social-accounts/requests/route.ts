@@ -6,19 +6,18 @@ import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
 import { listCreatorRequests, recheckAccountRequest, resubmitAccountRequest, submitAccountRequest, withdrawAccountRequest } from "@/lib/api/accountRequests";
 
-// Creators: request additional accounts on gigs they're linked on, track the team's verification, fix and resubmit.
+// Creators: request additional accounts on gigs they're linked on, prove ownership with the code in the bio, track the
+// team's verification, fix and resubmit.
 
 export const GET = withApi({ auth: "user" }, async (req) => {
   const actor = await authenticate(req);
   return NextResponse.json(await listCreatorRequests(actor.aliases), { headers: NO_STORE_HEADERS });
 });
 
+// Ownership is proven by a code in the bio, so only the account itself is sent: no login details.
 const details = {
   handle: z.string().max(200),
   profileUrl: z.string().max(400),
-  email: z.string().max(300),
-  password: z.string().max(300).default(""),
-  phone: z.string().max(40).optional(),
   notes: z.string().max(700).optional(),
 };
 const actions = z.discriminatedUnion("action", [

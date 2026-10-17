@@ -1,5 +1,5 @@
 import "server-only";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "crypto";
 
 const PREFIX = "enc:v1:";
 
@@ -39,4 +39,9 @@ export function decryptSecretText(value: string) {
 
 export function isEncryptedSecret(value: string) {
   return value.startsWith(PREFIX);
+}
+
+/** Stable bytes for a label (e.g. a per-application code), keyed by the same secret so they can't be guessed. */
+export function deriveSecretBytes(label: string) {
+  return createHmac("sha256", getSecretKey()).update(label).digest();
 }

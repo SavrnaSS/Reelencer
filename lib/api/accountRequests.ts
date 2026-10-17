@@ -13,18 +13,19 @@ import {
   type RequestCheck,
   type RequestEligibleGig,
 } from "@/lib/accountRequests";
-import { accountPlatformFor, normalizeHandle, payoutPhrase, validateAccountSetup, type AccountSetupInput } from "@/lib/accountSetup";
+import { accountPlatformFor, normalizeHandle, payoutPhrase, validateAccountOwnership, type AccountOwnershipInput } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decodeWorkerName, resolveNotificationContext, sendLifecycleNotification, type MailStatus } from "@/lib/api/gigApplications";
 import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
 import { emailBaseUrl } from "@/lib/email/send";
-import { decryptSecretText, encryptSecretText } from "@/lib/secretCrypto";
+import { decryptSecretText } from "@/lib/secretCrypto";
 import { formatCompact } from "@/lib/socialAnalytics";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // Additional account requests (see lib/accountRequests and migration 202610100001). Creators can only add accounts
-// to gigs they're already linked on; nothing links until the team approves. Passwords are encrypted at rest and only
-// revealed to admins, with an audit event.
+// to gigs they're already linked on; nothing links until the team approves. Ownership is proven by a code in the bio,
+// so no login is collected. Passwords on older requests stay encrypted and are only revealed to admins, with an audit
+// event.
 
 type Row = Record<string, unknown>;
 type Sb = ReturnType<typeof supabaseAdmin>;
@@ -91,10 +92,14 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
   );
 
   // Duplicates across every creator: linked accounts and other people's requests for the same handle or login email.
+  // Bio-code requests carry no email, so that comparison only runs for older, password-based ones.
+  const email = str(r.email);
   const [linked, sameHandle, sameEmail, recent, onGig] = await Promise.all([
     sb.from("linked_social_accounts").select("id,platform,worker_code,status").ilike("handle", ilikeExact(handle)).limit(20),
     sb.from("social_account_requests").select("id,platform,worker_code,status").eq("handle_key", String(r.handle_key)).neq("id", String(r.id)).limit(20),
-    sb.from("social_account_requests").select("id,worker_code").ilike("email", ilikeExact(String(r.email))).neq("worker_code", String(r.worker_code)).limit(5),
+    email
+      ? sb.from("social_account_requests").select("id,worker_code").ilike("email", ilikeExact(email)).neq("worker_code", String(r.worker_code)).limit(5)
+      : Promise.resolve({ data: [], error: null }),
     sb.from("social_account_requests").select("id", { count: "exact", head: true }).eq("worker_code", String(r.worker_code)).gte("created_at", new Date(Date.now() - 86_400_000).toISOString()),
     sb.from("linked_social_accounts").select("id", { count: "exact", head: true }).eq("application_id", String(r.application_id)).neq("status", "unlinked"),
   ]);
@@ -110,13 +115,16 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
         ? { id: "duplicate", label: "Not linked elsewhere", status: "fail", detail: "Another creator has requested this account." }
         : { id: "duplicate", label: "Not linked elsewhere", status: "pass", detail: "No other creator has this account." },
   );
-  checks.push(
-    (sameEmail.data ?? []).length
-      ? { id: "email", label: "Login email", status: "warn", detail: "The same login email is on another creator's request." }
-      : { id: "email", label: "Login email", status: "pass", detail: "Not used by any other creator." },
-  );
+  if (email) {
+    checks.push(
+      (sameEmail.data ?? []).length
+        ? { id: "email", label: "Login email", status: "warn", detail: "The same login email is on another creator's request." }
+        : { id: "email", label: "Login email", status: "pass", detail: "Not used by any other creator." },
+    );
+  }
 
-  // Ownership and the public profile. Only Instagram can be read automatically; other platforms are checked by login.
+  // Ownership and the public profile. Only Instagram can be read automatically; on other platforms the team opens
+  // the profile and looks for the code.
   if (platform.id === "instagram") {
     try {
       const profile = await fetchInstagramProfileSummary(handle, code);
@@ -126,7 +134,7 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
       ].filter(Boolean).join(" · ");
       checks.push(
         profile.isPrivate
-          ? { id: "profile", label: "Public profile", status: "warn", detail: `Private account${counts ? ` (${counts})` : ""}. Log in to verify the content.` }
+          ? { id: "profile", label: "Public profile", status: "warn", detail: `Private account${counts ? ` (${counts})` : ""}. Ask the creator to make it public so the content can be checked.` }
           : { id: "profile", label: "Public profile", status: "pass", detail: counts ? `Found: ${counts}.` : "Found on Instagram." },
       );
       checks.push(
@@ -137,11 +145,11 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
     } catch (error) {
       const message = error instanceof Error ? error.message : "Instagram couldn't be read.";
       checks.push({ id: "profile", label: "Public profile", status: "warn", detail: message.slice(0, 200) });
-      checks.push({ id: "ownership", label: "Ownership code", status: "pending", detail: `Couldn't read the bio. Check it for ${code} when you log in.` });
+      checks.push({ id: "ownership", label: "Ownership code", status: "pending", detail: `Couldn't read the bio. Open the profile and look for ${code}.` });
     }
   } else {
     checks.push({ id: "profile", label: "Public profile", status: "pending", detail: `${platform.label} can't be read automatically. Open the profile to confirm it exists.` });
-    checks.push({ id: "ownership", label: "Ownership code", status: "pending", detail: `Log in and confirm ${code} is in the bio or description.` });
+    checks.push({ id: "ownership", label: "Ownership code", status: "pending", detail: `Open the profile and confirm ${code} is in the bio or description.` });
   }
 
   const today = recent.count ?? 0;
@@ -218,11 +226,11 @@ export async function listCreatorRequests(aliases: string[]): Promise<CreatorAcc
   };
 }
 
-type RequestInput = AccountSetupInput & { sourceAccountId: string };
+type RequestInput = AccountOwnershipInput & { sourceAccountId: string };
 
-function validate(input: AccountSetupInput, platformName: string, passwordOptional: boolean) {
+function validate(input: AccountOwnershipInput, platformName: string) {
   const platform = accountPlatformFor(platformName);
-  const errors = validateAccountSetup(input, platform, { passwordOptional });
+  const errors = validateAccountOwnership(input, platform);
   const first = Object.values(errors)[0];
   if (first) throw new ApiError(400, first, "invalid_input");
   const handle = normalizeHandle(input.handle, platform);
@@ -255,7 +263,7 @@ export async function submitAccountRequest(actor: { aliases: string[] }, input: 
   databaseError(error);
   if (!source || !actor.aliases.includes(String(source.worker_code))) throw new ApiError(404, "Linked account not found.");
   if (source.status !== "active") throw new ApiError(409, "Accounts can only be added to gigs where your account is active.");
-  const { handle, handleKey } = validate(input, String(source.platform), false);
+  const { handle, handleKey } = validate(input, String(source.platform));
 
   const state = await listCreatorRequests(actor.aliases);
   if (state.unavailable) throw new ApiError(503, "Adding accounts isn't switched on yet.", "schema_outdated");
@@ -277,9 +285,10 @@ export async function submitAccountRequest(actor: { aliases: string[] }, input: 
       handle,
       handle_key: handleKey,
       profile_url: profileUrl,
-      email: input.email.trim(),
-      phone: String(input.phone ?? "").trim(),
-      password_enc: encryptSecretText(input.password),
+      // Ownership is proven by the code in the bio: no login details are collected.
+      email: "",
+      phone: "",
+      password_enc: null,
       notes: String(input.notes ?? "").trim(),
       verify_code: makeVerifyCode((n) => randomBytes(n)),
     })
@@ -299,12 +308,12 @@ async function requireOwnRequest(sb: Sb, id: string, aliases: string[]) {
   return data as Row;
 }
 
-/** After a change request: edit the details (blank password keeps the saved one) and go back to the queue. */
-export async function resubmitAccountRequest(actor: { aliases: string[] }, id: string, input: AccountSetupInput) {
+/** After a change request: edit the details and go back to the queue. */
+export async function resubmitAccountRequest(actor: { aliases: string[] }, id: string, input: AccountOwnershipInput) {
   const sb = supabaseAdmin();
   const current = await requireOwnRequest(sb, id, actor.aliases);
   if (current.status !== "changes_requested") throw new ApiError(409, "Only requests that need changes can be edited.");
-  const { handle, handleKey } = validate(input, String(current.platform), true);
+  const { handle, handleKey } = validate(input, String(current.platform));
   if (handleKey !== String(current.handle_key)) await assertAvailable(sb, { platformName: String(current.platform), handle, handleKey, workerCodes: actor.aliases, exceptId: id });
   const { data, error } = await sb
     .from("social_account_requests")
@@ -312,10 +321,9 @@ export async function resubmitAccountRequest(actor: { aliases: string[] }, id: s
       handle,
       handle_key: handleKey,
       profile_url: input.profileUrl.trim(),
-      email: input.email.trim(),
-      phone: String(input.phone ?? "").trim(),
+      // Login details from an older, password-based request only stay with the same account.
+      ...(handleKey === String(current.handle_key) ? {} : { email: "", phone: "", password_enc: null }),
       notes: String(input.notes ?? "").trim(),
-      ...(input.password ? { password_enc: encryptSecretText(input.password) } : {}),
       status: "pending",
       revision: Number(current.revision ?? 1) + 1,
       submitted_at: new Date().toISOString(),

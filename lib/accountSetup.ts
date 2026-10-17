@@ -1,19 +1,39 @@
 // Account setup for Content Posting gigs: before posting starts, the creator makes a fresh account on the platform
-// the admin chose (the gig's `platform`) and submits its login details. Screening is the admin checking that account.
-// Stored on the application's proposal as `accountSetup`; the password is encrypted server-side and never returned
-// to the browser (lib/api/accountSetup.ts). Pure module: shared by the creator form, the admin console and tests.
+// the admin chose (the gig's `platform`) and proves they own it by adding the application's verification code to
+// the bio. No password is asked for: Instagram bios are read automatically, other platforms are checked by the team.
+// Stored on the application's proposal as `accountSetup`. Older submissions may still carry an encrypted password,
+// which never reaches the browser (lib/api/accountSetup.ts). Pure module: shared by the creator form, the admin
+// console and tests.
 
 export type AccountSetupStatus = "Submitted" | "ChangesRequested" | "Verified";
 
-/** What the browser sees. The password itself never leaves the server; `hasPassword` says one is stored. */
+/**
+ * Whether the verification code is in the bio. "found" / "missing" come from reading the public profile;
+ * "unreadable" means the read failed (private, rate limited); "manual" is a platform that can't be read, so the
+ * team checks the code by opening the profile.
+ */
+export type AccountOwnership = "found" | "missing" | "unreadable" | "manual";
+
+/** What the browser sees. A legacy password never leaves the server; `hasPassword` says one is stored. */
 export type AccountSetupView = {
   platform: string;
   handle: string;
   profileUrl: string;
+  /** Legacy submissions only: the login email. Empty for bio-code verification. */
   email: string;
   phone?: string;
   notes?: string;
   hasPassword: boolean;
+  /** The code that has to be in the bio (RL-XXXXXX). */
+  verifyCode?: string;
+  ownership?: AccountOwnership;
+  ownershipDetail?: string;
+  /** Last automatic bio check. */
+  checkedAt?: string;
+  /** Public profile numbers from the last read, so the team can see the account is fresh. */
+  followers?: number;
+  posts?: number;
+  isPrivate?: boolean;
   status: AccountSetupStatus;
   /** 1 for the first submission, +1 for every resubmission after a change request. */
   revision: number;
@@ -26,22 +46,32 @@ export type AccountSetupView = {
 export type StoredAccountSetup = Omit<AccountSetupView, "hasPassword"> & { passwordEnc?: string };
 
 const STATUSES = ["Submitted", "ChangesRequested", "Verified"] as const;
+const OWNERSHIP = ["found", "missing", "unreadable", "manual"] as const;
 
 /** Reads a stored account setup defensively (it lives inside free-form proposal JSON). */
 export function readStoredAccountSetup(raw: unknown): StoredAccountSetup | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const v = raw as Record<string, unknown>;
   const status = STATUSES.find((s) => s === v.status);
-  if (!status || typeof v.handle !== "string" || typeof v.email !== "string") return undefined;
+  if (!status || typeof v.handle !== "string") return undefined;
   const text = (key: string) => (typeof v[key] === "string" && String(v[key]).trim() ? String(v[key]) : undefined);
+  const count = (key: string) => (typeof v[key] === "number" && Number.isFinite(v[key]) && Number(v[key]) >= 0 ? Number(v[key]) : undefined);
+  const verifyCode = text("verifyCode");
   return {
     platform: text("platform") ?? "",
     handle: v.handle,
     profileUrl: text("profileUrl") ?? "",
-    email: v.email,
+    email: text("email") ?? "",
     phone: text("phone"),
     notes: text("notes"),
     passwordEnc: text("passwordEnc"),
+    verifyCode: verifyCode && VERIFY_CODE.test(verifyCode) ? verifyCode : undefined,
+    ownership: OWNERSHIP.find((o) => o === v.ownership),
+    ownershipDetail: text("ownershipDetail"),
+    checkedAt: text("checkedAt"),
+    followers: count("followers"),
+    posts: count("posts"),
+    isPrivate: typeof v.isPrivate === "boolean" ? v.isPrivate : undefined,
     status,
     revision: Number.isFinite(Number(v.revision)) && Number(v.revision) > 0 ? Number(v.revision) : 1,
     submittedAt: text("submittedAt") ?? new Date(0).toISOString(),
@@ -65,6 +95,28 @@ export function redactProposal<T extends { accountSetup?: unknown } | undefined>
   void _stored;
   return (view ? { ...rest, accountSetup: view } : rest) as T;
 }
+
+/** Same format as additional-account requests (lib/accountRequests.ts). */
+export const VERIFY_CODE = /^RL-[A-Z0-9]{6}$/;
+
+/** What the creator submits for bio-code verification: no login details. */
+export type AccountOwnershipInput = { handle: string; profileUrl: string; notes?: string };
+
+/** Field errors for a bio-code submission (empty object = valid). Shared so the form and the API agree. */
+export function validateAccountOwnership(input: AccountOwnershipInput, platform: AccountPlatform) {
+  const all = validateAccountSetup({ ...input, email: "", password: "" }, platform, { loginOptional: true });
+  const errors: Partial<Record<keyof AccountOwnershipInput, string>> = {};
+  if (all.handle) errors.handle = all.handle;
+  if (all.profileUrl) errors.profileUrl = all.profileUrl;
+  if (all.notes) errors.notes = all.notes;
+  return errors;
+}
+
+/** Ownership is settled once the code was read in the bio. Other states still need the creator or the team. */
+export const ownershipProven = (setup?: Pick<AccountSetupView, "ownership">) => setup?.ownership === "found";
+
+/** Platforms whose public bio the server can read; the rest are checked by the team. */
+export const canReadBio = (platform: AccountPlatform) => platform.id === "instagram";
 
 export type AccountSetupInput = {
   handle: string;
@@ -235,8 +287,9 @@ export const ACCOUNT_LIMITS = { password: 256, phone: 30, notes: 600, email: 254
 /**
  * Field errors for a submission (empty object = valid). Shared so the form and the API agree.
  * `passwordOptional` is for resubmissions, where leaving the password blank keeps the saved one.
+ * `loginOptional` drops the email and password requirements (bio-code verification); values given are still checked.
  */
-export function validateAccountSetup(input: AccountSetupInput, platform: AccountPlatform, options: { passwordOptional?: boolean } = {}) {
+export function validateAccountSetup(input: AccountSetupInput, platform: AccountPlatform, options: { passwordOptional?: boolean; loginOptional?: boolean } = {}) {
   const errors: Partial<Record<keyof AccountSetupInput, string>> = {};
   const handle = normalizeHandle(input.handle, platform);
   if (!handle) errors.handle = `Enter the ${platform.label} username you created.`;
@@ -248,11 +301,13 @@ export function validateAccountSetup(input: AccountSetupInput, platform: Account
     errors.profileUrl = platform.hosts.length ? `Use a ${platform.label} link (${platform.hosts[0]}/…).` : "Enter a valid link starting with https://";
 
   const email = input.email.trim();
-  if (!email) errors.email = "Enter the email the account was created with.";
+  if (!email) {
+    if (!options.loginOptional) errors.email = "Enter the email the account was created with.";
+  }
   else if (email.length > ACCOUNT_LIMITS.email || !EMAIL.test(email)) errors.email = "Enter a valid email address.";
 
   if (!input.password) {
-    if (!options.passwordOptional) errors.password = "Enter the account password.";
+    if (!options.passwordOptional && !options.loginOptional) errors.password = "Enter the account password.";
   } else if (input.password.length < 6) errors.password = "That looks too short for a real password.";
   else if (input.password.length > ACCOUNT_LIMITS.password) errors.password = "Password is too long.";
 

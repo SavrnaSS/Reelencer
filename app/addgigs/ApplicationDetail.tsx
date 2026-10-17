@@ -71,6 +71,7 @@ type Props = {
   account?: {
     platformLabel: string;
     onReveal: () => Promise<string>;
+    onCheck: () => Promise<void>;
     onRequestChanges: (note: string) => Promise<void>;
   };
 };
@@ -179,6 +180,7 @@ export default function ApplicationDetail({
               platformLabel={account.platformLabel}
               decided={app.status === "Accepted" || app.status === "Rejected"}
               onReveal={account.onReveal}
+              onCheck={account.onCheck}
               onRequestChanges={account.onRequestChanges}
             />
           ) : null}

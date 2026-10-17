@@ -1,13 +1,15 @@
 import "server-only";
+import { ACCOUNT_REQUEST_LIMITS, makeVerifyCode } from "@/lib/accountRequests";
 import {
   accountPlatformFor,
+  canReadBio,
   isContentPostingType,
   normalizeHandle,
   payoutPhrase,
   readStoredAccountSetup,
   redactProposal,
-  validateAccountSetup,
-  type AccountSetupInput,
+  validateAccountOwnership,
+  type AccountOwnershipInput,
   type StoredAccountSetup,
 } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
@@ -20,7 +22,8 @@ import {
   type MailStatus,
   type ProposalPayload,
 } from "@/lib/api/gigApplications";
-import { decryptSecretText, encryptSecretText } from "@/lib/secretCrypto";
+import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
+import { decryptSecretText, deriveSecretBytes } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export function decodePublicWorkerName(raw: unknown) {
@@ -67,8 +70,51 @@ async function notify(sb: ReturnType<typeof supabaseAdmin>, row: DbRecord, confi
   }
 }
 
-/** Creator submits (or resubmits after a change request) the account they made for a Content Posting gig. */
-export async function submitAccountSetup(actor: { userId: string; aliases: string[] }, applicationId: string, input: AccountSetupInput) {
+/** The application's ownership code: derived, not stored, so the creator sees it before submitting anything. */
+export function accountVerifyCode(applicationId: string) {
+  const bytes = deriveSecretBytes(`account-setup:${applicationId}`);
+  return makeVerifyCode((n) => bytes.subarray(0, n));
+}
+
+/** Creator-only: the code to put in the bio, shown while they set the account up. */
+export async function getAccountVerifyCode(actor: { aliases: string[] }, applicationId: string) {
+  const { row, gig } = await loadApplication(applicationId);
+  if (!actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
+  if (!isContentPostingType(String(gig.gig_type ?? ""))) throw new ApiError(409, "This gig doesn't need an account setup.");
+  return { verifyCode: accountVerifyCode(String(row.id)) };
+}
+
+type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "checkedAt" | "followers" | "posts" | "isPrivate">;
+
+/** Reads the public bio for the code. Never throws: a failed read is recorded so the team can check by hand. */
+async function readOwnership(platformName: string, handle: string, code: string): Promise<OwnershipFields> {
+  const platform = accountPlatformFor(platformName);
+  const checkedAt = new Date().toISOString();
+  if (!canReadBio(platform)) return { ownership: "manual", ownershipDetail: `The reviewer will look for ${code} in the bio when they open the profile.`, checkedAt };
+  try {
+    const profile = await fetchInstagramProfileSummary(handle, code);
+    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate };
+    if (profile.codeFound) return { ...stats, ownership: "found", ownershipDetail: `${code} found in the bio.`, checkedAt };
+    return {
+      ...stats,
+      ownership: "missing",
+      ownershipDetail: profile.isPrivate ? `The account is private, so ${code} couldn't be seen in the bio.` : `${code} isn't in the bio yet.`,
+      checkedAt,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    return {
+      ownership: "unreadable",
+      ownershipDetail: /not found|404/i.test(message)
+        ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
+        : `${platform.label} didn't respond on the last check. We'll keep trying automatically.`,
+      checkedAt,
+    };
+  }
+}
+
+/** Creator submits (or resubmits after a change request) the account they made, with the code in its bio. */
+export async function submitAccountSetup(actor: { userId: string; aliases: string[] }, applicationId: string, input: AccountOwnershipInput) {
   const { sb, row, gig } = await loadApplication(applicationId);
   if (!actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
   if (!isContentPostingType(String(gig.gig_type ?? ""))) throw new ApiError(409, "This gig doesn't need an account setup.");
@@ -78,19 +124,24 @@ export async function submitAccountSetup(actor: { userId: string; aliases: strin
   if (previous?.status === "Verified" || row.status === "Accepted") throw new ApiError(409, "This account has already been verified.");
 
   const platform = accountPlatformFor(String(gig.platform ?? ""));
-  const errors = validateAccountSetup(input, platform, { passwordOptional: !!previous?.passwordEnc });
-  const firstError = Object.values(errors)[0];
+  const firstError = Object.values(validateAccountOwnership(input, platform))[0];
   if (firstError) throw new ApiError(400, firstError, "invalid_input");
 
+  const handle = normalizeHandle(input.handle, platform);
+  const verifyCode = accountVerifyCode(String(row.id));
   const now = new Date().toISOString();
+  // Login details from an older password-based submission only stay with the same account.
+  const sameAccount = previous?.handle.toLowerCase() === handle.toLowerCase();
   const setup: StoredAccountSetup = {
     platform: platform.label,
-    handle: normalizeHandle(input.handle, platform),
+    handle,
     profileUrl: input.profileUrl.trim(),
-    email: input.email.trim().toLowerCase(),
-    phone: input.phone?.trim() || undefined,
+    email: sameAccount ? previous.email : "",
+    phone: sameAccount ? previous.phone : undefined,
+    passwordEnc: sameAccount ? previous.passwordEnc : undefined,
     notes: input.notes?.trim() || undefined,
-    passwordEnc: input.password ? encryptSecretText(input.password) : previous?.passwordEnc,
+    verifyCode,
+    ...(await readOwnership(platform.label, handle, verifyCode)),
     status: "Submitted",
     // Edits while still waiting keep the revision; answering a change request starts a new one.
     revision: previous ? previous.revision + (previous.status === "ChangesRequested" ? 1 : 0) : 1,
@@ -98,23 +149,47 @@ export async function submitAccountSetup(actor: { userId: string; aliases: strin
   };
   const data = await writeProposal(sb, actor.userId, row, { ...(decoded.proposal ?? {}), accountSetup: setup });
   const resubmitted = previous?.status === "ChangesRequested";
+  const owned = setup.ownership === "found";
   const mailStatus = previous && !resubmitted ? null : await notify(sb, data, {
     eyebrow: resubmitted ? "Account Updated" : "Account Received",
     tone: "neutral",
-    title: resubmitted ? "Your updated account is back in screening" : "Your account details are in screening",
-    intro: `Thanks for setting up the ${platform.label} account for ${String(gig.title ?? "this gig")}. The team is checking it now.`,
+    title: resubmitted ? "Your updated account is back in screening" : "Your account is in screening",
+    intro: `Thanks for setting up the ${platform.label} account for ${String(gig.title ?? "this gig")}. ${owned ? "We found your code in the bio, so the team can review it now." : "The team is checking it now."}`,
     highlights: [
       { label: "Account", value: `@${setup.handle}` },
-      { label: "Stage", value: "Account screening" },
+      { label: "Verification code", value: owned ? `${verifyCode} · found` : verifyCode },
     ],
     sections: [
-      { label: "What happens next", value: "A recruiter logs in to confirm the account works and matches the brief. You'll get an email and a dashboard update with the decision." },
-      { label: "After it's verified", value: `You'll post the gig's reels on this account and earn ${payoutPhrase(String(gig.payout ?? ""), String(gig.payout_type ?? "")) || "the listed payout"}, paid to your wallet.` },
-      { label: "Until then", value: "Don't post on the account or change its password, email or phone number." },
+      {
+        label: "What happens next",
+        value: owned
+          ? "The team reviews the profile against the brief. You'll get an email and a dashboard update with the decision."
+          : `Add ${verifyCode} anywhere in the ${platform.label} bio and save it. ${canReadBio(platform) ? "Your dashboard confirms it automatically." : "The team checks it when they open the profile."}`,
+      },
+      { label: "After it's verified", value: `You'll post the gig's reels on this account and earn ${payoutPhrase(String(gig.payout ?? ""), String(gig.payout_type ?? "")) || "the listed payout"}, paid to your wallet. You can remove the code from the bio then.` },
+      { label: "Until then", value: "Keep the code in the bio, don't post on the account and don't change its username." },
     ],
     ctaLabel: "Track your application",
   });
   return { ...toApplication(data), mailStatus };
+}
+
+/** "Check again": re-reads the bio for the code. Creators are rate limited; admins aren't. */
+export async function checkAccountOwnership(actor: { userId: string; aliases: string[]; isAdmin: boolean }, applicationId: string) {
+  const { sb, row } = await loadApplication(applicationId);
+  if (!actor.isAdmin && !actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
+  const decoded = decodeWorkerName(row.worker_name);
+  const previous = readStoredAccountSetup(decoded.proposal?.accountSetup);
+  if (!previous) throw new ApiError(409, "Submit the account first.");
+  // Nothing left to prove once the team has decided.
+  if (previous.status === "Verified" || row.status === "Accepted" || row.status === "Rejected") return toApplication(row);
+  const last = previous.checkedAt ? Date.parse(previous.checkedAt) : 0;
+  const wait = last + ACCOUNT_REQUEST_LIMITS.recheckSeconds * 1000 - Date.now();
+  if (!actor.isAdmin && wait > 0) throw new ApiError(429, `Checked a moment ago. Try again in ${Math.ceil(wait / 1000)}s.`, "cooldown");
+  const verifyCode = previous.verifyCode ?? accountVerifyCode(String(row.id));
+  const setup: StoredAccountSetup = { ...previous, verifyCode, ...(await readOwnership(previous.platform, previous.handle, verifyCode)) };
+  const data = await writeProposal(sb, actor.userId, row, { ...(decoded.proposal ?? {}), accountSetup: setup });
+  return toApplication(data);
 }
 
 /** Admin asks the creator to fix something; the form reopens with the note on their side. */
@@ -144,7 +219,7 @@ export async function requestAccountChanges(actor: { userId: string }, applicati
   return { ...toApplication(data), mailStatus };
 }
 
-/** Admin-only: decrypts the stored password for a login check. */
+/** Admin-only: decrypts a password from an older, password-based submission. */
 export async function revealAccountPassword(actor: { userId: string }, applicationId: string) {
   const { sb, row } = await loadApplication(applicationId);
   const setup = readStoredAccountSetup(decodeWorkerName(row.worker_name).proposal?.accountSetup);

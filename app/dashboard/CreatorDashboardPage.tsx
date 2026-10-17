@@ -106,7 +106,7 @@ type ProposalPayload = {
   groupJoinedConfirmed?: boolean;
   groupJoinedConfirmedAt?: string;
   reviewedAt?: string;
-  /** Content Posting gigs: the account the creator set up (password never included). */
+  /** Content Posting gigs: the account the creator set up, verified by a code in its bio (no password). */
   accountSetup?: AccountSetupView;
 };
 
@@ -5547,7 +5547,9 @@ export default function DashboardPage() {
         // Content Posting: after applying, the creator sets up the account they'll post from; screening waits for it.
         const needsAccountSetup = isContentPostingGig(selectedGig) && hasApplication && selectedGigReviewStatus !== "Rejected";
         const accountSetup = selectedGigApplication?.proposal?.accountSetup;
-        const accountActionNeeded = needsAccountSetup && selectedGigReviewStatus !== "Accepted" && (!accountSetup || accountSetup.status === "ChangesRequested");
+        // A submitted account whose bio doesn't show the code yet is still waiting on the creator.
+        const accountCodeMissing = accountSetup?.status === "Submitted" && accountSetup.ownership === "missing";
+        const accountActionNeeded = needsAccountSetup && selectedGigReviewStatus !== "Accepted" && (!accountSetup || accountSetup.status === "ChangesRequested" || accountCodeMissing);
         const accountPlatformLabel = accountPlatformFor(selectedGig.platform).label;
         const proposalStatusLabel =
           selectedGigReviewStatus === "Accepted"
@@ -5579,7 +5581,9 @@ export default function DashboardPage() {
           ? accountActionNeeded
             ? accountSetup?.status === "ChangesRequested"
               ? `Update ${accountPlatformLabel} account`
-              : `Set up ${accountPlatformLabel} account`
+              : accountCodeMissing
+                ? `Verify ${accountPlatformLabel} account`
+                : `Set up ${accountPlatformLabel} account`
             : "View application status"
           : isDirectApplicationFlow
             ? "Apply now"
@@ -5833,7 +5837,9 @@ export default function DashboardPage() {
                           : accountActionNeeded
                             ? accountSetup?.status === "ChangesRequested"
                               ? `The hiring team asked for a change to your ${accountPlatformLabel} account. Update it below to continue screening.`
-                              : `One more step: set up the ${accountPlatformLabel} account you'll post reels on. Screening starts as soon as it's in.`
+                              : accountCodeMissing
+                                ? `Almost there: add your verification code to the ${accountPlatformLabel} bio so the team can confirm the account is yours.`
+                                : `One more step: set up the ${accountPlatformLabel} account you'll post reels on. Screening starts as soon as it's in.`
                             : startsWorkDirectly
                             ? "Approved instantly. Your work emails and inbox are in Your assignment below."
                             : isDirectApplicationFlow

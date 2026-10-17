@@ -12,12 +12,12 @@ import {
   type RequestCheck,
   type RequestEligibleGig,
 } from "@/lib/accountRequests";
-import { ACCOUNT_LIMITS, accountPlatformFor, validateAccountSetup, type AccountSetupInput } from "@/lib/accountSetup";
+import { ACCOUNT_LIMITS, accountPlatformFor, canReadBio, validateAccountOwnership, type AccountOwnershipInput } from "@/lib/accountSetup";
 import type { AccountEarningsSummary } from "@/lib/creatorEarnings";
 import { formatAmount } from "@/lib/money";
 import { formatCompact, metricChange, type LinkedSocialAccount } from "@/lib/socialAnalytics";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
-import { Button, Icon, Skeleton, cx, formatRelative } from "./dashboardUi";
+import { Button, Icon, Skeleton, buttonClassName, cx, formatRelative } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
 
 // "Add more accounts": creators request extra accounts on gigs they're linked on. Three pieces share one request
@@ -45,7 +45,9 @@ const CHECK_DOT: Record<RequestCheck["status"], string> = { pass: "bg-[#2e7d4f]"
 /** Creators see the checks they can act on; duplicate/velocity signals are for the team. */
 const CREATOR_CHECKS = new Set<RequestCheck["id"]>(["link", "profile", "ownership"]);
 const STEPS = ["Submitted", "Ownership", "Team review", "Linked"];
-const EMPTY: AccountSetupInput = { handle: "", profileUrl: "", email: "", password: "", phone: "", notes: "" };
+const EMPTY: Required<AccountOwnershipInput> = { handle: "", profileUrl: "", notes: "" };
+/** Instagram's edit-profile page: opens the app on phones, so the creator lands straight on the bio. */
+const INSTAGRAM_EDIT_PROFILE = "https://www.instagram.com/accounts/edit/";
 /** Decided requests drop off after this (they stay in the team's history). */
 const KEEP_DECIDED_DAYS = 14;
 const PITCH_HIDDEN_KEY = "reelencer:add-accounts-pitch-hidden";
@@ -359,7 +361,7 @@ function gigEarnings(gig: RequestEligibleGig | undefined, accounts: LinkedSocial
 const rupees = (value: number) => (value >= 100 ? `₹${Math.round(value).toLocaleString("en-IN")}` : money(value));
 
 const PITCH_STEPS = [
-  { title: "Submit", detail: "username & login" },
+  { title: "Submit", detail: "username & link" },
   { title: "Verify", detail: "code in the bio" },
   { title: "Earn", detail: "once the team links it" },
 ];
@@ -635,7 +637,8 @@ function OwnershipBox({ request, onChange }: { request: AccountRequestView; onCh
   const owned = request.checks.find((c) => c.id === "ownership")?.status === "pass";
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const waiting = !owned && (request.status === "pending" || request.status === "changes_requested");
+  // Only Instagram bios can be read; elsewhere the team looks for the code, so there's nothing to poll.
+  const waiting = !owned && canReadBio(platform) && (request.status === "pending" || request.status === "changes_requested");
   // Parents pass inline handlers; a ref keeps the background timer from restarting on every re-render.
   const changeRef = useRef(onChange);
   useEffect(() => {
@@ -670,13 +673,26 @@ function OwnershipBox({ request, onChange }: { request: AccountRequestView; onCh
     <div className="space-y-2.5">
       <div className={cx("rounded-lg p-3", owned ? "bg-[#f4f9f2]" : "bg-[#f7f8f6]")}>
         <p className="text-[12px] font-semibold text-[#3b443e]">{owned ? "Ownership confirmed" : "Prove it's yours"}</p>
-        <p className="mt-0.5 text-[12px] text-[#616a64]">{owned ? "Keep the code in the bio until the account is linked." : `Add this code anywhere in the ${platform.label} bio, save, then check again.`}</p>
+        <p className="mt-0.5 text-[12px] text-[#616a64]">{owned ? "Keep the code in the bio until the account is linked." : canReadBio(platform) ? `Add this code anywhere in the ${platform.label} bio and save. It confirms here automatically.` : `Add this code anywhere in the ${platform.label} bio and save. The team checks it on the profile.`}</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <CopyCode code={request.verifyCode} />
           {!owned ? (
-            <Button size="sm" onClick={() => void recheck()} disabled={busy}>
-              {busy ? "Checking…" : "Check again"}
-            </Button>
+            <>
+              <a
+                href={platform.id === "instagram" ? INSTAGRAM_EDIT_PROFILE : request.profileUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                className={buttonClassName("secondary", "sm", "gap-1.5")}
+              >
+                {platform.id === "instagram" ? "Edit bio" : "Open profile"}
+                <Icon.External className="h-3 w-3" />
+              </a>
+              {canReadBio(platform) ? (
+                <Button size="sm" variant="primary" onClick={() => void recheck()} disabled={busy}>
+                  {busy ? "Checking…" : "Check again"}
+                </Button>
+              ) : null}
+            </>
           ) : null}
         </div>
         {waiting ? (
@@ -792,16 +808,13 @@ function RequestForm({ gigs, initialSourceId, editing, onDone, onCancel }: { gig
   const [sourceId, setSourceId] = useState(editing?.sourceAccountId ?? (openGigs.find((g) => g.sourceAccountId === initialSourceId) ?? openGigs[0])?.sourceAccountId ?? "");
   const gig = gigs.find((g) => g.sourceAccountId === sourceId);
   const platform = accountPlatformFor(editing?.platform ?? gig?.platform);
-  const [values, setValues] = useState<AccountSetupInput>(
-    editing ? { handle: editing.handle, profileUrl: editing.profileUrl, email: editing.email, password: "", phone: editing.phone ?? "", notes: editing.notes ?? "" } : EMPTY
-  );
+  const [values, setValues] = useState<Required<AccountOwnershipInput>>(editing ? { handle: editing.handle, profileUrl: editing.profileUrl, notes: editing.notes ?? "" } : EMPTY);
   const [touched, setTouched] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const errors = useMemo(() => validateAccountSetup(values, platform, { passwordOptional: !!editing }), [values, platform, editing]);
-  const set = (key: keyof AccountSetupInput) => (event: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: event.target.value }));
-  const shown = (key: keyof AccountSetupInput) => (touched ? errors[key] : undefined);
+  const errors = useMemo(() => validateAccountOwnership(values, platform), [values, platform]);
+  const set = (key: keyof AccountOwnershipInput) => (event: { target: { value: string } }) => setValues((v) => ({ ...v, [key]: event.target.value }));
+  const shown = (key: keyof AccountOwnershipInput) => (touched ? errors[key] : undefined);
   // Typing a username fills the profile link for platforms with a simple profile URL.
   const suggestLink = () => {
     const handle = values.handle.trim().replace(/^@+/, "");
@@ -891,36 +904,22 @@ function RequestForm({ gigs, initialSourceId, editing, onDone, onCancel }: { gig
           </div>
         </div>
 
-        <div className="space-y-3">
-          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7a827c]">Login for the team</p>
-          <div className="grid gap-3 @[440px]/sheet:grid-cols-2">
-            <Field label="Login email" htmlFor={`${uid}-email`} error={shown("email")}>
-              <input id={`${uid}-email`} type="email" className={inputClass} value={values.email} onChange={set("email")} autoComplete="off" autoCapitalize="none" aria-invalid={!!shown("email")} />
-            </Field>
-            <Field label="Password" htmlFor={`${uid}-password`} error={shown("password")} hint="Encrypted. Only the review team can see it.">
-              <div className="relative">
-                <input
-                  id={`${uid}-password`}
-                  type={showPassword ? "text" : "password"}
-                  className={cx(inputClass, "pr-16")}
-                  value={values.password}
-                  onChange={set("password")}
-                  autoComplete="new-password"
-                  maxLength={ACCOUNT_LIMITS.password}
-                  placeholder={editing?.hasPassword ? "Keep saved password" : ""}
-                  aria-invalid={!!shown("password")}
-                />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[11.5px] font-semibold text-[#2b5d4a] hover:bg-[#eef1ed]">
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-            </Field>
-            <Field label="Phone (optional)" htmlFor={`${uid}-phone`} error={shown("phone")}>
-              <input id={`${uid}-phone`} type="tel" className={inputClass} value={values.phone} onChange={set("phone")} autoComplete="off" aria-invalid={!!shown("phone")} />
-            </Field>
-            <Field label="Note (optional)" htmlFor={`${uid}-notes`} error={shown("notes")}>
-              <input id={`${uid}-notes`} className={inputClass} value={values.notes} onChange={set("notes")} maxLength={ACCOUNT_LIMITS.notes} placeholder="e.g. 2FA codes go to this email" />
-            </Field>
+        <Field label="Note for the team (optional)" htmlFor={`${uid}-notes`} error={shown("notes")}>
+          <input id={`${uid}-notes`} className={inputClass} value={values.notes} onChange={set("notes")} maxLength={ACCOUNT_LIMITS.notes} placeholder="e.g. The account is private for now" aria-invalid={!!shown("notes")} />
+        </Field>
+
+        {/* What happens next: ownership by bio code, never a password. */}
+        <div className="flex items-start gap-3 rounded-xl border border-[#cfe3d4] bg-[#f4f9f2] p-3.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1f2b24] text-white">
+            <Icon.Shield className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[12.5px] font-semibold text-[#1a201c]">No password needed</p>
+            <p className="mt-0.5 text-[12px] leading-5 text-[#4b544e]">
+              {editing
+                ? `Keep ${editing.verifyCode} in the bio. We check it again as soon as you resubmit.`
+                : `Next you'll get a short code to paste in the ${platform.label} bio. ${canReadBio(platform) ? "We spot it automatically" : "The team checks it on the profile"}, and you can remove it once the account is linked.`}
+            </p>
           </div>
         </div>
         {error ? <p role="alert" className="rounded-lg bg-[#fdf2f1] px-3 py-2 text-[12.5px] text-[#8e1f1a]">{error}</p> : null}
@@ -983,7 +982,7 @@ export function AddAccountSheet({ mode, controller, onClose, onMode }: { mode: S
     mode.kind === "verify"
       ? "Prove the account is yours so the team can link it."
       : mode.kind === "edit"
-        ? "Fix what the team asked for. Leave the password empty to keep the saved one."
+        ? "Fix what the team asked for, then resubmit."
         : "Use a separate account you created yourself. The team verifies it before it's linked.";
 
   let body: ReactNode;

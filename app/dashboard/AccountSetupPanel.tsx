@@ -1,26 +1,42 @@
 "use client";
 
 import { apiFetch as fetch } from "@/lib/api/client";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { ACCOUNT_REQUEST_LIMITS } from "@/lib/accountRequests";
 import {
+  ACCOUNT_LIMITS,
   accountPlatformFor,
+  canReadBio,
   instructionLines,
   isPlatformProfileUrl,
   normalizeHandle,
+  ownershipProven,
   parseAccountInstructions,
   payoutPhrase,
-  validateAccountSetup,
-  type AccountSetupInput,
+  validateAccountOwnership,
+  type AccountOwnershipInput,
   type AccountSetupView,
 } from "@/lib/accountSetup";
-import { Button, Icon as UiIcon, cx, formatRelative } from "./dashboardUi";
+import { formatCompact } from "@/lib/socialAnalytics";
+import { Button, Icon as UiIcon, Skeleton, buttonClassName, cx, formatRelative } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
 
-// Content Posting gigs: after applying, the creator makes a fresh account on the gig's platform and submits its
-// login here. Screening (the admin checking that account) only starts once it's in.
+// Content Posting gigs: after applying, the creator makes a fresh account on the gig's platform and proves it's
+// theirs by putting the application's code in the bio. No password is asked for: Instagram bios are read
+// automatically (and re-read in the background until the code shows up); other platforms are checked by the team.
 
 type Gig = { id: string; title: string; company: string; platform: string; payout?: string; payoutType?: string; requirements: string[] };
 export type AccountSetupApplication = { id: string; status: string; proposal?: { accountSetup?: AccountSetupView } };
+
+const ENDPOINT = "/api/gig-applications/account-setup";
+/** Instagram's edit-profile page: opens the app on phones, so the creator lands straight on the bio. */
+const INSTAGRAM_EDIT_PROFILE = "https://www.instagram.com/accounts/edit/";
+const PROGRESS = ["Submitted", "Code in bio", "Team review", "Verified"];
+/** "Just now" reads oddly mid-sentence ("Last checked Just now"). */
+const relative = (value?: string) => {
+  const text = formatRelative(value);
+  return text === "Just now" ? "just now" : text;
+};
 
 const fieldClass =
   "h-11 w-full min-w-0 rounded-lg border bg-white px-3 text-[16px] text-[#1a201c] shadow-[0_1px_2px_rgba(26,32,28,0.04)] outline-none transition placeholder:text-[#9aa29c] focus:ring-2 sm:text-[14px]";
@@ -46,21 +62,105 @@ function Field({ label, optional, error, hint, htmlFor, children }: { label: str
   );
 }
 
-function CopyRow({ label, value, href }: { label: string; value: ReactNode; href?: string }) {
+function CopyCode({ code, size = "md" }: { code: string; size?: "md" | "lg" }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 px-3.5 py-2.5">
-      <dt className="shrink-0 text-[12px] text-[#616a64]">{label}</dt>
-      <dd className="min-w-0 truncate text-right text-[13px] font-semibold text-[#1a201c]">
-        {href ? (
-          <a href={href} target="_blank" rel="noreferrer noopener" className="inline-flex max-w-full items-center gap-1 text-[#2b5d4a] underline-offset-2 hover:underline">
-            <span className="truncate">{value}</span>
-            <UiIcon.External className="h-3 w-3 shrink-0" />
-          </a>
-        ) : (
-          value
-        )}
-      </dd>
-    </div>
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(code).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className={cx(
+        "inline-flex max-w-full items-center gap-2.5 rounded-lg border border-dashed border-[#9cc3a7] bg-white font-mono font-semibold tracking-[0.1em] text-[#1f5131] transition hover:bg-[#f4f9f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/30",
+        size === "lg" ? "h-11 px-3.5 text-[17px]" : "h-9 px-3 text-[15px]"
+      )}
+      aria-label={`Copy code ${code}`}
+    >
+      {code}
+      <span className={cx("rounded px-1.5 py-0.5 font-sans text-[11px] font-semibold tracking-normal", copied ? "bg-[#e3f1df] text-[#1f5131]" : "bg-[#eef1ed] text-[#2b5d4a]")} aria-live="polite">
+        {copied ? "Copied" : "Copy"}
+      </span>
+    </button>
+  );
+}
+
+/** The application's bio code. Stored on submitted setups; fetched for a new one so it can go in the bio up front. */
+function useVerifyCode(applicationId: string, known: string | undefined, enabled: boolean) {
+  const [fetched, setFetched] = useState<{ id: string; code: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const needed = enabled && !known && fetched?.id !== applicationId;
+  useEffect(() => {
+    if (!needed) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`${ENDPOINT}?applicationId=${encodeURIComponent(applicationId)}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.verifyCode) throw new Error(payload?.error || "Your code couldn't load.");
+        if (!cancelled) setFetched({ id: applicationId, code: String(payload.verifyCode) });
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Your code couldn't load.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [needed, applicationId, attempt]);
+  return {
+    code: known ?? (fetched?.id === applicationId ? fetched.code : null),
+    error,
+    retry: () => {
+      setError(null);
+      setAttempt((value) => value + 1);
+    },
+  };
+}
+
+function CodeSlot({ code, error, onRetry, size }: { code: string | null; error: string | null; onRetry: () => void; size?: "md" | "lg" }) {
+  if (code) return <CopyCode code={code} size={size} />;
+  if (error)
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2 text-[12px] text-[#8e1f1a]">
+        {error}
+        <Button size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      </span>
+    );
+  return <Skeleton className={size === "lg" ? "h-11 w-40" : "h-9 w-36"} />;
+}
+
+function Progress({ step }: { step: number }) {
+  return (
+    <ol className="flex items-start" aria-label="Verification progress">
+      {PROGRESS.map((label, index) => {
+        const done = index < step;
+        const current = index === step;
+        return (
+          <li key={label} className="relative flex min-w-0 flex-1 flex-col items-center gap-1.5 text-center">
+            {/* Connector to the previous step */}
+            {index > 0 ? <span className={cx("absolute right-1/2 top-[11px] h-0.5 w-full", done || current ? "bg-[#2e7d4f]" : "bg-[#e3e5e1]")} aria-hidden="true" /> : null}
+            <span
+              className={cx(
+                "relative z-[1] flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold transition-colors",
+                done ? "bg-[#2e7d4f] text-white" : current ? "bg-white text-[#1f5131] ring-2 ring-[#2e7d4f]" : "bg-[#f1f3f0] text-[#9aa29c] ring-1 ring-[#e3e5e1]"
+              )}
+              aria-hidden="true"
+            >
+              {done ? <UiIcon.Check className="h-3 w-3" /> : index + 1}
+            </span>
+            <span className={cx("max-w-full truncate px-0.5 text-[11px]", done || current ? "font-semibold text-[#3b443e]" : "text-[#9aa29c]")} aria-current={current ? "step" : undefined}>
+              {label}
+              <span className="sr-only">{done ? " (done)" : current ? " (current)" : ""}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -72,46 +172,97 @@ export default function AccountSetupPanel({
 }: {
   gig: Gig;
   application: AccountSetupApplication;
-  /** Called with the server's copy of the application after a successful submission. */
+  /** Called with the server's copy of the application after a submission or a bio check. */
   onUpdated: (application: AccountSetupApplication & Record<string, unknown>) => void;
   /** Once verified the account is linked: jump to its analytics. */
   onOpenStats?: () => void;
 }) {
   const uid = useId();
   const platform = useMemo(() => accountPlatformFor(gig.platform), [gig.platform]);
+  const readable = canReadBio(platform);
   const adminSteps = useMemo(() => instructionLines(parseAccountInstructions(gig.requirements)), [gig.requirements]);
   const setup = application.proposal?.accountSetup;
   const pay = payoutPhrase(gig.payout, gig.payoutType);
   const verified = setup?.status === "Verified" || application.status === "Accepted";
   const changesRequested = setup?.status === "ChangesRequested";
+  const owned = ownershipProven(setup);
 
   const [editing, setEditing] = useState(false);
   const formOpen = !verified && (!setup || changesRequested || editing);
-  const [values, setValues] = useState<AccountSetupInput>(() => ({
+  const { code, error: codeError, retry: retryCode } = useVerifyCode(application.id, setup?.verifyCode, !verified);
+  const [values, setValues] = useState<Required<AccountOwnershipInput>>(() => ({
     handle: setup?.handle ?? "",
     profileUrl: setup?.profileUrl ?? "",
-    email: setup?.email ?? "",
-    password: "",
-    phone: setup?.phone ?? "",
     notes: setup?.notes ?? "",
   }));
   // The profile link follows the username until the creator edits it themselves.
   const [urlTouched, setUrlTouched] = useState(!!setup?.profileUrl);
-  const [touched, setTouched] = useState<Partial<Record<keyof AccountSetupInput, boolean>>>({});
-  const [showPassword, setShowPassword] = useState(false);
-  const [confirmFresh, setConfirmFresh] = useState(!!setup);
-  const [confirmHands, setConfirmHands] = useState(!!setup);
+  const [touched, setTouched] = useState<Partial<Record<keyof AccountOwnershipInput, boolean>>>({});
+  const [confirmed, setConfirmed] = useState(!!setup);
+  // The profile link is derived from the username; its field only opens when the creator wants to change it.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(!!setup?.notes);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [justSent, setJustSent] = useState(false);
 
-  const passwordOptional = !!setup?.hasPassword;
-  const errors = validateAccountSetup(values, platform, { passwordOptional });
-  const visibleError = (key: keyof AccountSetupInput) => (touched[key] ? errors[key] : undefined);
-  const requiredDone = (["handle", "profileUrl", "email", "password"] as const).filter((key) => !errors[key] && (key !== "password" || values.password || passwordOptional)).length;
-  const ready = Object.keys(errors).length === 0 && confirmFresh && confirmHands;
+  /* Bio checks: manual "Check again", plus a quiet background re-check while the code hasn't shown up. */
+  const [checking, setChecking] = useState(false);
+  const [checkMessage, setCheckMessage] = useState<string | null>(null);
+  const updatedRef = useRef(onUpdated);
+  useEffect(() => {
+    updatedRef.current = onUpdated;
+  }, [onUpdated]);
+  const recheck = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setChecking(true);
+        setCheckMessage(null);
+      }
+      try {
+        const response = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", applicationId: application.id }) });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.error || "Couldn't check right now.");
+        updatedRef.current(payload);
+        const found = payload?.proposal?.accountSetup?.ownership === "found";
+        if (!silent || found) setCheckMessage(found ? "Code found. Your account is now with the team." : "Not there yet. Bio changes can take a minute to appear.");
+      } catch (e) {
+        // Background checks can hit the cooldown when another tab just checked; only manual checks report it.
+        if (!silent) setCheckMessage(e instanceof Error ? e.message : "Couldn't check right now.");
+      } finally {
+        if (!silent) setChecking(false);
+      }
+    },
+    [application.id]
+  );
+  const autoCheck = !verified && !formOpen && setup?.status === "Submitted" && readable && !owned;
+  const lastChecked = setup?.checkedAt;
+  useEffect(() => {
+    if (!autoCheck) return;
+    const cooldown = (ACCOUNT_REQUEST_LIMITS.recheckSeconds + 5) * 1000;
+    const tick = () => {
+      if (!document.hidden && navigator.onLine) void recheck(true);
+    };
+    // Coming back to the page after editing the bio: check straight away if the last read is old enough.
+    const sinceLast = lastChecked ? Date.now() - Date.parse(lastChecked) : Infinity;
+    const first = window.setTimeout(tick, Math.max(1500, cooldown - sinceLast));
+    const timer = window.setInterval(tick, cooldown);
+    const onVisible = () => {
+      if (!document.hidden && (!lastChecked || Date.now() - Date.parse(lastChecked) > cooldown)) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [autoCheck, lastChecked, recheck]);
 
-  const set = (key: keyof AccountSetupInput, raw: string) =>
+  const errors = validateAccountOwnership(values, platform);
+  const visibleError = (key: keyof AccountOwnershipInput) => (touched[key] ? errors[key] : undefined);
+  const ready = Object.keys(errors).length === 0 && confirmed && !!code;
+
+  const set = (key: keyof AccountOwnershipInput, raw: string) =>
     setValues((prev) => {
       // The field already shows an "@" prefix, so a typed or pasted "@" is dropped straight away.
       const value = key === "handle" ? raw.replace(/^\s*@+/, "") : raw;
@@ -122,32 +273,31 @@ export default function AccountSetupPanel({
       }
       return next;
     });
-  const blur = (key: keyof AccountSetupInput) => {
+  const blur = (key: keyof AccountOwnershipInput) => {
     setTouched((prev) => ({ ...prev, [key]: true }));
     // Tidy pasted values: "@Name" or a full profile link become the bare handle.
     if (key === "handle" && values.handle) setValues((prev) => ({ ...prev, handle: normalizeHandle(prev.handle, platform) }));
   };
 
   const submit = async () => {
-    setTouched({ handle: true, profileUrl: true, email: true, password: true, phone: true, notes: true });
+    setTouched({ handle: true, profileUrl: true, notes: true });
     if (!ready || submitting) return;
     setSubmitting(true);
     setServerError(null);
+    setCheckMessage(null);
     try {
-      const response = await fetch("/api/gig-applications/account-setup", {
+      const response = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ applicationId: application.id, ...values, handle: normalizeHandle(values.handle, platform) }),
+        body: JSON.stringify({ applicationId: application.id, handle: normalizeHandle(values.handle, platform), profileUrl: values.profileUrl, notes: values.notes }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error || "Your account details couldn't be sent. Try again.");
-      setValues((prev) => ({ ...prev, password: "" }));
-      setShowPassword(false);
+      if (!response.ok) throw new Error(payload?.error || "Your account couldn't be sent. Try again.");
       setEditing(false);
       setJustSent(true);
       onUpdated(payload);
     } catch (error) {
-      setServerError(error instanceof Error ? error.message : "Your account details couldn't be sent. Try again.");
+      setServerError(error instanceof Error ? error.message : "Your account couldn't be sent. Try again.");
     } finally {
       setSubmitting(false);
     }
@@ -165,13 +315,14 @@ export default function AccountSetupPanel({
             {platform.label} account verified
             <UiIcon.Check className="h-4 w-4 text-[#2e7d4f]" />
           </div>
-          <p className="truncate text-[12.5px] text-[#3b443e]">
+          <p className="text-[12.5px] leading-5 text-[#3b443e]">
             {setup ? (
               <>
                 <a href={setup.profileUrl} target="_blank" rel="noreferrer noopener" className="font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
                   @{setup.handle}
                 </a>{" "}
                 · post the gig&apos;s reels here. {pay ? `You earn ${pay}, paid to your wallet.` : "Approved posts are paid to your wallet."}
+                {setup.verifyCode ? <span className="text-[#616a64]"> You can remove {setup.verifyCode} from the bio now.</span> : null}
               </>
             ) : (
               `Post the gig's reels on this account. ${pay ? `You earn ${pay}, paid to your wallet.` : "Approved posts are paid to your wallet."}`
@@ -179,7 +330,7 @@ export default function AccountSetupPanel({
           </p>
         </div>
         {onOpenStats ? (
-          <Button size="sm" variant="primary" onClick={onOpenStats} className="shrink-0">
+          <Button size="sm" variant="primary" onClick={onOpenStats} className="w-full shrink-0 min-[460px]:w-auto">
             View stats
           </Button>
         ) : null}
@@ -187,297 +338,432 @@ export default function AccountSetupPanel({
     );
   }
 
-  const steps = [...platform.steps.slice(0, -1), ...adminSteps, platform.steps[platform.steps.length - 1]];
-
   /* ---------------- Submitted, waiting for screening ---------------- */
   if (!formOpen && setup) {
+    const ownership = setup.ownership ?? (readable ? "missing" : "manual");
+    const shownCode = code ?? setup.verifyCode ?? "your code";
+    const status = owned
+      ? {
+          tone: "success" as const,
+          pill: "Ownership confirmed",
+          title: "Code found in your bio",
+          detail: `The team is now reviewing @${setup.handle} against the brief. You'll get an email as soon as they decide.`,
+        }
+      : ownership === "manual"
+        ? {
+            tone: "info" as const,
+            pill: "With the team",
+            title: "The team will confirm your code",
+            detail: `Keep ${shownCode} in your ${platform.label} bio. The reviewer looks for it when they open your profile.`,
+          }
+        : ownership === "unreadable"
+          ? {
+              tone: "neutral" as const,
+              pill: "Retrying",
+              title: "We couldn't read your bio",
+              detail: setup.ownershipDetail ?? `${platform.label} didn't respond on the last check.`,
+            }
+          : setup.isPrivate
+            ? {
+                tone: "warning" as const,
+                pill: "Action needed",
+                title: "Your account is private",
+                detail: `We can't see the bio of a private account. Switch @${setup.handle} to public for a moment, then check again.`,
+              }
+            : {
+                tone: "warning" as const,
+                pill: "Action needed",
+                title: "Add your code to the bio",
+                detail: `Paste ${shownCode} anywhere in the @${setup.handle} bio and save. Changes can take a minute to show up.`,
+              };
+    const toneClass = {
+      success: { panel: "border-[#cfe3d4] bg-[#f4f9f2]", icon: "bg-[#2e7d4f] text-white", pill: "bg-[#e3f1df] text-[#1f5131]" },
+      warning: { panel: "border-[#ecdcb4] bg-[#fdf9ef]", icon: "bg-[#f5e3b5] text-[#6b4a05]", pill: "bg-[#fdf0d2] text-[#6b4a05]" },
+      info: { panel: "border-[#d7e4f3] bg-[#f5f9fd]", icon: "bg-[#e0ecf8] text-[#1f4a73]", pill: "bg-[#e0ecf8] text-[#1f4a73]" },
+      neutral: { panel: "border-[#e3e5e1] bg-[#fafbf9]", icon: "bg-[#eef0ed] text-[#4b544e]", pill: "bg-[#eef0ed] text-[#4b544e]" },
+    }[status.tone];
+    const stats = [
+      setup.followers !== undefined ? `${formatCompact(setup.followers)} followers` : null,
+      setup.posts !== undefined ? `${formatCompact(setup.posts)} posts` : null,
+    ].filter(Boolean);
+    const editHref = platform.id === "instagram" ? INSTAGRAM_EDIT_PROFILE : setup.profileUrl || undefined;
+    const actions = [
+      {
+        title: "Copy your code",
+        body: <CodeSlot code={code} error={codeError} onRetry={retryCode} />,
+      },
+      {
+        title: `Paste it in your ${platform.label} bio`,
+        body: editHref ? (
+          <a href={editHref} target="_blank" rel="noreferrer noopener" className={buttonClassName("secondary", "md", "gap-1.5")}>
+            {platform.id === "instagram" ? "Open Instagram" : "Open profile"}
+            <UiIcon.External className="h-3.5 w-3.5" />
+          </a>
+        ) : (
+          <span className="text-[12px] text-[#616a64]">Edit the bio in the {platform.label} app.</span>
+        ),
+      },
+      readable
+        ? {
+            title: "We confirm it automatically",
+            body: (
+              <Button size="md" variant="primary" onClick={() => void recheck()} disabled={checking}>
+                {checking ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
+                {checking ? "Checking…" : "Check now"}
+              </Button>
+            ),
+          }
+        : { title: "The team confirms it", body: <span className="text-[12px] text-[#616a64]">No need to do anything else.</span> },
+    ];
     return (
-      <section aria-labelledby={`${uid}-title`} className="overflow-hidden rounded-xl border border-[#c9d9ec] bg-white">
+      <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-2xl border border-[#dfe3de] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
         {justSent ? (
-          <div role="status" className="flex items-center gap-2 border-b border-[#d7e4f3] bg-[#eef4fb] px-4 py-2.5 text-[12.5px] font-semibold text-[#1f4a73]">
+          <div role="status" className={cx("flex items-center gap-2 border-b px-4 py-2.5 text-[12.5px] font-semibold sm:px-5", owned ? "border-[#cfe3d4] bg-[#f1f8ef] text-[#1f5131]" : "border-[#d7e4f3] bg-[#eef4fb] text-[#1f4a73]")}>
             <UiIcon.Check className="h-4 w-4 shrink-0" />
-            {setup.revision > 1 ? "Updated details sent. Screening picks up from here." : "Account sent. Screening has started."}
+            {owned ? "Account submitted and verified. It's now with the team." : readable ? "Account submitted. Add your code to the bio to finish." : "Account submitted. The team will confirm your code."}
           </div>
         ) : null}
-        <div className="flex flex-wrap items-start gap-3 p-4 sm:p-5">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#e0ecf8] text-[#1f4a73]">
-            <PlatformGlyph platform={platform} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h3 id={`${uid}-title`} className="text-[15px] font-semibold text-[#1a201c]">
-              {platform.label} account in screening
-            </h3>
-            <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
-              The team will log in to check it matches the brief. Once it&apos;s verified you&apos;ll start posting reels on it. Until then, don&apos;t post or change its login.
-            </p>
+
+        {/* Header */}
+        <div className="flex flex-col gap-3 p-4 @md:flex-row @md:items-start @md:p-5">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f1f3f0] text-[#1a201c] ring-1 ring-[#e3e5e1]">
+              <PlatformGlyph platform={platform} />
+              {owned ? (
+                <span className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#2e7d4f] text-white ring-2 ring-white" aria-hidden="true">
+                  <UiIcon.Check className="h-2.5 w-2.5" />
+                </span>
+              ) : null}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h3 id={`${uid}-title`} className="min-w-0 truncate text-[15px] font-semibold text-[#1a201c]">
+                  @{setup.handle}
+                </h3>
+                <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-semibold", toneClass.pill)}>{status.pill}</span>
+              </div>
+              <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
+                {owned
+                  ? `Your ${platform.label} account is in screening. Once it's approved, you'll post the gig's reels on it.`
+                  : `Your ${platform.label} account for ${gig.company}. Verify it's yours to move on to screening.`}
+              </p>
+            </div>
           </div>
-          <Button size="sm" onClick={() => setEditing(true)} className="w-full min-[460px]:w-auto">
+          <Button size="sm" onClick={() => setEditing(true)} className="w-full @md:w-auto">
             Edit details
           </Button>
         </div>
-        <dl className="mx-4 mb-4 divide-y divide-[#ebedea] overflow-hidden rounded-lg border border-[#ebedea] bg-[#fafbf9] sm:mx-5 sm:mb-5">
-          <CopyRow label="Profile" value={`@${setup.handle}`} href={setup.profileUrl || undefined} />
-          <CopyRow label="Login email" value={setup.email} />
-          <CopyRow
-            label="Password"
-            value={
-              <span className="inline-flex items-center gap-1.5">
-                <UiIcon.Shield className="h-3.5 w-3.5 text-[#2e7d4f]" />
-                Saved, encrypted
+
+        <div className="space-y-4 px-4 pb-4 @md:px-5 @md:pb-5">
+          <Progress step={owned ? 2 : 1} />
+
+          {/* Verification */}
+          <div className={cx("overflow-hidden rounded-xl border", toneClass.panel)}>
+            <div className="flex items-start gap-3 p-3.5 @md:p-4">
+              <span className={cx("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass.icon)} aria-hidden="true">
+                {owned ? <UiIcon.Check className="h-4 w-4" /> : <UiIcon.Shield className="h-4 w-4" />}
               </span>
-            }
-          />
-          {setup.phone ? <CopyRow label="Phone" value={setup.phone} /> : null}
-          <CopyRow label="Sent" value={`${formatRelative(setup.submittedAt)}${setup.revision > 1 ? ` · revision ${setup.revision}` : ""}`} />
-        </dl>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                  <p className="text-[13.5px] font-semibold text-[#1a201c]">{status.title}</p>
+                  {setup.checkedAt && ownership !== "manual" ? <span className="text-[11px] text-[#7a827c]">Last checked {relative(setup.checkedAt)}</span> : null}
+                </div>
+                <p className="mt-0.5 text-[12.5px] leading-5 text-[#4b544e]">{status.detail}</p>
+              </div>
+            </div>
+
+            {!owned ? (
+              <ol className="grid border-t border-black/[0.06] bg-white/70 @2xl:grid-cols-3">
+                {actions.map((action, index) => (
+                  <li key={action.title} className={cx("flex min-w-0 flex-col gap-2.5 p-3.5 @md:p-4", index > 0 && "border-t border-black/[0.06] @2xl:border-l @2xl:border-t-0")}>
+                    <p className="flex items-center gap-2 text-[12px] font-semibold text-[#3b443e]">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1f2b24] text-[10.5px] font-bold text-white" aria-hidden="true">
+                        {index + 1}
+                      </span>
+                      {action.title}
+                    </p>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">{action.body}</div>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+
+            {autoCheck || checkMessage ? (
+              <div className="flex flex-col gap-1 border-t border-black/[0.06] px-3.5 py-2.5 text-[11.5px] @md:flex-row @md:items-center @md:justify-between @md:px-4">
+                {autoCheck ? (
+                  <span className="flex items-center gap-1.5 text-[#616a64]">
+                    <span className="relative flex h-2 w-2" aria-hidden="true">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8dbf98] opacity-60 motion-reduce:hidden" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2e7d4f]" />
+                    </span>
+                    Checking every minute while this page is open
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {checkMessage ? (
+                  <span role="status" className="font-medium text-[#3b443e]">
+                    {checkMessage}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {/* Summary */}
+          <div className="flex flex-col gap-2 border-t border-[#ebedea] pt-3 text-[12px] text-[#616a64] @lg:flex-row @lg:items-center @lg:justify-between">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              {setup.profileUrl ? (
+                <a href={setup.profileUrl} target="_blank" rel="noreferrer noopener" className="inline-flex min-w-0 items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
+                  <span className="truncate">View profile</span>
+                  <UiIcon.External className="h-3 w-3 shrink-0" />
+                </a>
+              ) : null}
+              {stats.length ? (
+                <>
+                  <span aria-hidden="true" className="text-[#c5cbc6]">·</span>
+                  <span className="tabular-nums">{stats.join(" · ")}</span>
+                </>
+              ) : null}
+              <span aria-hidden="true" className="text-[#c5cbc6]">·</span>
+              <span>
+                Submitted {relative(setup.submittedAt)}
+                {setup.revision > 1 ? ` (update ${setup.revision - 1})` : ""}
+              </span>
+            </p>
+            <p className="flex items-center gap-1.5 text-[11.5px] text-[#7a827c]">
+              <UiIcon.Shield className="h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
+              We never ask for your password.
+            </p>
+          </div>
+        </div>
       </section>
     );
   }
 
   /* ---------------- Form (first time, after a change request, or editing) ---------------- */
-  const ids = { handle: `${uid}-handle`, profileUrl: `${uid}-url`, email: `${uid}-email`, password: `${uid}-password`, phone: `${uid}-phone`, notes: `${uid}-notes` };
-  const urlLooksRight = values.profileUrl && isPlatformProfileUrl(values.profileUrl, platform);
+  // Platform defaults stay one tap away; the gig's own instructions are shown up front because they differ per gig.
+  const checklist = platform.steps.slice(0, -1);
+  const ids = { handle: `${uid}-handle`, profileUrl: `${uid}-url`, notes: `${uid}-notes` };
+  const urlLooksRight = !!values.profileUrl && isPlatformProfileUrl(values.profileUrl, platform);
+  const showLinkField = linkOpen || !!visibleError("profileUrl") || (!!values.handle && !values.profileUrl);
+  const handleOk = !!values.handle && !errors.handle;
+  const steps: { title: string; hint?: string; done?: boolean; body: ReactNode }[] = [
+    {
+      title: `Create a new ${platform.label} account`,
+      hint: platform.id === "instagram" ? "Not your personal one. Switch it to a Creator account." : "Not your personal one.",
+      body: (
+        <div className="space-y-2">
+          {adminSteps.length ? (
+            <ul className="space-y-1.5 rounded-lg bg-[#f7f8f6] p-3">
+              <li className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#7a827c]">From {gig.company}</li>
+              {adminSteps.map((step) => (
+                <li key={step} className="flex gap-2 text-[12.5px] leading-5 text-[#3b443e]">
+                  <UiIcon.Check className="mt-1 h-3 w-3 shrink-0 text-[#2e7d4f]" />
+                  {step}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <details className="group text-[12.5px]">
+            <summary className="inline-flex cursor-pointer list-none items-center gap-1 font-semibold text-[#2b5d4a] hover:underline [&::-webkit-details-marker]:hidden">
+              Setup checklist
+              <UiIcon.ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
+            </summary>
+            <ul className="mt-2 space-y-1.5">
+              {checklist.map((step) => (
+                <li key={step} className="flex gap-2 leading-5 text-[#4b544e]">
+                  <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-[#9aa29c]" aria-hidden="true" />
+                  {step}
+                </li>
+              ))}
+            </ul>
+          </details>
+        </div>
+      ),
+    },
+    {
+      title: "Add this code to the bio",
+      hint: readable ? "Paste it anywhere in the bio and save. We'll find it." : "Paste it anywhere in the bio and save.",
+      body: (
+        <div className="flex flex-wrap items-center gap-2">
+          <CodeSlot code={code} error={codeError} onRetry={retryCode} size="lg" />
+          {platform.id === "instagram" ? (
+            <a href={INSTAGRAM_EDIT_PROFILE} target="_blank" rel="noreferrer noopener" className={buttonClassName("secondary", "lg", "gap-1.5")}>
+              Open Instagram
+              <UiIcon.External className="h-3.5 w-3.5" />
+            </a>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      title: "Enter the username",
+      done: handleOk && !errors.profileUrl,
+      body: (
+        <div className="space-y-3">
+          <div>
+            <label htmlFor={ids.handle} className="sr-only">
+              {platform.label} username
+            </label>
+            <div className={cx("flex items-center overflow-hidden rounded-lg border bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)] focus-within:ring-2", fieldTone(visibleError("handle")))}>
+              <span className="pl-3 text-[15px] text-[#8a928c]" aria-hidden="true">
+                @
+              </span>
+              <input
+                id={ids.handle}
+                value={values.handle}
+                onChange={(event) => set("handle", event.target.value)}
+                onBlur={() => blur("handle")}
+                placeholder="new.username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                autoComplete="off"
+                enterKeyHint="done"
+                aria-invalid={!!visibleError("handle")}
+                aria-describedby={visibleError("handle") ? `${ids.handle}-error` : `${ids.handle}-link`}
+                className="h-11 min-w-0 flex-1 bg-transparent pl-0.5 pr-3 text-[16px] text-[#1a201c] outline-none placeholder:text-[#9aa29c] sm:text-[14px]"
+              />
+              {handleOk ? <UiIcon.Check className="mr-3 h-4 w-4 shrink-0 text-[#2e7d4f]" /> : null}
+            </div>
+            {visibleError("handle") ? (
+              <p id={`${ids.handle}-error`} className="mt-1.5 text-[12px] text-[#b42318]">
+                {visibleError("handle")}
+              </p>
+            ) : null}
+          </div>
+
+          {showLinkField ? (
+            <Field label="Profile link" htmlFor={ids.profileUrl} error={visibleError("profileUrl")} hint="Copy it from the profile's Share option.">
+              <input
+                id={ids.profileUrl}
+                type="url"
+                inputMode="url"
+                value={values.profileUrl}
+                onChange={(event) => {
+                  setUrlTouched(true);
+                  set("profileUrl", event.target.value);
+                }}
+                onBlur={() => blur("profileUrl")}
+                placeholder={platform.profileUrl("new.username") || "https://"}
+                autoCapitalize="none"
+                spellCheck={false}
+                aria-invalid={!!visibleError("profileUrl")}
+                aria-describedby={visibleError("profileUrl") ? `${ids.profileUrl}-error` : undefined}
+                className={cx(fieldClass, fieldTone(visibleError("profileUrl")))}
+              />
+            </Field>
+          ) : urlLooksRight ? (
+            <p id={`${ids.handle}-link`} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[#616a64]">
+              <a href={values.profileUrl} target="_blank" rel="noreferrer noopener" className="inline-flex min-w-0 items-center gap-1 font-medium text-[#2b5d4a] underline-offset-2 hover:underline">
+                <span className="truncate">{values.profileUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</span>
+                <UiIcon.External className="h-3 w-3 shrink-0" />
+              </a>
+              <button type="button" onClick={() => setLinkOpen(true)} className="font-semibold text-[#616a64] underline-offset-2 hover:text-[#1a201c] hover:underline">
+                Change link
+              </button>
+            </p>
+          ) : null}
+
+          {noteOpen ? (
+            <Field label="Note for the reviewer" optional htmlFor={ids.notes} error={visibleError("notes")}>
+              <input
+                id={ids.notes}
+                value={values.notes}
+                maxLength={ACCOUNT_LIMITS.notes}
+                onChange={(event) => set("notes", event.target.value)}
+                onBlur={() => blur("notes")}
+                placeholder="e.g. The account is private until tonight"
+                aria-invalid={!!visibleError("notes")}
+                className={cx(fieldClass, fieldTone(visibleError("notes")))}
+              />
+            </Field>
+          ) : (
+            <button type="button" onClick={() => setNoteOpen(true)} className="text-[12px] font-semibold text-[#616a64] underline-offset-2 hover:text-[#1a201c] hover:underline">
+              + Add a note for the reviewer
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
-    // Sized by its own width, not the viewport: the card sits in a narrow column on desktop and full width on phones.
-    <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-xl border border-[#ead9b0] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
+    <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-2xl border border-[#dfe3de] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
       {/* Header */}
-      <div className="flex items-start gap-3 border-b border-[#f1e6c8] bg-[#fdf8ec] px-4 py-3.5 sm:px-5">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-[#6b4a05] ring-1 ring-[#ead9b0]">
+      <div className="flex items-start gap-3 border-b border-[#ebedea] p-4 @md:p-5">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f1f3f0] text-[#1a201c] ring-1 ring-[#e3e5e1]">
           <PlatformGlyph platform={platform} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 id={`${uid}-title`} className="text-[15px] font-semibold text-[#1a201c]">
-              {changesRequested ? `Update your ${platform.label} account` : `Set up your ${platform.label} account`}
-            </h3>
-            <span className="rounded-full bg-[#fdf0d2] px-2 py-0.5 text-[11px] font-semibold text-[#6b4a05]">{changesRequested ? "Changes requested" : "Needed for screening"}</span>
-          </div>
-          <p className="mt-0.5 text-[12.5px] leading-5 text-[#5f5642]">
-            You&apos;ll post {gig.company}&apos;s reels on a fresh {platform.label} account you create
+          <h3 id={`${uid}-title`} className="text-[15.5px] font-semibold tracking-[-0.01em] text-[#1a201c]">
+            {changesRequested ? `Update your ${platform.label} account` : `Set up your ${platform.label} account`}
+          </h3>
+          <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
             {pay ? (
               <>
-                {" "}and earn <span className="font-semibold text-[#3f3524]">{pay}</span>
+                Earn <span className="font-semibold text-[#1f5131]">{pay}</span> posting {gig.company}&apos;s reels.
               </>
             ) : (
-              " and get paid for approved posts"
-            )}
-            . Create it, then share its login so the team can verify it.
+              `Post ${gig.company}'s reels and get paid for approved posts.`
+            )}{" "}
+            Takes about 5 minutes.
           </p>
         </div>
       </div>
 
       {changesRequested && setup?.reviewNote ? (
-        <div role="alert" className="mx-4 mt-4 rounded-lg border border-[#f3cdc8] bg-[#fdf2f1] px-3.5 py-3 sm:mx-5">
+        <div role="alert" className="mx-4 mt-4 rounded-lg border border-[#f3cdc8] bg-[#fdf2f1] px-3.5 py-3 @md:mx-5">
           <div className="text-[12px] font-semibold text-[#8e1f1a]">
-            {gig.company} asked for changes{setup.reviewedAt ? ` · ${formatRelative(setup.reviewedAt)}` : ""}
+            What to fix{setup.reviewedAt ? ` · ${relative(setup.reviewedAt)}` : ""}
           </div>
           <p className="mt-0.5 whitespace-pre-line text-[13px] leading-5 text-[#5c1a16]">{setup.reviewNote}</p>
         </div>
       ) : null}
 
-      <div className="grid gap-5 p-4 @lg:p-5 @4xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] @4xl:gap-6">
-        {/* How to */}
-        <div className="min-w-0">
-          <h4 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a827c]">How to set it up</h4>
-          <ol className="mt-3 grid gap-3 @2xl:grid-cols-2 @2xl:gap-x-5 @4xl:grid-cols-1">
-            {steps.map((step, index) => (
-              <li key={`${index}-${step}`} className="flex gap-3">
-                <span
-                  aria-hidden="true"
-                  className={cx(
-                    "mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
-                    index === steps.length - 1 ? "bg-[#fdf0d2] text-[#6b4a05]" : "bg-[#eef1ed] text-[#2b5d4a]"
-                  )}
-                >
-                  {index + 1}
-                </span>
-                <p className="min-w-0 text-[13px] leading-5 text-[#3b443e]">
-                  {step}
-                  {adminSteps.includes(step) ? <span className="ml-1.5 rounded bg-[#eef1ed] px-1.5 py-px text-[10.5px] font-semibold text-[#2b5d4a]">{gig.company}</span> : null}
-                </p>
-              </li>
-            ))}
-          </ol>
-          <div className="mt-4 flex items-start gap-2 rounded-lg bg-[#f4f7f3] px-3 py-2.5 text-[12px] leading-5 text-[#3b443e]">
-            <UiIcon.Shield className="mt-0.5 h-4 w-4 shrink-0 text-[#2e7d4f]" />
-            <span>The password is encrypted the moment you send it and is only shown to the reviewing team.</span>
-          </div>
-        </div>
-
-        {/* Form */}
-        <form
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit();
-          }}
-          className="min-w-0 space-y-4"
-          aria-describedby={serverError ? `${uid}-server-error` : undefined}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a827c]">Account details</h4>
-            <span className="text-[11.5px] font-semibold tabular-nums text-[#7a827c]" aria-live="polite">
-              {requiredDone}/4 required
-            </span>
-          </div>
-
-          <div className="grid gap-4 @md:grid-cols-2">
-            <Field label="Username" htmlFor={ids.handle} error={visibleError("handle")} hint={platform.handleHint}>
-              <div className={cx("flex items-center overflow-hidden rounded-lg border bg-white focus-within:ring-2", fieldTone(visibleError("handle")), "focus-within:border-[#7fa58c]")}>
-                <span className="pl-3 text-[15px] text-[#8a928c]" aria-hidden="true">
-                  @
-                </span>
-                <input
-                  id={ids.handle}
-                  value={values.handle}
-                  onChange={(event) => set("handle", event.target.value)}
-                  onBlur={() => blur("handle")}
-                  placeholder="new.username"
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-invalid={!!visibleError("handle")}
-                  aria-describedby={visibleError("handle") ? `${ids.handle}-error` : undefined}
-                  className="h-11 min-w-0 flex-1 bg-transparent pl-0.5 pr-3 text-[16px] text-[#1a201c] outline-none placeholder:text-[#9aa29c] sm:text-[14px]"
-                />
+      <form
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+        aria-describedby={serverError ? `${uid}-server-error` : undefined}
+        className="p-4 @md:p-5"
+      >
+        <ol className="space-y-0">
+          {steps.map((step, index) => (
+            <li key={step.title} className="relative flex gap-3.5 pb-6 last:pb-2">
+              {/* Rail between step markers */}
+              {index < steps.length - 1 ? <span className="absolute left-[13px] top-8 bottom-1 w-px bg-[#e3e5e1]" aria-hidden="true" /> : null}
+              <span
+                className={cx(
+                  "relative z-[1] flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-bold",
+                  step.done ? "bg-[#2e7d4f] text-white" : "bg-[#1f2b24] text-white"
+                )}
+                aria-hidden="true"
+              >
+                {step.done ? <UiIcon.Check className="h-3.5 w-3.5" /> : index + 1}
+              </span>
+              <div className="min-w-0 flex-1 pt-0.5">
+                <h4 className="text-[14px] font-semibold text-[#1a201c]">{step.title}</h4>
+                {step.hint ? <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">{step.hint}</p> : null}
+                <div className="mt-2.5">{step.body}</div>
               </div>
-            </Field>
+            </li>
+          ))}
+        </ol>
 
-            <Field label="Profile link" htmlFor={ids.profileUrl} error={visibleError("profileUrl")} hint={urlTouched ? "Paste the link from the profile's Share option." : "Filled in from the username. Edit it if it's different."}>
-              <div className="relative">
-                <input
-                  id={ids.profileUrl}
-                  type="url"
-                  inputMode="url"
-                  value={values.profileUrl}
-                  onChange={(event) => {
-                    setUrlTouched(true);
-                    set("profileUrl", event.target.value);
-                  }}
-                  onBlur={() => blur("profileUrl")}
-                  placeholder={platform.profileUrl("new.username") || "https://"}
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  aria-invalid={!!visibleError("profileUrl")}
-                  aria-describedby={visibleError("profileUrl") ? `${ids.profileUrl}-error` : undefined}
-                  className={cx(fieldClass, fieldTone(visibleError("profileUrl")), urlLooksRight && "pr-11")}
-                />
-                {urlLooksRight ? (
-                  <a
-                    href={values.profileUrl}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    aria-label="Open profile to check it"
-                    title="Open profile to check it"
-                    className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#616a64] transition hover:bg-[#f1f3f0] hover:text-[#1a201c]"
-                  >
-                    <UiIcon.External className="h-4 w-4" />
-                  </a>
-                ) : null}
-              </div>
-            </Field>
-
-            <Field label="Login email" htmlFor={ids.email} error={visibleError("email")} hint="The email the new account was registered with.">
-              <input
-                id={ids.email}
-                type="email"
-                inputMode="email"
-                value={values.email}
-                onChange={(event) => set("email", event.target.value)}
-                onBlur={() => blur("email")}
-                placeholder="you+brand@example.com"
-                autoCapitalize="none"
-                spellCheck={false}
-                autoComplete="off"
-                aria-invalid={!!visibleError("email")}
-                aria-describedby={visibleError("email") ? `${ids.email}-error` : undefined}
-                className={cx(fieldClass, fieldTone(visibleError("email")))}
-              />
-            </Field>
-
-            <Field
-              label="Password"
-              htmlFor={ids.password}
-              error={visibleError("password")}
-              hint={passwordOptional ? "Leave empty to keep the password you already sent." : "Use a password you don't use anywhere else."}
-            >
-              <div className="relative">
-                <input
-                  id={ids.password}
-                  type={showPassword ? "text" : "password"}
-                  value={values.password}
-                  onChange={(event) => set("password", event.target.value)}
-                  onBlur={() => blur("password")}
-                  placeholder={passwordOptional ? "••••••••  (saved)" : "Account password"}
-                  // "new-password" stops browsers autofilling the creator's own saved password.
-                  autoComplete="new-password"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  aria-invalid={!!visibleError("password")}
-                  aria-describedby={visibleError("password") ? `${ids.password}-error` : undefined}
-                  className={cx(fieldClass, fieldTone(visibleError("password")), "pr-16")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((value) => !value)}
-                  aria-pressed={showPassword}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-1.5 top-1/2 h-8 -translate-y-1/2 rounded-md px-2 text-[12px] font-semibold text-[#2b5d4a] transition hover:bg-[#eef1ed]"
-                >
-                  {showPassword ? "Hide" : "Show"}
-                </button>
-              </div>
-            </Field>
-
-            <Field label="Phone on the account" optional htmlFor={ids.phone} error={visibleError("phone")} hint="Helps the team pass login checks that send a code.">
-              <input
-                id={ids.phone}
-                type="tel"
-                inputMode="tel"
-                value={values.phone}
-                onChange={(event) => set("phone", event.target.value)}
-                onBlur={() => blur("phone")}
-                placeholder="+91 98765 43210"
-                autoComplete="off"
-                aria-invalid={!!visibleError("phone")}
-                aria-describedby={visibleError("phone") ? `${ids.phone}-error` : undefined}
-                className={cx(fieldClass, fieldTone(visibleError("phone")))}
-              />
-            </Field>
-
-            <Field label="Note for the reviewer" optional htmlFor={ids.notes} error={visibleError("notes")}>
-              <input
-                id={ids.notes}
-                value={values.notes}
-                onChange={(event) => set("notes", event.target.value)}
-                onBlur={() => blur("notes")}
-                placeholder="e.g. Login codes go to my phone, message me first"
-                aria-invalid={!!visibleError("notes")}
-                aria-describedby={visibleError("notes") ? `${ids.notes}-error` : undefined}
-                className={cx(fieldClass, fieldTone(visibleError("notes")))}
-              />
-            </Field>
-          </div>
-
-          <fieldset className="space-y-2 rounded-lg border border-[#ebedea] bg-[#fafbf9] p-3">
-            <legend className="sr-only">Confirm</legend>
-            {[
-              { checked: confirmFresh, set: setConfirmFresh, label: `I created this ${platform.label} account fresh for this gig. It isn't my personal account.` },
-              { checked: confirmHands, set: setConfirmHands, label: "I won't post on it or change its password, email or phone until the team verifies it." },
-            ].map((item) => (
-              <label key={item.label} className="flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-5 text-[#3b443e]">
-                <input
-                  type="checkbox"
-                  checked={item.checked}
-                  onChange={(event) => item.set(event.target.checked)}
-                  className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#c5cbc6] accent-[#1f2b24]"
-                />
-                {item.label}
-              </label>
-            ))}
-          </fieldset>
+        <div className="mt-2 space-y-3 border-t border-[#ebedea] pt-4">
+          <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-5 text-[#3b443e]">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(event) => setConfirmed(event.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#c5cbc6] accent-[#1f2b24]"
+            />
+            This is a new account made for this gig. I won&apos;t post on it until it&apos;s verified.
+          </label>
 
           {serverError ? (
             <p id={`${uid}-server-error`} role="alert" className="flex items-start gap-2 rounded-lg border border-[#f3cdc8] bg-[#fdf2f1] px-3 py-2.5 text-[12.5px] text-[#8e1f1a]">
@@ -486,32 +772,38 @@ export default function AccountSetupPanel({
             </p>
           ) : null}
 
-          <div className="flex flex-col-reverse gap-2 @md:flex-row @md:items-center @md:justify-end">
-            {editing ? (
-              <Button
-                size="lg"
-                className="w-full @md:w-auto"
-                onClick={() => {
-                  setEditing(false);
-                  setServerError(null);
-                }}
-                disabled={submitting}
-              >
-                Cancel
+          <div className="flex flex-col-reverse gap-3 @md:flex-row @md:items-center @md:justify-between">
+            <p className="flex items-center justify-center gap-1.5 text-[11.5px] text-[#7a827c] @md:justify-start">
+              <UiIcon.Shield className="h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
+              No password needed
+            </p>
+            <div className="flex flex-col-reverse gap-2 @md:flex-row">
+              {editing ? (
+                <Button
+                  size="lg"
+                  className="w-full @md:w-auto"
+                  onClick={() => {
+                    setEditing(false);
+                    setServerError(null);
+                  }}
+                  disabled={submitting}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+              <Button type="submit" variant="primary" size="lg" className="w-full @md:w-auto" disabled={submitting} aria-disabled={!ready}>
+                {submitting ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
+                {submitting ? (readable ? "Checking bio…" : "Sending…") : changesRequested ? "Resubmit" : editing ? "Save changes" : readable ? "Verify account" : "Submit account"}
               </Button>
-            ) : null}
-            <Button type="submit" variant="primary" size="lg" className="w-full @md:w-auto" disabled={submitting} aria-disabled={!ready}>
-              {submitting ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
-              {submitting ? "Sending…" : changesRequested ? "Send updated details" : editing ? "Save changes" : "Submit for screening"}
-            </Button>
+            </div>
           </div>
           {!ready && Object.values(touched).some(Boolean) && !submitting ? (
-            <p className="text-right text-[11.5px] text-[#7a827c]">
-              {Object.keys(errors).length ? "Fix the highlighted fields to continue." : "Tick both confirmations to continue."}
+            <p className="text-center text-[11.5px] text-[#7a827c] @md:text-right">
+              {Object.keys(errors).length ? "Check the username to continue." : !code ? "Loading your code…" : "Tick the box to continue."}
             </p>
           ) : null}
-        </form>
-      </div>
+        </div>
+      </form>
     </section>
   );
 }

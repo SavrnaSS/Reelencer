@@ -1734,6 +1734,20 @@ export default function GigAdminConsole({
                       if (!res.ok) throw new Error(payload?.error || "Couldn't load the password.");
                       return String(payload?.password ?? "");
                     },
+                    onCheck: async () => {
+                      const res = await fetch("/api/gig-applications/account-setup", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "check", applicationId: app.id }),
+                      });
+                      const payload = await res.json().catch(() => null);
+                      if (!res.ok) throw new Error(payload?.error || "Couldn't read the bio.");
+                      setApps((prev) => {
+                        const next = prev.map((a) => (a.id === app.id ? { ...a, ...payload, status: payload.status ?? a.status } : a));
+                        writeLS(LS_KEYS.GIG_APPS, next);
+                        return next;
+                      });
+                    },
                     onRequestChanges: async (note) => {
                       const res = await fetch("/api/gig-applications/account-setup", {
                         method: "PATCH",
@@ -3091,7 +3105,9 @@ export default function GigAdminConsole({
                                   >
                                     <Icon d={ICONS.lock} className="h-3 w-3" />
                                     {app.proposal?.accountSetup?.status === "Submitted"
-                                      ? "Account to check"
+                                      ? app.proposal.accountSetup.ownership === "found"
+                                        ? "Code verified · review"
+                                        : "Account to check"
                                       : app.proposal?.accountSetup?.status === "ChangesRequested"
                                         ? "Awaiting fixes"
                                         : "No account yet"}
