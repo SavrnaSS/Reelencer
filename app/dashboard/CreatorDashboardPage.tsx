@@ -8,7 +8,8 @@ import Link from "next/link";
 import { BrandLogo } from "@/app/_components/BrandLogo";
 import { useSearchParams } from "next/navigation";
 import { findGigHref } from "@/lib/routes";
-import GigWorkPanel, { GigBriefAssets, requestGigWorkStart, type WorkAssignment } from "./GigWorkPanel";
+import GigWorkPanel, { requestGigWorkStart, type WorkAssignment } from "./GigWorkPanel";
+import GigBriefAssets from "./GigBriefAssets";
 import DashboardJobsView from "./DashboardJobsView";
 import AccountSetupPanel from "./AccountSetupPanel";
 import GigSampleReel from "./GigSampleReel";
@@ -6052,6 +6053,8 @@ export default function DashboardPage() {
                                           </div>
                                         </div>
 
+                                        <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} forReels={isContentPostingGig(selectedGig)} embedded />
+
                                         <div className="grid gap-px bg-[#e3efe0] sm:grid-cols-[minmax(0,1fr)_220px]">
                                           {/* Next steps */}
                                           <ol className="space-y-3 bg-white p-4 sm:p-5" aria-label="Next steps">
@@ -6582,7 +6585,7 @@ export default function DashboardPage() {
                     );
                   })()}
                 </article>
-                {selectedGigReviewStatus === "Accepted" || (startsWorkDirectly && hasWorkAssignment) ? <GigBriefAssets requirements={selectedGig.requirements} /> : null}
+                {selectedGigReviewStatus !== "Accepted" && startsWorkDirectly && hasWorkAssignment ? <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} /> : null}
                 {/* Email Creator gigs: show the work panel from the start, so creators see which of their work emails (and
                     inbox) the gig will use even before applying. */}
                 {isEmailCreatorGig(selectedGig) && submissionWorkerId ? (

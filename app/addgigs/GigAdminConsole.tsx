@@ -2013,9 +2013,10 @@ export default function GigAdminConsole({
                 />
                 {(form.gigType === "Custom" || form.gigType === "Project" || form.gigType === "Content Posting") && (
                   <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 sm:col-span-2 sm:p-4">
-                    <div className="text-xs font-semibold text-slate-700">Brief media (private)</div>
-                    <p className="mt-0.5 text-[11px] text-slate-500">Reference images or videos only accepted workers see in their proposal workspace.</p>
+                    <label htmlFor="gig-brief-media-upload" className="text-xs font-semibold text-slate-700">Reference pictures &amp; files · after approval</label>
+                    <p className="mt-0.5 text-[11px] text-slate-500">Upload the pictures creators should show in their reels, plus any reference videos. Approved creators see these in a gallery above their next steps.</p>
                   <input
+                    id="gig-brief-media-upload"
                     type="file"
                     accept="image/*,video/*"
                     multiple
@@ -2029,7 +2030,7 @@ export default function GigAdminConsole({
                     disabled={mediaUploading}
                   />
                   <div className="mt-2 text-[11px] text-slate-500">
-                    Uploaded media will appear in the worker proposal UI automatically.
+                    Save the gig to share these files with approved creators. Public sample reels above remain separate.
                   </div>
                   {mediaUploadError && (
                     <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">

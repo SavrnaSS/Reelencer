@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api/client";
 import { accountPlatformFor, normalizeHandle, type AccountPlatform } from "@/lib/accountSetup";
-import { isSafeMediaUrl } from "@/lib/gigSamples";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
 import { Button, StatusBadge, formatDate, formatRelative } from "./dashboardUi";
 
@@ -32,29 +31,6 @@ async function readResponse(response: Response, fallback: string) {
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : fallback);
   return body;
-}
-
-export function GigBriefAssets({ requirements }: { requirements: string[] }) {
-  const urls = Array.from(new Set(requirements.flatMap(line => {
-    const value = /^media::/i.test(line) ? line.replace(/^media::/i, "").trim() : line.trim();
-    return isSafeMediaUrl(value) && (/^media::/i.test(line) || /\.(png|jpe?g|webp|gif|mp4|mov|webm)(?:\?|$)/i.test(value)) ? [value] : [];
-  })));
-  if (!urls.length) return null;
-  return (
-    <section className="gig-detail-card min-w-0 p-4 sm:p-5" aria-label="Work files">
-      <h3 className="text-[16px] font-semibold text-[#1a201c]">Work files</h3>
-      <p className="mt-1 text-[13px] text-[#616a64]">The hiring team&apos;s assets for your approved gig.</p>
-      <ul className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
-        {urls.map((url, index) => (
-          <li key={url} className="min-w-0">
-            <a href={url} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-[#d9ddd8] p-3 text-[13px] font-semibold text-[#2b5d4a] hover:bg-[#f4f8f1] focus-visible:outline-2 focus-visible:outline-[#2e7d4f]">
-              Open file {index + 1}<span className="mt-0.5 block truncate text-[12px] font-normal text-[#616a64]">{new URL(url).pathname.split("/").pop() || new URL(url).hostname}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
 }
 
 /**
