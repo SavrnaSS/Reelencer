@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { isAdminOwnerEmail } from "@/lib/adminOwner";
 import { ApiError, databaseError } from "./errors";
+import { trustedClientIp } from "./clientIp";
 
 export type Actor = {
   user: User;
@@ -51,6 +52,14 @@ async function resolveActor(req: Request): Promise<Actor> {
     const permission = await sb.rpc("app_is_admin", { p_actor: user.id });
     databaseError(permission.error);
     isAdmin = permission.data === true;
+  }
+  // Enforce the network restriction on existing sessions too. Admin recovery access stays available.
+  const ip = isAdmin ? null : trustedClientIp(req);
+  if (ip) {
+    const access = await sb.rpc("record_worker_access", { p_user: user.id, p_ip: ip });
+    if (access.error?.message.includes("ip_blocked")) throw new ApiError(403, "Access from this IP address has been suspended. Contact support.", "ip_blocked");
+    if (access.error?.message.includes("account_inactive")) throw new ApiError(403, "This account is inactive.", "account_inactive");
+    databaseError(access.error);
   }
   return {
     user,

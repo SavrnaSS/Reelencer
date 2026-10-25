@@ -1,9 +1,14 @@
 import { isAdminOwnerEmail } from "@/lib/adminOwner";
 import { ownedStoragePath } from "@/lib/api/uploads";
 import { supabaseAdmin } from "./_utils";
+import { workerPurgeAfter } from "@/lib/workerDeletion";
 
 const PROFILE_MEDIA_BUCKET = "worker-profile-media";
 const SIGNED_URL_TTL = 60 * 60;
+const DIRECTORY_PAGE_SIZE = 1000;
+const DIRECTORY_ROW_LIMIT = 10_000;
+const DIRECTORY_PAGE_LIMIT = 101;
+const INCOMPLETE_DIRECTORY = "The complete user directory could not be loaded safely. Refresh before managing users.";
 
 type SupabaseAdminClient = ReturnType<typeof supabaseAdmin>;
 
@@ -55,6 +60,8 @@ type QueryResult = {
   data: unknown;
   error: { message: string } | null;
 };
+type LoadedRows<T> = { rows: T[]; error?: string };
+type ModerationRow = { user_id: string; status: "active" | "suspended" | "deleted"; deleted_at?: string; purge_started_at?: string };
 
 export type AdminWorkerRecord = {
   id: string;
@@ -62,6 +69,10 @@ export type AdminWorkerRecord = {
   name: string;
   email: string;
   active: boolean;
+  moderationStatus?: "active" | "suspended" | "deleted";
+  deletedAt?: string;
+  purgeAfter?: string;
+  purgeStartedAt?: string;
   timezone?: string;
   introVideo?: {
     name: string;
@@ -186,56 +197,71 @@ async function signPresentationVideo(sb: SupabaseAdminClient, stored: StoredPres
 
 async function listAuthUsers(sb: SupabaseAdminClient): Promise<{ rows: AuthUserRow[]; error?: string }> {
   const users: AuthUserRow[] = [];
-  let page = 1;
+  const seen = new Set<string>();
   try {
-    while (true) {
+    // One final page probes an exact 10,000-user boundary when Auth omits totals.
+    for (let page = 1; page <= 51; page += 1) {
       const res = await sb.auth.admin.listUsers({ page, perPage: 200 });
       if (res.error) return { rows: users, error: cleanErrorMessage(res.error) };
-      users.push(...rows<AuthUserRow>(res.data?.users));
-      const total = res.data?.total ?? users.length;
-      if (users.length >= total || rows<AuthUserRow>(res.data?.users).length === 0) break;
-      page += 1;
-      if (page > 50) break;
+      if (!Array.isArray(res.data?.users)) return { rows: users, error: INCOMPLETE_DIRECTORY };
+      const batch = rows<AuthUserRow>(res.data.users);
+      const hasMore = Number(res.data.total) > users.length + batch.length || Number(res.data.nextPage) > page || Number(res.data.lastPage) > page;
+      if (users.length + batch.length > DIRECTORY_ROW_LIMIT) return { rows: users, error: INCOMPLETE_DIRECTORY };
+      for (const user of batch) {
+        if (!text(user.id) || seen.has(user.id)) return { rows: users, error: INCOMPLETE_DIRECTORY };
+        seen.add(user.id);
+      }
+      users.push(...batch);
+      if (batch.length === 0) return hasMore ? { rows: users, error: INCOMPLETE_DIRECTORY } : { rows: users };
+      if (batch.length < 200 && !hasMore) return { rows: users };
     }
-    return { rows: users };
+    return { rows: users, error: INCOMPLETE_DIRECTORY };
   } catch (error) {
     return { rows: users, error: cleanErrorMessage(error) };
   }
 }
 
-async function loadWorkerRows(sb: SupabaseAdminClient): Promise<{ rows: WorkerRow[]; error?: string }> {
+async function loadDirectoryRows<T>(sb: SupabaseAdminClient, table: string, columns: readonly string[],
+  order: readonly { column: string; ascending: boolean }[], identity: string): Promise<LoadedRows<T>> {
+  const loaded: T[] = [];
+  const seen = new Set<string>();
+  let variant = 0;
   try {
-    let res = (await sb.from("workers").select("id,name,email,active,user_id,timezone").order("id", { ascending: true })) as unknown as QueryResult;
-    if (res.error && isColumnError(res.error.message)) {
-      res = (await sb.from("workers").select("id,name,email,active,user_id").order("id", { ascending: true })) as unknown as QueryResult;
+    for (let page = 0; page < DIRECTORY_PAGE_LIMIT; page += 1) {
+      let res: QueryResult;
+      for (;;) {
+        let query = sb.from(table).select(columns[variant]);
+        for (const item of order) query = query.order(item.column, { ascending: item.ascending });
+        res = await query.range(loaded.length, Math.min(loaded.length + DIRECTORY_PAGE_SIZE - 1, DIRECTORY_ROW_LIMIT));
+        if (res.error && isColumnError(res.error.message) && variant + 1 < columns.length) { variant += 1; continue; }
+        break;
+      }
+      if (res.error) return { rows: loaded, error: cleanErrorMessage(res.error) };
+      if (!Array.isArray(res.data)) return { rows: loaded, error: INCOMPLETE_DIRECTORY };
+      const batch = rows<T>(res.data);
+      if (!batch.length) return { rows: loaded };
+      if (loaded.length + batch.length > DIRECTORY_ROW_LIMIT) return { rows: loaded, error: INCOMPLETE_DIRECTORY };
+      for (const row of batch) {
+        const id = text((row as Record<string, unknown>)[identity]);
+        if (!id || seen.has(id)) return { rows: loaded, error: INCOMPLETE_DIRECTORY };
+        seen.add(id);
+      }
+      loaded.push(...batch);
+      // Continue from the number actually received: a project may configure a
+      // PostgREST response cap lower than our requested page size.
     }
-    if (res.error && isColumnError(res.error.message)) {
-      res = (await sb.from("workers").select("id,name,email,active").order("id", { ascending: true })) as unknown as QueryResult;
-    }
-    if (res.error) return { rows: [], error: cleanErrorMessage(res.error) };
-    return { rows: rows<WorkerRow>(res.data) };
+    return { rows: loaded, error: INCOMPLETE_DIRECTORY };
   } catch (error) {
-    return { rows: [], error: cleanErrorMessage(error) };
+    return { rows: loaded, error: cleanErrorMessage(error) };
   }
 }
 
-async function loadProfileRows(sb: SupabaseAdminClient): Promise<{ rows: ProfileRow[]; error?: string }> {
-  try {
-    let res = (await sb
-      .from("profiles")
-      .select("id,role,display_name,worker_code,timezone,email,active,created_at")
-      .order("created_at", { ascending: false })) as unknown as QueryResult;
-    if (res.error && isColumnError(res.error.message)) {
-      res = (await sb.from("profiles").select("id,role,display_name,worker_code,timezone,created_at").order("created_at", { ascending: false })) as unknown as QueryResult;
-    }
-    if (res.error && isColumnError(res.error.message)) {
-      res = (await sb.from("profiles").select("id,role,display_name,worker_code,created_at").order("created_at", { ascending: false })) as unknown as QueryResult;
-    }
-    if (res.error) return { rows: [], error: cleanErrorMessage(res.error) };
-    return { rows: rows<ProfileRow>(res.data) };
-  } catch (error) {
-    return { rows: [], error: cleanErrorMessage(error) };
-  }
+function loadWorkerRows(sb: SupabaseAdminClient) {
+  return loadDirectoryRows<WorkerRow>(sb, "workers", ["id,name,email,active,user_id,timezone", "id,name,email,active,user_id", "id,name,email,active"], [{ column: "id", ascending: true }], "id");
+}
+
+function loadProfileRows(sb: SupabaseAdminClient) {
+  return loadDirectoryRows<ProfileRow>(sb, "profiles", ["id,role,display_name,worker_code,timezone,email,active,created_at", "id,role,display_name,worker_code,timezone,created_at", "id,role,display_name,worker_code,created_at"], [{ column: "created_at", ascending: false }, { column: "id", ascending: true }], "id");
 }
 
 function makeWorkerFromParts(input: {
@@ -257,7 +283,7 @@ function makeWorkerFromParts(input: {
     text(input.worker?.name) ||
     metadataName(input.authUser?.user_metadata) ||
     (email ? nameFromEmail(email) : "Worker");
-  const active = optionalBoolean(input.worker?.active) ?? optionalBoolean(input.profile?.active) ?? (input.authUser ? isActiveFromAuth(input.authUser) : true);
+  const active = optionalBoolean(input.worker?.active) !== false && optionalBoolean(input.profile?.active) !== false && (!input.authUser || isActiveFromAuth(input.authUser));
   const timezone = text(input.profile?.timezone) || text(input.worker?.timezone) || undefined;
 
   return {
@@ -272,11 +298,18 @@ function makeWorkerFromParts(input: {
 }
 
 export async function getAdminWorkersResult(sb: SupabaseAdminClient): Promise<AdminWorkersResult> {
-  const [authResult, workerResult, profileResult] = await Promise.all([listAuthUsers(sb), loadWorkerRows(sb), loadProfileRows(sb)]);
+  const [authResult, workerResult, profileResult, moderationResult] = await Promise.all([
+    listAuthUsers(sb), loadWorkerRows(sb), loadProfileRows(sb), loadDirectoryRows<ModerationRow>(sb, "worker_moderation", ["user_id,status,deleted_at,purge_started_at"], [{ column: "user_id", ascending: true }], "user_id"),
+  ]);
   const authUsers = authResult.rows;
   const workerRows = workerResult.rows;
   const profileRows = profileResult.rows;
   const errors = [authResult.error, workerResult.error, profileResult.error].filter((error): error is string => !!error);
+  if (moderationResult.error) errors.push("User access details could not be loaded completely. Refresh after checking the database connection and migrations.");
+  // Never infer access from partial identity or moderation sources. An omitted
+  // restriction must not turn an archived or suspended account into an active row.
+  if (errors.length) return { workers: [], error: combineWorkerErrors(errors) };
+  const moderationByUserId = new Map(moderationResult.rows.map(row => [row.user_id, row]));
   const authById = new Map(authUsers.map((user) => [text(user.id), user]));
   const workersByUserId = new Map<string, WorkerRow>();
   const workersById = new Map<string, WorkerRow>();
@@ -326,7 +359,12 @@ export async function getAdminWorkersResult(sb: SupabaseAdminClient): Promise<Ad
     if (record) merged.set(record.id, record);
   }
 
-  const workers = Array.from(merged.values()).sort((left, right) => {
+  const workers = Array.from(merged.values()).map(record => {
+    const moderation = record.userId ? moderationByUserId.get(record.userId) : undefined;
+    const status = moderation?.status;
+    return { ...record, active: record.active && (!status || status === "active"), moderationStatus: status && status !== "active" ? status : record.active ? "active" as const : "suspended" as const,
+      ...(status === "deleted" ? { deletedAt: moderation?.deleted_at, purgeAfter: workerPurgeAfter(moderation?.deleted_at), purgeStartedAt: moderation?.purge_started_at } : {}) };
+  }).sort((left, right) => {
     const leftName = left.name || left.email || left.id;
     const rightName = right.name || right.email || right.id;
     return leftName.localeCompare(rightName, undefined, { sensitivity: "base" });

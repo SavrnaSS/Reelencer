@@ -19,6 +19,7 @@ let unavailable = false;
 let confirmed = true;
 let active = true;
 let registeredAdmin = true;
+let blockedIp = false;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 
 before(() => {
@@ -45,6 +46,8 @@ before(() => {
     if(url.pathname==='/rest/v1/gig_assignments') return json([{id:assignment,worker_code:'WKR-OTHER',gig_id:'gig-1',assigned_emails:[]}]);
     if(url.pathname==='/rest/v1/rpc/consume_api_rate_limit') return json(true);
     if(url.pathname==='/rest/v1/rpc/app_is_admin') return json(registeredAdmin);
+    if(url.pathname==='/rest/v1/rpc/record_worker_access') return blockedIp ? json({message:'ip_blocked',code:'P0001'},400) : json(null);
+    if(url.pathname==='/rest/v1/worker_ip_blocks') return json(blockedIp ? [{user_id:other}] : []);
     if(url.pathname==='/rest/v1/gigs') return json([{id:'gig-1',status:'Open',gig_type:'Project'}]);
     if(url.pathname==='/rest/v1/gig_applications') return json([]);
     if(url.pathname==='/rest/v1/rpc/worker_metrics') return json({money:{earnings:3064.09,pending:1622.64}});
@@ -156,6 +159,30 @@ test('administrator access requires the environment and database identity to agr
     delete process.env.ADMIN_EMAIL;
     assert.equal((await handler(req('/api/admin/snapshot','GET',undefined,'admin'),ctx)).status,403);
   } finally { process.env.ADMIN_EMAIL=previous; registeredAdmin=true; }
+});
+
+test('IP restrictions reject existing worker sessions and sign-ups while keeping admin recovery available', async () => {
+  const previous = process.env.TRUSTED_CLIENT_IP_HEADER;
+  const handler = withApi({auth:'user'}, async () => json({ok:true}));
+  try {
+    process.env.TRUSTED_CLIENT_IP_HEADER = 'x-real-ip';
+    const header = {'x-real-ip':'8.8.8.8'};
+    assert.equal((await handler(req('/api/me','GET',undefined,'worker',header),ctx)).status,200);
+    blockedIp = true;
+    const blocked = await handler(req('/api/me','GET',undefined,'worker',header),ctx);
+    assert.equal(blocked.status,403);
+    assert.equal((await blocked.json()).code,'ip_blocked');
+    assert.equal((await handler(req('/api/me','GET',undefined,'admin',header),ctx)).status,200);
+    const signup = (await import('../../app/api/auth/signup/route')).POST;
+    requests.length = 0;
+    const response = await signup(req('/api/auth/signup','POST',JSON.stringify({email:'new-worker@example.test',password:'new-worker-password'}),undefined,header),ctx);
+    assert.equal(response.status,403);
+    assert.ok(!requests.some(request => request.path.startsWith('/auth/')), 'Blocked networks cannot create accounts or send sign-up mail');
+  } finally {
+    blockedIp = false;
+    if(previous === undefined) delete process.env.TRUSTED_CLIENT_IP_HEADER;
+    else process.env.TRUSTED_CLIENT_IP_HEADER = previous;
+  }
 });
 
 test('worker wallet reports unreserved credits in paise and keeps another worker inaccessible',async()=>{

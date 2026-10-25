@@ -1,6 +1,7 @@
 "use client";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
 import ViewPayoutClaims from "@/app/_components/ViewPayoutClaims";
+import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
 
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -503,6 +504,9 @@ function ReelSubmitForm({ account, onSubmitted, onCancel }: { account: LinkedSoc
 function SyncBar({ account, onSynced }: { account: LinkedSocialAccount; onSynced: (next: LinkedSocialAccount) => void }) {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const tick = useCallback(async () => { setNow(Date.now()); }, []);
+  useVisibleRefresh(tick, 30_000);
   const { sync } = account;
   const latest = account.snapshots.at(-1);
 
@@ -528,21 +532,14 @@ function SyncBar({ account, onSynced }: { account: LinkedSocialAccount; onSynced
       setSyncing(false);
     }
   };
-  const failed = sync.status === "error";
   return (
     <div className="flex flex-col gap-1 sm:items-end">
       <div className="flex items-center gap-2">
-        <span className={cx("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-semibold", failed ? "bg-[#fdf0d2] text-[#6b4a05]" : "bg-[#e3f1df] text-[#1f5131]")}>
-          <span className="relative flex h-2 w-2" aria-hidden="true">
-            {!failed && !syncing ? <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#2e7d4f]/50 motion-reduce:hidden" /> : null}
-            <span className={cx("relative inline-flex h-2 w-2 rounded-full", failed ? "bg-[#d99a06]" : "bg-[#2e7d4f]")} />
-          </span>
-          {syncing ? "Syncing…" : failed ? "Sync paused" : "Auto-sync on"}
-        </span>
+        <SocialSyncStatus account={account} now={now} compact />
         <button
           type="button"
           onClick={() => void syncNow()}
-          disabled={syncing}
+          disabled={syncing || account.status !== "active" || sync.inProgress}
           aria-label="Sync stats now"
           title="Sync now"
           className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-semibold text-[#2b5d4a] transition hover:bg-[#eef1ed] disabled:opacity-50"
@@ -550,12 +547,11 @@ function SyncBar({ account, onSynced }: { account: LinkedSocialAccount; onSynced
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={cx("h-3.5 w-3.5", syncing && "animate-spin")} aria-hidden="true">
             <path d="M16 10a6 6 0 1 1-1.8-4.3M16 4v3.5h-3.5" />
           </svg>
-          {failed ? "Retry" : "Sync"}
+          {syncing || sync.inProgress ? "Syncing…" : sync.status === "error" ? "Retry" : "Sync"}
         </button>
       </div>
-      <span role="status" className={cx("max-w-[34ch] text-[11.5px] sm:text-right", failed || message ? "text-[#9a5b00]" : "text-[#8a928c]")}>
-        {message ?? (failed ? sync.error ?? "The platform didn't answer. We'll retry automatically." : sync.lastSyncedAt ? `Synced ${formatRelative(sync.lastSyncedAt).replace(/^Just/, "just")} from ${account.platform}` : `Connecting to ${account.platform}…`)}
-      </span>
+      <div className="max-w-[50ch] sm:text-right"><SocialSyncStatus account={account} now={now} showLabel={false} /></div>
+      {message ? <p role="status" className="max-w-[50ch] text-[11.5px] text-[#9a5b00] sm:text-right">{message}</p> : null}
     </div>
   );
 }
@@ -841,7 +837,7 @@ function AccountDetail({
           <div className="mt-1.5 text-[11.5px] text-[#8a928c]">{viewSummary.measured ? `${viewSummary.measured} measured reel${viewSummary.measured === 1 ? "" : "s"} · ${formatCompact(Math.round(viewSummary.average ?? 0))} average views` : countedPosts.length ? "Waiting for public view counts" : "Submit a reel to track its views"}</div>
           {viewSummary.missing ? <p className="mt-1.5 text-[11.5px] text-[#9b6109]">{viewSummary.missing} reel{viewSummary.missing === 1 ? "" : "s"} without a view count</p> : null}
           {viewSummary.oldestCapturedAt ? <p className="mt-1.5 text-[10.5px] text-[#8a928c]">Counts measured {formatRelative(viewSummary.oldestCapturedAt).toLowerCase()}</p> : null}
-          <p className="mt-1.5 text-[10.5px] text-[#8a928c]">Updates every 5 minutes while this section is open.</p>
+          <p className="mt-1.5 text-[10.5px] text-[#8a928c]">Automatic checks every 5 minutes; access limits can delay updates.</p>
         </div>
         <div
           className={cx(
@@ -1066,7 +1062,7 @@ function AccountDetail({
           ) : null}
         </div>
 
-        {platform.id === "instagram" && account.sync?.available && account.status === "active" ? <p className="mt-2 text-[11px] text-[#8a928c]">New public reels are checked every 5 minutes while this section is open. Found reels appear here automatically for review. Submit a link to fetch a reel now.</p> : null}
+        {platform.id === "instagram" && account.sync?.available && account.status === "active" ? <p className="mt-2 text-[11px] text-[#8a928c]">Automatic checks run every 5 minutes, with longer waits when Instagram limits access. Discovered reels appear here for review. Submit a link to fetch a reel now.</p> : null}
 
         {/* Toolbar: status filter · sort · view · submit */}
         {account.posts.length || (account.status === "active" && statsEnabled) ? (
@@ -1216,7 +1212,7 @@ function AccountDetail({
         <UiIcon.Shield className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {account.sync.available
           ? platform.id === "instagram"
-            ? "Your public Instagram profile is checked every five minutes while this section is open and visible. Refreshing pauses when you leave or hide this page. Exposed counts may be rounded; hidden post metrics, reach, shares and saves need insight screenshots. If Instagram blocks a read, your previous data stays available."
+            ? "Instagram statistics are checked automatically every five minutes, with longer waits when access is limited. Public counts may be rounded; hidden post metrics, reach, shares and saves need insight screenshots. If a check fails, your last successful data stays available."
             : `Stats sync automatically from ${platform.label}'s official API every few hours. Reach and profile visits are added by the Reelencer team from the account's insights.`
           : canImport
             ? `Stats come from ${platform.label} insight screenshots you upload (read by AI, never stored) and the Reelencer team's check-ins.`

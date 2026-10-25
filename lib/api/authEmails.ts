@@ -2,11 +2,13 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { ApiError } from "./errors";
+import { ApiError, databaseError } from "./errors";
+import { trustedClientIp } from "./clientIp";
 import { mutationRateLimit } from "./rateLimit";
 import { sendDecisionEmail } from "./gigApplications";
 import { firstName, renderBrandEmail } from "@/lib/email/brandEmail";
 import { AUTH_LINK_TTL } from "@/lib/authLinkTtl";
+import { authEmailLink } from "@/lib/authEmailLinks";
 
 // Sign-up confirmation is sent by the app's own mailer (Resend/Mailgun/SMTP, same as other notifications)
 // instead of Supabase's built-in sender, which only delivers to project members and is heavily rate limited.
@@ -39,9 +41,7 @@ function siteUrl(req: NextRequest) {
 }
 
 function confirmLink(site: string, tokenHash: string, type: string) {
-  // Reset links land on the new-password screen; everything else signs the user in.
-  const params = new URLSearchParams({ token_hash: tokenHash, type, next: type === "recovery" ? "/reset-password" : "/post-login" });
-  return `${site}/auth/confirm?${params.toString()}`;
+  return authEmailLink(site, tokenHash, type as "signup" | "magiclink" | "recovery");
 }
 
 /** Development only: when mail can't be sent, print the link so sign-up can still be finished locally. */
@@ -86,19 +86,25 @@ async function recoveryLink(email: string, site: string) {
   return { link: confirmLink(site, data.properties.hashed_token, "recovery"), name: String(data.user?.user_metadata?.name ?? data.user?.user_metadata?.full_name ?? "") };
 }
 
-async function sendExistingAccountEmail(to: string, site: string) {
-  const reset = await recoveryLink(to, site);
+async function sendExistingAccountEmail(to: string, site: string, tokenHash: string, name: string) {
+  const link = authEmailLink(site, tokenHash, "magiclink", "signin");
+  // Magic links and recovery links share a Supabase token slot. Both buttons use this one token;
+  // generating a separate reset token here would invalidate the sign-in button before delivery.
+  const resetLink = authEmailLink(site, tokenHash, "magiclink", "reset");
+  const first = firstName(name);
   const { html, text } = renderBrandEmail({
     siteUrl: site,
-    preheader: "This email already has an active Reelencer account. Log in instead.",
+    preheader: `Your account is ready. Sign in securely without a password. This link expires in ${AUTH_LINK_TTL}.`,
     eyebrow: "Account already active",
     illustration: "welcome",
     title: "You already have an account",
-    greeting: "Hi there,",
-    intro: `Someone (hopefully you) tried to sign up with ${to}, which already has an active Reelencer account. Log in instead, or reset your password if you've forgotten it.`,
-    cta: { label: "Log in to my account", href: `${site}/login?next=/` },
-    secondaryCta: { label: "Reset my password", href: reset?.link ?? `${site}/reset-password` },
-    note: "Didn't try to sign up? No action is needed; your account and password haven't changed.",
+    greeting: first ? `Hi ${first},` : "Hi there,",
+    intro: `Someone (hopefully you) tried to sign up with ${to}, which already has an active Reelencer account. Click below to sign in securely and open your account. You won't need to enter your password.`,
+    cta: { label: "Log in to my account", href: link },
+    ctaNote: `Secure, single-use link · Expires in ${AUTH_LINK_TTL}`,
+    secondaryCta: { label: "Reset my password", href: resetLink },
+    fallbackLink: link,
+    note: "Didn't try to sign up? You can ignore this email. Your password hasn't changed. Keep this email private: either button verifies access to your account, and the link can only be used once.",
   });
   await sendDecisionEmail(to, "You already have a Reelencer account", html, text, "account");
 }
@@ -112,10 +118,16 @@ const isAlreadyRegistered = (error: { code?: string; status?: number; message?: 
  */
 export async function remindExistingAccount(req: NextRequest, email: string) {
   const site = siteUrl(req);
+  // generateLink(magiclink) can create unknown users. Recovery only finds existing accounts,
+  // so check first, and issue the magic link last so it remains the current token.
+  const existing = await supabaseAdmin().auth.admin.generateLink({ type: "recovery", email });
+  if (existing.error?.code === "user_not_found" || existing.error?.status === 404) return;
+  if (existing.error || !existing.data?.user) throw new ApiError(503, "We couldn't prepare your sign-in email. Please try again shortly.", "auth_link_failed");
   const { data, error } = await supabaseAdmin().auth.admin.generateLink({ type: "magiclink", email });
-  if (error || !data?.user) return; // Unknown address: stay silent (same response either way).
+  if (error || !data?.user || !data.properties?.hashed_token) throw new ApiError(503, "We couldn't prepare your sign-in email. Please try again shortly.", "auth_link_failed");
   if (data.user.email_confirmed_at) {
-    await sendExistingAccountEmail(email, site);
+    const name = String(data.user.user_metadata?.name ?? data.user.user_metadata?.full_name ?? "");
+    await sendExistingAccountEmail(email, site, data.properties.hashed_token, name);
     return;
   }
   // Verifying a magic link also confirms the address, so it doubles as a fresh confirmation link.
@@ -126,6 +138,13 @@ export async function remindExistingAccount(req: NextRequest, email: string) {
 export async function startSignup(req: NextRequest, input: { email: string; password: string; name: string }) {
   if (input.password.length < MIN_PASSWORD) throw new ApiError(400, `Use at least ${MIN_PASSWORD} characters for your password.`, "weak_password");
   if (input.password.length > 72) throw new ApiError(400, "Use 72 characters or fewer for your password.", "weak_password");
+
+  const ip = trustedClientIp(req);
+  if (ip) {
+    const blocked = await supabaseAdmin().from("worker_ip_blocks").select("user_id").eq("ip", ip).limit(1);
+    databaseError(blocked.error);
+    if (blocked.data?.length) throw new ApiError(403, "Sign-ups from this IP address are suspended. Contact support.", "ip_blocked");
+  }
 
   const { data, error } = await supabaseAdmin().auth.admin.generateLink({
     type: "signup",

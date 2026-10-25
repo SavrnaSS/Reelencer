@@ -26,6 +26,8 @@ For an existing database, read [the migration and release procedure](docs/produc
 
 Workers sign up and verify their email before signing in. Login bootstraps their profile through `/api/bootstrap-profile`. Configure `ADMIN_EMAIL`, `ADMIN_PASSWORD` and `ADMIN_NAME` in the ignored `.env`, apply migrations, then run `npm run admin:sync` to create or update the administrator. Both the server environment and the registered database identity must agree before admin access is granted. The browser obtains the role from the authenticated API. See [administrator setup](docs/admin-setup.md).
 
+Existing-account reminder emails contain a Supabase single-use sign-in link that opens the authenticated workspace without asking for a password. The sign-in and reset buttons share one current credential, since generating a separate recovery token would invalidate the magic link. New credentials travel in the URL fragment and are removed before navigation; previously sent confirmation and recovery query links remain supported. Unknown resend addresses do not create accounts. Match `NEXT_PUBLIC_AUTH_LINK_HOURS` to Supabase's email OTP expiration setting.
+
 ## Commands
 
 | Command | Purpose |
@@ -58,6 +60,10 @@ Payouts use an approval and reconciliation workflow. The APIs **do not initiate 
 Set the worker's `GIG_INGEST_SECRET` to match the application's `GIG_INBOX_INGEST_SECRET` and configure `GIG_INGEST_URL` in `wrangler.toml`. Deploy the worker with a configured Wrangler CLI and route your email domains to it. `GIG_ASSIGNMENT_EMAIL_DOMAIN` controls generated gig addresses; `WORK_EMAIL_ALLOWED_DOMAINS` controls work-email addresses. Incoming message IDs are deduplicated, and an address cannot belong to multiple accounts or be reused after deletion.
 
 Configure an external scheduler to POST `/api/jobs/schedule` every 15 minutes using the `CRON_SECRET` bearer token. This job is idempotent and creates upcoming work without mutating data during dashboard reads.
+
+Linked-account statistics use `/api/jobs/social-sync` every minute with the same service authentication. Instagram checks run every five minutes and YouTube every thirty minutes, with persistent retry deadlines and exclusive database leases. Local development starts its scheduler automatically; production can use the Cloudflare Cron Trigger in `wrangler.toml` after configuring the worker's `CRON_SECRET`, or an existing external scheduler. Run `npm run social:check` to check the heartbeat and `npm run social:sync` to process due accounts. See [linked-account automatic sync](docs/instagram-profile-sync.md) for connections, fallback behavior and deployment.
+
+Deleted workers receive a seven-day restore window, then `/api/jobs/worker-purge` removes their live files, application records and Auth identity. Local development runs this job automatically; the Cloudflare minute trigger includes it for production. Run `npm run purge:workers:check` to check its queue and heartbeat. See [worker access and permanent deletion](docs/admin-worker-access.md) for retention, restoration, cleanup guarantees and deployment.
 
 Application automation rules (Gig operations → Applications → Automations) run through `/api/jobs/application-automation`. Configure the same scheduler to POST it every 15 minutes with the `CRON_SECRET` bearer token. Each run handles only applications that newly match an enabled rule, at most the rule's per-run limit and 200 in total, and records every application in a per-rule ledger so retries or overlapping runs never process one twice. Rules act as the admin who enabled them and are skipped if that account loses admin access. Every run is listed in the Activity tab.
 

@@ -1,6 +1,6 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { accountSyncDue, syncAccount, syncAvailability } from '../../lib/api/socialSync';
+import { accountSyncDue, runScheduledSocialSync, syncAccount, syncAvailability } from '../../lib/api/socialSync';
 import { externalPostId, followerEngagementRate } from '../../lib/socialAnalytics';
 
 type Row = Record<string, unknown>;
@@ -16,19 +16,22 @@ function fakeDb(tables: Record<string, Row[]>) {
     const q = {
       select: () => q,
       eq: (k: string, v: unknown) => (filters.push([k, v]), q),
+      in: () => q,
       order: () => q,
       limit: () => q,
       update: (p: Row) => ((op = 'update'), (payload = p), q),
+      upsert: () => Promise.resolve({ error: null }),
       insert: (p: Row) => (writes.push({ table, op: 'insert', payload: p, filters: [] }), Promise.resolve({ error: null })),
       maybeSingle: () => Promise.resolve({ data: rows()[0] ?? null, error: null }),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         if (op === 'update') writes.push({ table, op, payload, filters });
-        return Promise.resolve(op === 'update' ? { error: null } : { data: rows(), error: null }).then(resolve, reject);
+        return Promise.resolve(op === 'update' ? { data: [{ id: 'updated' }], error: null } : { data: rows(), error: null }).then(resolve, reject);
       },
     };
     return q;
   };
-  return { sb: { from } as never, writes };
+  const rpc = async (_name: string, args: Row) => ({ data: args.p_account_id ? [{ id: args.p_account_id, sync_lock_token: 'test-lease', last_sync_attempt_at: new Date().toISOString() }] : [], error: null });
+  return { sb: { from, rpc } as never, writes };
 }
 
 const cfg = (values: Partial<{ youtubeApiKey: string; metaAccessToken: string; metaIgBusinessId: string }>) => ({
@@ -176,10 +179,68 @@ test('blocked Instagram reads preserve previous snapshots and post metrics', asy
     social_account_posts: [{ id: 'p1', account_id: 'acc', likes: 20 }],
   });
   globalThis.fetch = (async () => new Response(null, { status: 429 })) as typeof fetch;
-  const state = await syncAccount(sb, { id: 'acc', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}));
+  const success = '2026-10-20T01:00:00Z';
+  const state = await syncAccount(sb, { id: 'acc', platform: 'Instagram', handle: 'creator', status: 'active', last_synced_at: success }, cfg({}));
   assert.equal(state.status, 'error');
   assert.match(state.error ?? '', /limited/);
   assert.equal(writes.filter((w) => w.table !== 'linked_social_accounts').length, 0);
+  assert.equal(state.lastSyncedAt, success);
+  assert.equal(state.errorCode, 'rate_limited');
+  assert.ok(Date.parse(state.nextSyncAt!) > Date.now() + 29 * 60_000);
+  assert.equal('last_synced_at' in writes.find(write => write.table === 'linked_social_accounts')!.payload, false);
+});
+
+test('the scheduled queue isolates one blocked account and still saves the next account', async () => {
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+  let claims = 0;
+  (sb as unknown as { rpc: (name: string, args: Row) => Promise<unknown> }).rpc = async () => ({ data: claims++ === 0 ? [
+    { id: 'blocked', platform: 'Instagram', handle: 'blocked', status: 'active', sync_lock_token: 'first' },
+    { id: 'healthy', platform: 'Instagram', handle: 'healthy', status: 'active', sync_lock_token: 'second' },
+  ] : [], error: null });
+  globalThis.fetch = async input => String(input).includes('/blocked/') ? new Response(null, { status: 429 })
+    : new Response('<meta name="description" content="12 Followers, 2 Following, 0 Posts (@healthy)">', { headers: { 'content-type': 'text/html' } });
+  const result = await runScheduledSocialSync(sb, cfg({}));
+  assert.equal(result.processed, 2);
+  assert.equal(result.synced, 1);
+  assert.equal(result.failed, 1);
+  const snapshot = writes.find(write => write.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.account_id, 'healthy');
+  assert.equal(snapshot.followers, 12);
+});
+
+test('a login redirect falls back to the public profile embed and records actual counts', async () => {
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+  const urls: string[] = [];
+  globalThis.fetch = async input => {
+    const url = String(input);
+    urls.push(url);
+    if (url.endsWith('/creator/')) return new Response(null, { status: 302, headers: { location: 'https://www.instagram.com/accounts/login/' } });
+    return new Response('<meta name="description" content="817 Followers, 2 Following, 0 Posts (@creator)">', { headers: { 'content-type': 'text/html' } });
+  };
+  const result = await syncAccount(sb, { id: 'embed-recovery', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}));
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(urls, ['https://www.instagram.com/creator/', 'https://www.instagram.com/creator/embed/']);
+  assert.equal(writes.find(write => write.table === 'social_account_snapshots')!.payload.followers, 817);
+});
+
+test('official Instagram counts and supplementary public views keep separate measurement provenance', async () => {
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [
+    { id: 'reel', account_id: 'api-profile', status: 'approved', url: 'https://www.instagram.com/reel/ABC/', views: 3 },
+  ] });
+  globalThis.fetch = async input => String(input).includes('graph.facebook.com')
+    ? new Response(JSON.stringify({ business_discovery: { id: '900', username: 'creator', followers_count: 2000, media_count: 1, media: { data: [{ permalink: 'https://www.instagram.com/reel/ABC/', like_count: 50 }] } } }))
+    : new Response(`<script type="application/json">${JSON.stringify({ shortcode: 'ABC', owner: { username: 'creator' }, video_view_count: 2500, like_count: 49, taken_at: 1791021600 })}</script>`, { headers: { 'content-type': 'text/html' } });
+  const result = await syncAccount(sb, { id: 'api-profile', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({ metaAccessToken: 'secret', metaIgBusinessId: '17840001' }));
+  assert.equal(result.status, 'ok');
+  assert.equal(result.provider, 'meta');
+  const snapshot = writes.find(write => write.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.followers, 2000);
+  assert.equal(snapshot.source, 'api');
+  const post = writes.find(write => write.table === 'social_account_posts')!.payload;
+  assert.equal(post.views, 2500);
+  assert.equal(post.views_source, 'profile');
+  assert.equal(post.likes, 50, 'exact API counts take priority over public metadata');
+  assert.equal('status' in post, false);
 });
 
 test('unexposed metrics never overwrite known post statistics', async () => {
@@ -213,13 +274,13 @@ test('tracked reel-page counts refresh saved views and likes without changing ap
   assert.equal(writes.filter((w) => w.table === 'social_account_posts' && w.op === 'insert').length, 0);
 });
 
- test('legacy scheduled sync does not access the network or database without a section visit', async () => {
-  const { syncAllAccounts } = await import('../../lib/api/socialAccounts');
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => { throw new Error('Background sync must not make requests'); };
-  try {
-    assert.deepEqual(await syncAllAccounts(), { synced: 0, failed: 0, due: 0, skipped: true, reason: 'visit_driven_sync' });
-  } finally { globalThis.fetch = originalFetch; }
+test('an empty scheduled queue checks the database without contacting any platform', async () => {
+  const { sb } = fakeDb({});
+  globalThis.fetch = async () => { throw new Error('No platform reads are due'); };
+  const result = await runScheduledSocialSync(sb, cfg({}));
+  assert.equal(result.processed, 0);
+  assert.equal(result.failed, 0);
+  assert.equal(result.synced, 0);
 });
 
 test('new reels are imported for review despite a full tracked list, and repeated syncs do not duplicate them', async () => {

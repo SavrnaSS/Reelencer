@@ -67,11 +67,17 @@ export type SyncState = {
   available: boolean;
   status: "pending" | "ok" | "error" | "unsupported" | "not_configured";
   lastSyncedAt?: string;
+  lastAttemptAt?: string;
+  nextSyncAt?: string;
+  inProgress?: boolean;
+  consecutiveFailures?: number;
+  provider?: "profile" | "meta" | "youtube";
+  errorCode?: import("./socialSyncSchedule").SyncErrorCode;
   error?: string;
 };
 
 /** Minimum gap between syncs a person can trigger, and how stale data gets before it refreshes on page load. */
-export const SYNC_COOLDOWN_MINUTES = 10;
+export const SYNC_COOLDOWN_MINUTES = 1;
 export const SYNC_STALE_HOURS = 3;
 
 /**

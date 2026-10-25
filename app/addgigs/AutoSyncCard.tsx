@@ -14,9 +14,10 @@ import { ICONS, Icon, Spinner, btnGhost, btnPrimary, cardClass, fieldClass, form
 type FieldState = { source: "env" | "app" | "none"; hint: string };
 type Status = {
   youtube: { connected: boolean; fields: { youtubeApiKey: FieldState } };
-  instagram: { connected: boolean; fields: { metaAccessToken: FieldState; metaIgBusinessId: FieldState } };
+  instagram: { connected: boolean; mode?: "api" | "profile"; fields: { metaAccessToken: FieldState; metaIgBusinessId: FieldState } };
   vision: { connected: boolean; fields: { anthropicApiKey: FieldState } };
-  health: { active: number; ok: number; failing: number; lastSyncedAt: string | null };
+  health: { active: number; ok: number; failing: number; pending?: number; syncing?: number; lastSyncedAt: string | null };
+  scheduler?: { healthy: boolean; lastRunAt: string | null; running: boolean };
 };
 type Provider = "youtube" | "instagram" | "vision";
 
@@ -34,9 +35,10 @@ function connectionStatus(value: unknown): Status {
   const date = payload.health?.lastSyncedAt;
   return {
     youtube: { connected: payload.youtube.connected, fields: { youtubeApiKey: field(payload.youtube.fields?.youtubeApiKey) } },
-    instagram: { connected: payload.instagram.connected, fields: { metaAccessToken: field(payload.instagram.fields?.metaAccessToken), metaIgBusinessId: field(payload.instagram.fields?.metaIgBusinessId) } },
+    instagram: { connected: payload.instagram.connected, mode: payload.instagram.mode === "api" ? "api" : "profile", fields: { metaAccessToken: field(payload.instagram.fields?.metaAccessToken), metaIgBusinessId: field(payload.instagram.fields?.metaIgBusinessId) } },
     vision: { connected: payload.vision?.connected === true, fields: { anthropicApiKey: field(payload.vision?.fields?.anthropicApiKey) } },
-    health: { active: count(payload.health?.active), ok: count(payload.health?.ok), failing: count(payload.health?.failing), lastSyncedAt: typeof date === "string" && Number.isFinite(Date.parse(date)) ? date : null },
+    health: { active: count(payload.health?.active), ok: count(payload.health?.ok), failing: count(payload.health?.failing), pending: count(payload.health?.pending), syncing: count(payload.health?.syncing), lastSyncedAt: typeof date === "string" && Number.isFinite(Date.parse(date)) ? date : null },
+    scheduler: { healthy: payload.scheduler?.healthy === true, running: payload.scheduler?.running === true, lastRunAt: typeof payload.scheduler?.lastRunAt === "string" && Number.isFinite(Date.parse(payload.scheduler.lastRunAt)) ? payload.scheduler.lastRunAt : null },
   };
 }
 
@@ -68,12 +70,12 @@ const PROVIDERS: Record<
   instagram: {
     label: "Instagram",
     platformId: "instagram",
-    reads: "Public profile followers, following and post counts, plus exposed post likes, comments and video views. No Meta API key or Professional account required. Hidden metrics stay unavailable.",
-    fields: [],
+    reads: "Followers, following, post counts and available reel metrics. Connect Meta Business Discovery for eligible public professional accounts. Public profiles and embeds provide a fallback where Instagram allows access. Hidden metrics stay unavailable.",
+    fields: [{ name: "metaAccessToken", label: "Meta access token (optional)", placeholder: "Long-lived access token", secret: true }, { name: "metaIgBusinessId", label: "Your Instagram professional account ID", placeholder: "1784…", secret: false }],
     steps: [
-      { text: "Approve and link the creator's Instagram handle. Profile reading is ready automatically." },
-      { text: "Use Sync now on a linked account, or let the existing scheduled job and page refresh read stale accounts." },
-      { text: "If Instagram requires login or limits reads, keep the last successful data and update from screenshots. Reach, saves and shares require insight screenshots." },
+      { text: "Approve and link the creator's handle. Automatic sync checks Instagram accounts every five minutes, with longer waits after failures." },
+      { text: "For reliable professional account reads, connect your Meta app token with the required Instagram permissions and the professional account ID it manages.", href: "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/business_discovery" },
+      { text: "Public fallback needs no token. Instagram login walls and private accounts can restrict it; saved numbers are preserved and the next retry is shown on each account. Private insights can be added from screenshots." },
     ],
   },
   vision: {
@@ -122,7 +124,7 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
     if (!res.ok) throw new Error(payload?.error || "Request failed.");
     return payload;
   };
-  const clean = () => provider === "instagram" ? { instagramHandle: profileHandle.trim().replace(/^@/, "") || "instagram" } : Object.fromEntries(def.fields.map((f) => [f.name, (values[f.name] ?? "").trim()]).filter(([, v]) => v));
+  const clean = () => ({ ...Object.fromEntries(def.fields.map((f) => [f.name, (values[f.name] ?? "").trim()]).filter(([, v]) => v)), ...(provider === "instagram" ? { instagramHandle: profileHandle.trim().replace(/^@/, "") || "instagram" } : {}) });
 
   return (
     <div className="mt-3 grid gap-4 rounded-[14px] border border-[#e3e5e1] bg-[#fafbf9] p-3.5 sm:p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -161,7 +163,7 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
             }
             onSaved((await call({ action: "save", values: clean() })) as Status);
             setValues({});
-            setResult({ ok: true, message: `${test.message} Saved. Accounts on ${def.label} will sync on their next load.` });
+            setResult({ ok: true, message: `${test.message} Saved. Accounts will use this connection on their next scheduled check.` });
           } catch (err) {
             setResult({ ok: false, message: err instanceof Error ? err.message : "Couldn't save." });
           } finally {
@@ -173,7 +175,7 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
           <label className="block text-[12px] font-medium text-[#1a201c]">
             Test a public Instagram handle
             <input value={profileHandle} onChange={(e) => setProfileHandle(e.target.value)} placeholder="@instagram" maxLength={31} autoComplete="off" spellCheck={false} className={`${fieldClass} mt-1 h-10`} />
-            <span className="mt-2 block font-normal leading-5 text-[#616a64]">Profile reader ready. Test a specific handle to check whether Instagram exposes its data to this server.</span>
+            <span className="mt-2 block font-normal leading-5 text-[#616a64]">Test a linked handle to check API access, or public access when no API credentials are connected.</span>
           </label>
         ) : null}
         {pinned ? (
@@ -215,7 +217,7 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
           </p>
         ) : null}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-          {status[provider].connected && !pinned && provider !== "instagram" ? (
+          {status[provider].connected && !pinned && def.fields.some(f => fieldStates[f.name]?.source === "app") ? (
             <button
               type="button"
               className={`${btnGhost} text-[#b42318] sm:mr-auto`}
@@ -225,7 +227,7 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
                 setResult(null);
                 try {
                   onSaved((await call({ action: "save", values: Object.fromEntries(def.fields.map((f) => [f.name, null])) })) as Status);
-                  setResult({ ok: true, message: `${def.label} disconnected. Its accounts fall back to manual check-ins.` });
+                  setResult({ ok: true, message: provider === "instagram" ? "Instagram API disconnected. Public profile fallback remains available." : `${def.label} disconnected. Its accounts fall back to manual check-ins.` });
                 } catch (err) {
                   setResult({ ok: false, message: err instanceof Error ? err.message : "Couldn't disconnect." });
                 } finally {
@@ -256,9 +258,9 @@ function ProviderForm({ adminId, provider, status, onSaved, onClose }: { adminId
             }}
           >
             {busy === "test" ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.refresh} />}
-            {provider === "instagram" ? "Test profile read" : "Test connection"}
+            Test connection
           </button>
-          {!pinned && provider !== "instagram" ? (
+          {!pinned ? (
             <button type="submit" className={btnPrimary} disabled={!!busy || !typed || !complete}>
               {busy === "save" ? <Spinner /> : <Icon d={ICONS.save} />}
               Test &amp; save
@@ -324,9 +326,12 @@ export default function AutoSyncCard({ adminId, onChanged }: { adminId: string; 
               : !status
                 ? "Checking connections…"
                 : connectedCount && health
-                  ? `${health.ok} of ${health.active} active account${health.active === 1 ? "" : "s"} syncing${health.lastSyncedAt ? ` · last sync ${formatRelative(health.lastSyncedAt)}` : ""}${health.failing ? ` · ${health.failing} failing` : ""}`
+                  ? `${health.ok} of ${health.active} active accounts up to date${health.pending ? ` · ${health.pending} queued` : ""}${health.failing ? ` · ${health.failing} waiting to retry` : ""}${health.syncing ? ` · ${health.syncing} syncing` : ""}`
                   : "Instagram reads public profiles without API credentials. Connect YouTube or the screenshot reader for additional insights."}
           </p>
+          {status ? <p className={`mt-1 text-[11.5px] ${status.scheduler?.healthy ? "text-[#2e7d4f]" : "text-[#8a5300]"}`}>
+            {status.scheduler?.healthy ? `Background sync active · checked ${formatRelative(status.scheduler.lastRunAt!)}` : "Background scheduler has not checked in recently. Page visits continue checking due accounts."}
+          </p> : null}
         </div>
         <div className="grid gap-2 sm:grid-cols-3 lg:flex lg:shrink-0">
           {(Object.keys(PROVIDERS) as Provider[]).map((p) => {
@@ -346,7 +351,7 @@ export default function AutoSyncCard({ adminId, onChanged }: { adminId: string; 
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[13px] font-semibold text-[#1a201c]">{def.label}</span>
-                  {st ? <SourceBadge connected={st.connected} fields={p === "instagram" ? [] : Object.values(st.fields)} /> : <span className="text-[11px] text-[#8a928c]">…</span>}
+                  {st ? <SourceBadge connected={st.connected} fields={p === "instagram" && status?.instagram.mode !== "api" ? [] : Object.values(st.fields)} /> : <span className="text-[11px] text-[#8a928c]">…</span>}
                 </span>
                 <span className="shrink-0 text-[12px] font-semibold text-[#2b5d4a]">{p === "instagram" ? "Details" : st?.connected ? "Manage" : "Connect"}</span>
               </button>

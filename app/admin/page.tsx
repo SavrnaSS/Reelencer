@@ -3,6 +3,10 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import AdminNavigationDrawer from "./AdminNavigationDrawer";
+import WorkerAccessPanel from "./WorkerAccessPanel";
+import WorkerDirectory from "./WorkerDirectory";
+import WorkerWorkspace, { WorkerDetailTabs, WorkerGlyph, WorkerProfileHeader } from "./WorkerWorkspace";
+import workerWorkspaceStyles from "./WorkerWorkspace.module.css";
 import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
 import { BrandLogo } from "@/app/_components/BrandLogo";
 import ViewPayoutClaims from "@/app/_components/ViewPayoutClaims";
@@ -112,6 +116,10 @@ type Worker = {
   name: string;
   email: string; // may be blank if loading from profiles-only
   active: boolean;
+  moderationStatus?: "active" | "suspended" | "deleted";
+  deletedAt?: string;
+  purgeAfter?: string;
+  purgeStartedAt?: string;
   timezone?: string;
   introVideo?: {
     name: string;
@@ -1109,6 +1117,7 @@ function AddAssignmentPanel({
     <div className="space-y-3">
       <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">Add an account to this worker’s feed.</div>
       <select
+        aria-label="Account to assign"
         value={pick}
         onChange={(e) => setPick(e.target.value)}
         className="w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm font-extrabold text-slate-900 outline-none"
@@ -1141,6 +1150,7 @@ function AddAssignmentPanel({
       <div className="grid gap-2">
         <div className="text-xs font-extrabold text-slate-600">Daily times (HH:MM, comma-separated)</div>
         <input
+          aria-label="Daily posting times"
           value={timesCsv}
           onChange={(e) => setTimesCsv(e.target.value)}
           placeholder="08:00, 18:00"
@@ -1151,6 +1161,7 @@ function AddAssignmentPanel({
       <div className="grid gap-2">
         <div className="text-xs font-extrabold text-slate-600">Deadline (minutes)</div>
         <input
+          aria-label="Deadline in minutes"
           type="number"
           min={60}
           max={720}
@@ -1179,6 +1190,7 @@ function AddAssignmentPanel({
       <div className="grid gap-2">
         <div className="text-xs font-extrabold text-slate-600">Timezone</div>
         <select
+          aria-label="Assignment timezone"
           value={timezone}
           onChange={(e) => setTimezone(e.target.value)}
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
@@ -1513,6 +1525,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   // data
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [workerDetailOpen, setWorkerDetailOpen] = useState(false);
   const [accounts, setAccounts] = useState<AssignedAccount[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
@@ -1559,10 +1572,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const [renewExpiry, setRenewExpiry] = useState<string>("");
   const [renewResetUsage, setRenewResetUsage] = useState<boolean>(false);
   const [renewSaving, setRenewSaving] = useState(false);
-  const [deleteWorkerModalOpen, setDeleteWorkerModalOpen] = useState(false);
-  const [deleteWorkerTarget, setDeleteWorkerTarget] = useState<Worker | null>(null);
-  const [deleteWorkerConfirmText, setDeleteWorkerConfirmText] = useState("");
-  const [deleteWorkerSaving, setDeleteWorkerSaving] = useState(false);
 
   // selection / drawers
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
@@ -1667,7 +1676,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
               ? "Live worker directory is unavailable. Check Supabase connectivity, or use local sandbox workers for testing."
               : workersRes.error ?? null
           );
-          setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers[0]?.id ?? null));
+          setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers.find(worker => worker.moderationStatus !== "deleted")?.id ?? null));
         } else if (snap.workers?.length) {
           setSandboxWorkers(hasDevAdminBypassSession() ? snap.workers : []);
           setWorkerDirectoryError(
@@ -1692,7 +1701,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
         setSandboxWorkers([]);
         setWorkers(workersRes.workers);
         setWorkerDirectoryError(workersRes.error ?? null);
-        setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers[0]?.id ?? null));
+        setSelectedWorkerId((prev) => (workersRes.workers.some((worker) => worker.id === prev) ? prev : workersRes.workers.find(worker => worker.moderationStatus !== "deleted")?.id ?? null));
         const upiRes = await upiReq;
         if (upiRes?.ok && Array.isArray(upiRes.upiConfigs)) {
           setUpiConfigs(upiRes.upiConfigs);
@@ -1801,7 +1810,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
     }
     if (kinds.has("upi_configs")) void loadUpiConfigs();
     if (kinds.has("payout_batches") || kinds.has("view_payout_claims")) void loadPayoutsAdmin();
-    if (kinds.has("work_items")) void loadSnapshot();
+    if (kinds.has("work_items") || kinds.has("worker_moderation") || kinds.has("worker_ip_blocks") || kinds.has("worker_deletion_jobs")) void loadSnapshot();
   }, { refreshOnConnect: true });
   // Local dev bypass has no realtime session: poll instead.
   useEffect(() => {
@@ -2001,39 +2010,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
     [loadWorkEmailCodes, workEmailAdminRequest]
   );
 
-  const openDeleteWorkerModal = useCallback((worker: Worker) => {
-    setDeleteWorkerTarget(worker);
-    setDeleteWorkerConfirmText("");
-    setDeleteWorkerModalOpen(true);
-  }, []);
-
-  const deleteWorker = useCallback(
-    async (worker: Worker) => {
-      setDeleteWorkerSaving(true);
-      const res = await fetchWithAuth<{ ok: boolean; error?: string }>("/api/admin/delete-worker", {
-        method: "POST",
-        body: JSON.stringify({ workerId: worker.id }),
-      });
-      if (!res?.ok) {
-        setToast({ message: res?.error || "Unable to delete worker.", tone: "danger" });
-        setDeleteWorkerSaving(false);
-        return;
-      }
-
-      setWorkers((prev) => prev.filter((w) => w.id !== worker.id && w.userId !== worker.userId));
-      setAssignments((prev) => prev.filter((a) => a.workerId !== worker.id && a.workerId !== (worker.userId ?? "")));
-      setWorkItems((prev) => prev.filter((w) => w.workerId !== worker.id && w.workerId !== (worker.userId ?? "")));
-      setUpiConfigs((prev) => prev.filter((u) => u.workerId !== worker.id && u.workerId !== (worker.userId ?? "")));
-      setSelectedWorkerId((prev) => (prev === worker.id ? null : prev));
-      setToast({ message: "Worker deleted.", tone: "success" });
-      setDeleteWorkerModalOpen(false);
-      setDeleteWorkerTarget(null);
-      setDeleteWorkerConfirmText("");
-      setDeleteWorkerSaving(false);
-      loadSnapshot();
-    },
-    [loadSnapshot]
-  );
 
   useEffect(() => {
     if (activeSection === "Email Access") {
@@ -2609,7 +2585,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
   };
 
   const openCreateWork = (prefillWorkerId?: string) => {
-    const wid = prefillWorkerId ?? selectedWorkerId ?? workers[0]?.id ?? "";
+    const preferred = prefillWorkerId ?? selectedWorkerId;
+    const wid = workers.find(worker => worker.id === preferred && worker.active)?.id ?? workers.find(worker => worker.active)?.id ?? "";
     setCreateWorkWorkerId(wid);
     const firstAcc = accountsForWorker(wid)[0] ?? accounts[0]?.id ?? "";
     setCreateWorkAccountId(firstAcc);
@@ -2766,6 +2743,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
     if (!res?.ok) return;
     setWorkers((prev) => [res.worker, ...prev]);
     setSelectedWorkerId(res.worker.id);
+    setWorkerDetailOpen(true);
     setActiveSection("Workers");
     setCreateWorkerOpen(false);
   };
@@ -2788,12 +2766,19 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   /** ---------- Filters ---------- */
   const ql = q.trim().toLowerCase();
-  const visibleWorkers = useMemo(() => {
-    if (!ql) return workers;
-    return workers.filter(
-      (w) => w.id.toLowerCase().includes(ql) || w.name.toLowerCase().includes(ql) || (w.email ?? "").toLowerCase().includes(ql)
-    );
-  }, [workers, ql]);
+  const workerDirectoryRows = useMemo(() => workers.map(worker => {
+    const upi = getWorkerUpi(worker);
+    return {
+      ...worker,
+      accountCount: accountsForWorker(worker.id).length,
+      submittedCount: workItems.filter(item => isWorkerMatch(worker, item) && isCountedSubmission(item)).length,
+      resubmitCount: workItems.filter(item => isWorkerMatch(worker, item) && isResubmission(item)).length,
+      approvedINR: getWorkerApprovedEarnings(worker),
+      upiId: upi?.upiId,
+      upiVerified: upi?.verified === true,
+    };
+  }), [workers, getWorkerUpi, accountsForWorker, workItems, isWorkerMatch, isCountedSubmission, isResubmission, getWorkerApprovedEarnings]);
+  const selectedDirectoryWorker = workerDirectoryRows.find(worker => worker.id === selectedWorkerId);
 
   const workForSelectedWorker = useMemo(() => {
     if (!selectedWorkerId) return [];
@@ -2896,6 +2881,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
   };
   const adminNavItems = ADMIN_NAV_GROUPS.flatMap((group) => group.items);
   const activeSectionLabel = adminNavItems.find((item) => item.id === activeSection)?.label ?? activeSection;
+  const isWorkerSection = activeSection === "Workers";
 
   return (
     <div className="ops-dashboard-skin min-h-screen">
@@ -2955,7 +2941,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 <h1 className="truncate text-[16px] font-semibold text-[#1a201c] lg:text-[18px]">{activeSectionLabel}</h1>
               </div>
 
-              {!isGigSection && <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
+              {!isGigSection && !isWorkerSection && <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
                 <span className="sr-only">Search workers, accounts, work IDs and handles</span>
                 <span className="relative w-full max-w-[460px]">
                   <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
@@ -2984,7 +2970,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                     {adminLive === "live" ? "Live" : adminLive === "offline" ? "Auto-refresh" : "Connecting"}
                   </span>
                 ) : null}
-                {!isGigSection && <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
+                {!isGigSection && !isWorkerSection && <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
                   <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
                   <span className="xl:hidden">Cancelled</span>
                   <span className="hidden xl:inline">Show cancelled</span>
@@ -3001,11 +2987,11 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 >
                   <Icon name="refresh" className="h-[18px] w-[18px]" />
                 </button>
-                {!isGigSection && <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
+                {!isGigSection && !isWorkerSection && <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Worker</span>
                 </Button>}
-                {!isGigSection && <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
+                {!isGigSection && !isWorkerSection && <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Account</span>
                 </Button>}
@@ -3019,7 +3005,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
             </div>
 
             {/* Phones/tablets: search + section switcher */}
-            {!isGigSection && <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
+            {!isGigSection && !isWorkerSection && <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
               <label className="relative block min-w-0 flex-1">
                 <span className="sr-only">Search</span>
                 <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
@@ -3136,11 +3122,13 @@ function AdminConsole({ adminId }: { adminId: string }) {
                           className="w-full cursor-pointer text-left rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
                           onClick={() => {
                             setSelectedWorkerId(w.id);
+                            setWorkerDetailOpen(true);
                             setActiveSection("Workers");
                           }}
                           onKeyDown={(event) =>
                             activateOnKey(event, () => {
                               setSelectedWorkerId(w.id);
+                              setWorkerDetailOpen(true);
                               setActiveSection("Workers");
                             })
                           }
@@ -3160,7 +3148,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                                 </div>
                               )}
                             </div>
-                            <Chip tone={w.active ? "success" : "danger"}>{w.active ? "Active" : "Inactive"}</Chip>
+                            <Chip tone={w.active ? "success" : "danger"}>{w.moderationStatus === "deleted" ? "Deleted" : w.active ? "Active" : "Suspended"}</Chip>
                           </div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Chip tone="info">{assignedCount} accounts</Chip>
@@ -3269,18 +3257,14 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
             {/* Workers */}
             {activeSection === "Workers" && (
-              <div className="grid grid-cols-12 gap-6">
-                <div className="col-span-12 lg:col-span-5 space-y-6">
-                  <Card
-                    title="Workers"
-                    subtitle="Select a worker to manage assignments and work"
-                    right={
-                      <Button variant="secondary" onClick={openCreateWorker}>
-                        <Icon name="plus" />
-                        Create worker
-                      </Button>
-                    }
-                  >
+              <WorkerWorkspace
+                workers={workerDirectoryRows}
+                selectedWorker={selectedDirectoryWorker}
+                detailOpen={workerDetailOpen}
+                onViewChange={setWorkerDetailOpen}
+                onCreateWorker={openCreateWorker}
+                directory={
+                  <>
                     {workerDirectoryError ? (
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
                         <span>{workerDirectoryError}</span>
@@ -3300,350 +3284,278 @@ function AdminConsole({ adminId }: { adminId: string }) {
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="space-y-2">
-                      {visibleWorkers.map((w) => {
-                        // A div acting as a button: each row contains its own "Confirm verified UPI" button.
-                        const selectWorker = () => {
-                          setSelectedWorkerId(w.id);
-                          if (typeof window !== "undefined" && window.innerWidth < 1024) {
-                            window.requestAnimationFrame(() =>
-                              document.getElementById("admin-worker-controls")?.scrollIntoView({ behavior: "smooth", block: "start" })
-                            );
-                          }
-                        };
-                        return (
-                        <div
-                          key={w.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={selectWorker}
-                          onKeyDown={(event) => activateOnKey(event, selectWorker)}
-                          aria-pressed={selectedWorkerId === w.id}
-                          className={cx(
-                            "w-full cursor-pointer text-left rounded-lg border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40",
-                            selectedWorkerId === w.id ? "border-[#1f2b24] bg-[#fafbf9] ring-1 ring-[#1f2b24]" : "border-slate-200 bg-white hover:bg-slate-50"
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="text-sm font-extrabold text-slate-900 truncate">{w.name}</div>
-                              <div className="mt-1 text-xs text-slate-600 truncate">
-                                {w.id}
-                                {w.email ? ` • ${w.email}` : ""}
+                    <WorkerDirectory
+                      workers={workerDirectoryRows}
+                      selectedWorkerId={selectedWorkerId}
+                      onSelect={workerId => { setSelectedWorkerId(workerId); setWorkerDetailOpen(true); }}
+                      onRefresh={loadSnapshot}
+                      onVerifyUpi={workerId => {
+                        const worker = workers.find(row => row.id === workerId);
+                        const upi = worker ? getWorkerUpi(worker) : null;
+                        if (upi) void verifyWorkerUpi(upi);
+                      }}
+                    />
+                  </>
+                }
+              >
+                {!selectedWorker || !selectedDirectoryWorker ? (
+                  <div className={workerWorkspaceStyles.emptySelection}>
+                    <WorkerGlyph name="users" />
+                    <h2>Select a worker</h2>
+                    <p>Open a user from the directory to manage access, accounts, and schedules.</p>
+                  </div>
+                ) : (
+                  <>
+                    <WorkerProfileHeader
+                      worker={selectedDirectoryWorker}
+                      onCreateAccount={openCreateAccount}
+                      onCreateWork={() => openCreateWork(selectedWorker.id)}
+                    />
+                    <WorkerDetailTabs
+                      key={selectedWorker.id}
+                      accountCount={selectedDirectoryWorker.accountCount}
+                      access={<WorkerAccessPanel worker={selectedWorker} onChanged={loadSnapshot} />}
+                      profile={
+                        <div className="space-y-4">
+                          <Card title="Payment details" subtitle="UPI verification and payout preferences" compact>
+                            {(() => {
+                              const upi = getWorkerUpi(selectedWorker);
+                              if (!upi?.upiId) return null;
+                              return (
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                                  <span className="break-all">UPI: {upi.upiId}</span>
+                                  <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
+                                {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
+                                  {upi.payoutSchedule && upi.payoutDay && (
+                                    <span className="text-[11px] text-slate-400">
+                                      {upi.payoutSchedule} • {upi.payoutDay}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                            {!getWorkerUpi(selectedWorker)?.upiId ? <p className="text-sm text-slate-500">No UPI details added yet.</p> : null}
+                          </Card>
+                          <div className="rounded-md border border-slate-200 bg-white p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-extrabold text-slate-900">Presentation video</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {selectedWorker.introVideo?.uploadedAt
+                                    ? `Updated ${new Date(selectedWorker.introVideo.uploadedAt).toLocaleString()}`
+                                    : "No presentation video uploaded yet."}
+                                </div>
                               </div>
-                              {(() => {
-                                const upi = getWorkerUpi(w);
-                                if (!upi?.upiId) return null;
-                                return (
-                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                    <span className="truncate">UPI: {upi.upiId}</span>
-                                    <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
-                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
-                                  </div>
-                                );
-                              })()}
+                              {selectedWorker.introVideo?.previewUrl ? (
+                                <a
+                                  href={selectedWorker.introVideo.previewUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 transition hover:bg-slate-50"
+                                >
+                                  Open
+                                </a>
+                              ) : null}
                             </div>
-                            <Chip tone={w.active ? "success" : "danger"}>{w.active ? "Active" : "Inactive"}</Chip>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Chip tone="info">{accountsForWorker(w.id).length} accounts</Chip>
-                            <Chip tone="warn">{workItems.filter((it) => isWorkerMatch(w, it) && isCountedSubmission(it)).length} submitted</Chip>
-                            <Chip tone="neutral">{workItems.filter((it) => isWorkerMatch(w, it) && isResubmission(it)).length} resubmits</Chip>
-                            <Chip tone="success">{formatINR(getWorkerApprovedEarnings(w))} approved</Chip>
-                          </div>
-                        </div>
-                        );
-                      })}
-                      {visibleWorkers.length === 0 && (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
-                          {workerDirectoryError
-                            ? "No live workers could be loaded. Check Supabase connectivity and refresh."
-                            : "No workers match search."}
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                </div>
 
-                <div id="admin-worker-controls" className="col-span-12 scroll-mt-32 space-y-6 lg:col-span-7">
-                  <Card
-                    title="Worker controls"
-                    subtitle="Assignments + work creation are admin-owned."
-                    right={
-                      <div className="flex gap-2">
-                        <Button variant="secondary" onClick={openCreateAccount}>
-                          <Icon name="plus" />
-                          Create account
-                        </Button>
-                        <Button variant="primary" onClick={() => openCreateWork(selectedWorkerId ?? undefined)} disabled={!selectedWorkerId}>
-                          <Icon name="plus" />
-                          Create work
-                        </Button>
-                      </div>
-                    }
-                  >
-                    {!selectedWorker ? (
-                      <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">Select a worker to manage.</div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <div className="text-sm font-extrabold text-slate-900">{selectedWorker.name}</div>
-                              <div className="text-xs text-slate-600">
-                                {selectedWorker.id}
-                                {selectedWorker.email ? ` • ${selectedWorker.email}` : ""}
-                              </div>
-                              {(() => {
-                                const upi = getWorkerUpi(selectedWorker);
-                                if (!upi?.upiId) return null;
-                                return (
-                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                    <span className="truncate">UPI: {upi.upiId}</span>
-                                    <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
-                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
-                                    {upi.payoutSchedule && upi.payoutDay && (
-                                      <span className="text-[11px] text-slate-400">
-                                        {upi.payoutSchedule} • {upi.payoutDay}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                            <Chip tone="info">{accountsForWorker(selectedWorker.id).length} assigned accounts</Chip>
-                          </div>
-                        </div>
-
-                        <div className="rounded-md border border-slate-200 bg-white p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-extrabold text-slate-900">Presentation video</div>
-                              <div className="mt-1 text-xs text-slate-500">
-                                {selectedWorker.introVideo?.uploadedAt
-                                  ? `Updated ${new Date(selectedWorker.introVideo.uploadedAt).toLocaleString()}`
-                                  : "No presentation video uploaded yet."}
-                              </div>
-                            </div>
-                            {selectedWorker.introVideo?.previewUrl ? (
-                              <a
-                                href={selectedWorker.introVideo.previewUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-extrabold text-slate-900 transition hover:bg-slate-50"
-                              >
-                                Open
-                              </a>
-                            ) : null}
-                          </div>
-
-                          {selectedWorker.introVideo?.previewUrl || selectedWorker.introVideo?.thumbnailUrl ? (
-                            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-[#a3a3a6] px-4 py-3">
-                              <div className="flex min-h-[420px] items-center justify-center">
-                                <div className="relative w-full max-w-[220px] overflow-hidden">
-                                  <div className="aspect-[9/16] w-full">
-                                    {selectedWorker.introVideo?.thumbnailUrl ? (
-                                      <img
-                                        src={selectedWorker.introVideo.thumbnailUrl}
-                                        alt={`${selectedWorker.name} presentation thumbnail`}
-                                        className="h-full w-full object-cover"
-                                      />
-                                    ) : (
-                                      <video
-                                        src={selectedWorker.introVideo?.previewUrl}
-                                        className="h-full w-full object-cover"
-                                        preload="metadata"
-                                        playsInline
-                                        muted
-                                      />
-                                    )}
-                                  </div>
-                                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/35 backdrop-blur-sm">
-                                      <svg viewBox="0 0 24 24" className="ml-1 h-6 w-6 fill-white" aria-hidden="true">
-                                        <path d="M8 6.5v11l9-5.5-9-5.5Z" />
-                                      </svg>
+                            {selectedWorker.introVideo?.previewUrl || selectedWorker.introVideo?.thumbnailUrl ? (
+                              <div className={workerWorkspaceStyles.presentationMedia}>
+                                <div className="flex w-full items-center justify-center">
+                                  <div className="relative w-full max-w-[220px] overflow-hidden">
+                                    <div className="aspect-[9/16] w-full">
+                                      {selectedWorker.introVideo?.thumbnailUrl ? (
+                                        <img
+                                          src={selectedWorker.introVideo.thumbnailUrl}
+                                          alt={`${selectedWorker.name} presentation thumbnail`}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <video
+                                          src={selectedWorker.introVideo?.previewUrl}
+                                          className="h-full w-full object-cover"
+                                          preload="metadata"
+                                          playsInline
+                                          muted
+                                        />
+                                      )}
+                                    </div>
+                                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/35 backdrop-blur-sm">
+                                        <svg viewBox="0 0 24 24" className="ml-1 h-6 w-6 fill-white" aria-hidden="true">
+                                          <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+                                        </svg>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                              This creator has not uploaded a presentation video yet.
-                            </div>
-                          )}
+                            ) : (
+                              <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                                This creator has not uploaded a presentation video yet.
+                              </div>
+                            )}
+                          </div>
                         </div>
-
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <Card title="Assigned accounts" subtitle="Remove or add accounts. Target 5–6+ per worker." compact>
-                            <div className="space-y-2">
-                              {accountsForWorker(selectedWorker.id).map((aid, idx) => {
-                                const acc = accountById(aid);
-                                if (!acc) return null;
-                                return (
-                                  <div key={`${selectedWorker.id}-${aid}-${idx}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                                    <div className="flex items-start justify-between gap-2">
-                                      <div className="min-w-0">
-                                        <div className="text-sm font-extrabold text-slate-900 truncate">{acc.handle}</div>
-                                      <div className="text-xs text-slate-600 truncate">
-                                        {acc.ownerTeam} • {acc.policyTier}
-                                      </div>
-                                      {(() => {
-                                        const schedule = assignments.find((a) => a.workerId === selectedWorker.id && a.accountId === aid)?.schedule;
-                                        if (!schedule) return null;
-                                        const times = schedule.times?.length ? schedule.times : scheduleConfig.times;
-                                        const days = schedule.days?.length ? schedule.days : scheduleConfig.days;
-                                        const deadline = schedule.deadlineMin ?? scheduleConfig.deadlineMin;
-                                        const tz = schedule.timezone ?? scheduleConfig.timezone;
-                                        const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-                                        return (
-                                          <div className="mt-1 text-[11px] text-slate-500">
-                                            {times.join(", ")} • {days.map((d) => dayLabels[d]).join(", ")} • {deadline}m • {tz}
-                                          </div>
-                                        );
-                                      })()}
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <AccountHealthPill h={acc.health} />
-                                        <Button variant="secondary" title="Edit schedule" onClick={() => openEditSchedule(selectedWorker.id, aid)}>
-                                          Schedule
-                                        </Button>
-                                        <Button variant="ghost" title="Remove" onClick={() => removeAssignment(selectedWorker.id, aid)}>
-                                          <Icon name="x" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                              {accountsForWorker(selectedWorker.id).length === 0 && <div className="text-sm text-slate-600">No accounts assigned.</div>}
-                            </div>
-                          </Card>
-
-                          <Card title="Add assignment" subtitle="Assign any available account. (Create account first if needed)" compact>
-                            <AddAssignmentPanel
-                              workerId={selectedWorker.id}
-                              accounts={accounts}
-                              assignedIds={new Set(accountsForWorker(selectedWorker.id))}
-                              globallyAssignedIds={globallyAssignedIds}
-                              onAssign={(accountId, schedule) => assignAccount(selectedWorker.id, accountId, schedule)}
-                              onDeleteAccount={deleteAccount}
-                              onCreateAccount={openCreateAccount}
-                              defaultTimesCsv={scheduleTimesCsv}
-                              defaultDeadlineMin={scheduleConfig.deadlineMin}
-                              defaultDays={scheduleConfig.days}
-                              defaultTimezone={selectedWorker.timezone ?? scheduleConfig.timezone}
-                            />
-                          </Card>
-                        </div>
-
-                        <Card title="Daily schedule grid" subtitle="Assignments aligned by time (today in each timezone)" compact>
-                          {scheduleRowsForSelected.length === 0 ? (
-                            <div className="text-sm text-slate-600">No scheduled slots for today.</div>
-                          ) : (
-                            <div className="space-y-2">
-                              {scheduleRowsForSelected.map((row) => (
-                                <div key={`${row.time}-${row.timezone}`} className="rounded-md border border-slate-200 bg-white p-3">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="text-sm font-extrabold text-slate-900">{row.time}</div>
-                                    <Chip tone="neutral">{row.timezone}</Chip>
-                                  </div>
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {row.accounts.map((acc) => (
-                                      <Chip key={acc.id} tone={acc.policyTier === "Strict" ? "warn" : "neutral"}>
-                                        {acc.handle}
-                                      </Chip>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </Card>
-
-                        <Card title="Weekly schedule grid" subtitle="Slots by weekday for this worker" compact>
-                          {weeklyScheduleGrid.length === 0 ? (
-                            <div className="text-sm text-slate-600">No weekly slots configured.</div>
-                          ) : (
-                            <div className="space-y-3">
-                              {weeklyScheduleGrid.map((row) => (
-                                <div key={`${row.time}-${row.timezone}`} className="rounded-md border border-slate-200 bg-white p-3">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="text-sm font-extrabold text-slate-900">{row.time}</div>
-                                    <Chip tone="neutral">{row.timezone}</Chip>
-                                  </div>
-                                  <div className="mt-2 grid gap-2 sm:grid-cols-7">
-                                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, idx) => (
-                                      <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-2">
-                                        <div className="text-[11px] font-extrabold text-slate-600">{label}</div>
-                                        <div className="mt-1 flex flex-wrap gap-1">
-                                          {(row.days[idx] ?? []).map((acc) => (
-                                            <Chip key={`${acc.id}-${label}`} tone={acc.policyTier === "Strict" ? "warn" : "neutral"}>
-                                              {acc.handle}
-                                            </Chip>
-                                          ))}
+                      }
+                      assignments={
+                        <div className="space-y-4">
+                          <div className={workerWorkspaceStyles.assignmentGrid}>
+                            <Card title="Assigned accounts" subtitle="Remove or add accounts. Target 5–6+ per worker." compact>
+                              <div className="space-y-2">
+                                {accountsForWorker(selectedWorker.id).map((aid, idx) => {
+                                  const acc = accountById(aid);
+                                  if (!acc) return null;
+                                  return (
+                                    <div key={`${selectedWorker.id}-${aid}-${idx}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                                      <div className={workerWorkspaceStyles.assignedAccount}>
+                                        <div className={workerWorkspaceStyles.assignedIdentity}>
+                                          <div className="text-sm font-extrabold text-slate-900 truncate">{acc.handle}</div>
+                                        <div className="text-xs text-slate-600 truncate">
+                                          {acc.ownerTeam} • {acc.policyTier}
+                                        </div>
+                                        {(() => {
+                                          const schedule = assignments.find((a) => a.workerId === selectedWorker.id && a.accountId === aid)?.schedule;
+                                          if (!schedule) return null;
+                                          const times = schedule.times?.length ? schedule.times : scheduleConfig.times;
+                                          const days = schedule.days?.length ? schedule.days : scheduleConfig.days;
+                                          const deadline = schedule.deadlineMin ?? scheduleConfig.deadlineMin;
+                                          const tz = schedule.timezone ?? scheduleConfig.timezone;
+                                          const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                                          return (
+                                            <div className="mt-1 text-[11px] text-slate-500">
+                                              {times.join(", ")} • {days.map((d) => dayLabels[d]).join(", ")} • {deadline}m • {tz}
+                                            </div>
+                                          );
+                                        })()}
+                                        </div>
+                                        <div className={workerWorkspaceStyles.assignedActions}>
+                                          <AccountHealthPill h={acc.health} />
+                                          <Button variant="secondary" title="Edit schedule" disabled={!selectedWorker.active} onClick={() => openEditSchedule(selectedWorker.id, aid)}>
+                                            Schedule
+                                          </Button>
+                                          <Button variant="ghost" title="Remove" onClick={() => removeAssignment(selectedWorker.id, aid)}>
+                                            <Icon name="x" />
+                                          </Button>
                                         </div>
                                       </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </Card>
-
-                        <Card title="Worker timezone" subtitle="Default timezone for new schedules" compact>
-                          <div className="space-y-2">
-                            <select
-                              value={workerTimezoneDraft}
-                              onChange={(e) => setWorkerTimezoneDraft(e.target.value)}
-                              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                            >
-                              {TIMEZONE_OPTIONS.map((tz) => (
-                                <option key={tz} value={tz}>
-                                  {tz}
-                                </option>
-                              ))}
-                            </select>
-                            <Button
-                              variant="secondary"
-                              onClick={async () => {
-                                if (!selectedWorker) return;
-                                const res = await fetchWithAuth<{ ok: boolean }>(`/api/admin/worker-timezone`, {
-                                  method: "POST",
-                                  body: JSON.stringify({ workerId: selectedWorker.id, timezone: workerTimezoneDraft }),
-                                });
-                                if (res?.ok) {
-                                  setWorkers((prev) =>
-                                    prev.map((w) => (w.id === selectedWorker.id ? { ...w, timezone: workerTimezoneDraft } : w))
+                                    </div>
                                   );
-                                }
-                              }}
-                            >
-                              Save timezone
-                            </Button>
-                          </div>
-                        </Card>
+                                })}
+                                {accountsForWorker(selectedWorker.id).length === 0 && <div className="text-sm text-slate-600">No accounts assigned.</div>}
+                              </div>
+                            </Card>
 
-                        <section aria-label="Danger zone" className="rounded-xl border border-[#f3cdc8] bg-[#fffafa] p-4">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="min-w-0">
-                              <div className="text-[13.5px] font-semibold text-[#8e1f1a]">Delete {selectedWorker.name}</div>
-                              <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
-                                Removes this worker&apos;s profile and access. You&apos;ll be asked to confirm.
-                              </p>
-                            </div>
-                            <Button variant="secondary" onClick={() => openDeleteWorkerModal(selectedWorker)} className="border-[#f1c9c4] text-[#b42318] hover:bg-[#fdf2f1]">
-                              Delete worker
-                            </Button>
+                            <Card title="Add assignment" subtitle="Assign any available account. (Create account first if needed)" compact>
+                              {selectedWorker.active ? <AddAssignmentPanel
+                                workerId={selectedWorker.id}
+                                accounts={accounts}
+                                assignedIds={new Set(accountsForWorker(selectedWorker.id))}
+                                globallyAssignedIds={globallyAssignedIds}
+                                onAssign={(accountId, schedule) => assignAccount(selectedWorker.id, accountId, schedule)}
+                                onDeleteAccount={deleteAccount}
+                                onCreateAccount={openCreateAccount}
+                                defaultTimesCsv={scheduleTimesCsv}
+                                defaultDeadlineMin={scheduleConfig.deadlineMin}
+                                defaultDays={scheduleConfig.days}
+                                defaultTimezone={selectedWorker.timezone ?? scheduleConfig.timezone}
+                              /> : <p className="text-sm leading-6 text-slate-600">Restore this user’s access before adding assignments. Existing accounts and work remain available for review.</p>}
+                            </Card>
                           </div>
-                        </section>
-                      </div>
-                    )}
-                  </Card>
-                </div>
-              </div>
+
+                          <Card title="Daily schedule grid" subtitle="Assignments aligned by time (today in each timezone)" compact>
+                            {scheduleRowsForSelected.length === 0 ? (
+                              <div className="text-sm text-slate-600">No scheduled slots for today.</div>
+                            ) : (
+                              <div className="space-y-2">
+                                {scheduleRowsForSelected.map((row) => (
+                                  <div key={`${row.time}-${row.timezone}`} className="rounded-md border border-slate-200 bg-white p-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="text-sm font-extrabold text-slate-900">{row.time}</div>
+                                      <Chip tone="neutral">{row.timezone}</Chip>
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {row.accounts.map((acc) => (
+                                        <Chip key={acc.id} tone={acc.policyTier === "Strict" ? "warn" : "neutral"}>
+                                          {acc.handle}
+                                        </Chip>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </Card>
+
+                          <Card title="Weekly schedule grid" subtitle="Slots by weekday for this worker" compact>
+                            {weeklyScheduleGrid.length === 0 ? (
+                              <div className="text-sm text-slate-600">No weekly slots configured.</div>
+                            ) : (
+                              <div className="space-y-3">
+                                {weeklyScheduleGrid.map((row) => (
+                                  <div key={`${row.time}-${row.timezone}`} className="rounded-md border border-slate-200 bg-white p-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="text-sm font-extrabold text-slate-900">{row.time}</div>
+                                      <Chip tone="neutral">{row.timezone}</Chip>
+                                    </div>
+                                    <div className={workerWorkspaceStyles.scheduleDays}>
+                                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, idx) => (
+                                        <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-2">
+                                          <div className="text-[11px] font-extrabold text-slate-600">{label}</div>
+                                          <div className="mt-1 flex flex-wrap gap-1">
+                                            {(row.days[idx] ?? []).map((acc) => (
+                                              <Chip key={`${acc.id}-${label}`} tone={acc.policyTier === "Strict" ? "warn" : "neutral"}>
+                                                {acc.handle}
+                                              </Chip>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </Card>
+
+                          <Card title="Worker timezone" subtitle="Default timezone for new schedules" compact>
+                            <div className="space-y-2">
+                              <select
+                                aria-label="Worker timezone"
+                              value={workerTimezoneDraft}
+                                onChange={(e) => setWorkerTimezoneDraft(e.target.value)}
+                                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                              >
+                                {TIMEZONE_OPTIONS.map((tz) => (
+                                  <option key={tz} value={tz}>
+                                    {tz}
+                                  </option>
+                                ))}
+                              </select>
+                              <Button
+                                variant="secondary"
+                                onClick={async () => {
+                                  if (!selectedWorker) return;
+                                  const res = await fetchWithAuth<{ ok: boolean }>(`/api/admin/worker-timezone`, {
+                                    method: "POST",
+                                    body: JSON.stringify({ workerId: selectedWorker.id, timezone: workerTimezoneDraft }),
+                                  });
+                                  if (res?.ok) {
+                                    setWorkers((prev) =>
+                                      prev.map((w) => (w.id === selectedWorker.id ? { ...w, timezone: workerTimezoneDraft } : w))
+                                    );
+                                  }
+                                }}
+                              >
+                                Save timezone
+                              </Button>
+                            </div>
+                          </Card>
+                        </div>
+                      }
+                    />
+                  </>
+                )}
+              </WorkerWorkspace>
             )}
 
             {/* Assignments */}
@@ -3674,7 +3586,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                             </option>
                           ))}
                         </select>
-                        <Button variant="primary" onClick={() => openCreateWork(selectedWorkerId ?? undefined)} disabled={!selectedWorkerId}>
+                        <Button variant="primary" onClick={() => openCreateWork(selectedWorkerId ?? undefined)} disabled={!selectedWorkerId || !selectedWorker?.active}>
                           <Icon name="plus" />
                           Create work
                         </Button>
@@ -4643,60 +4555,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
         </Modal>
       )}
 
-      {/* Delete Worker modal */}
-      {deleteWorkerModalOpen && deleteWorkerTarget && (
-        <Modal
-          title="Delete worker permanently"
-          subtitle={`Type "${deleteWorkerTarget.id}" to confirm`}
-          onClose={() => {
-            if (deleteWorkerSaving) return;
-            setDeleteWorkerModalOpen(false);
-            setDeleteWorkerTarget(null);
-            setDeleteWorkerConfirmText("");
-          }}
-          actions={
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  if (deleteWorkerSaving) return;
-                  setDeleteWorkerModalOpen(false);
-                  setDeleteWorkerTarget(null);
-                  setDeleteWorkerConfirmText("");
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => void deleteWorker(deleteWorkerTarget)}
-                disabled={deleteWorkerSaving || deleteWorkerConfirmText.trim() !== deleteWorkerTarget.id}
-              >
-                {deleteWorkerSaving ? "Deleting..." : "Delete worker"}
-              </Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-              This action removes worker login access and related worker records.
-            </div>
-            <div className="text-sm text-slate-700">
-              Worker: <span className="font-extrabold text-slate-900">{deleteWorkerTarget.name}</span> ({deleteWorkerTarget.id})
-            </div>
-            <div>
-              <div className="text-sm font-extrabold text-slate-800">Confirm worker ID</div>
-              <input
-                value={deleteWorkerConfirmText}
-                onChange={(e) => setDeleteWorkerConfirmText(e.target.value)}
-                placeholder={deleteWorkerTarget.id}
-                className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none"
-              />
-            </div>
-          </div>
-        </Modal>
-      )}
-
       {/* Create Account modal */}
       {createAccountOpen && (
         <Modal
@@ -4850,7 +4708,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 }}
                 className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm font-extrabold text-slate-900 outline-none"
               >
-                {workers.map((w) => (
+                {workers.filter(worker => worker.active).map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name} ({w.id})
                   </option>

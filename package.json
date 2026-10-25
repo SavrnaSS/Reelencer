@@ -22,7 +22,11 @@
     "credentials:migrate": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/encrypt-credentials.mjs --apply",
     "admin:sync": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-admin.mjs",
     "mail:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/mail-check.mjs",
-    "admin:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-admin.mjs --check"
+    "admin:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-admin.mjs --check",
+    "social:sync": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-social-accounts.mjs",
+    "social:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-social-accounts.mjs --check",
+    "purge:workers": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/purge-workers.mjs",
+    "purge:workers:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/purge-workers.mjs --check"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

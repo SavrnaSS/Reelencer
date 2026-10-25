@@ -1,17 +1,20 @@
 import "server-only";
-import { fetchInstagramProfile } from "@/lib/api/instagramProfile";
+import { fetchInstagramProfile, fetchInstagramReel } from "@/lib/api/instagramProfile";
+import { fetchInstagramBusinessProfile } from "@/lib/api/instagramGraph";
 import { accountPlatformFor } from "@/lib/accountSetup";
+import { ApiError, databaseError } from "@/lib/api/errors";
 import { externalPostId, type SyncState } from "@/lib/socialAnalytics";
-import type { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveSyncConfig, type SyncConfig } from "@/lib/api/integrations";
+import { classifySyncError, retryDelayMs, SocialSyncError, storedSyncState, syncInterval } from "@/lib/socialSyncSchedule";
 
-// YouTube uses its Data API; Instagram reads only the public profile HTML.
+// Official API readers share the same durable queue as Instagram's public profile fallback.
 
 type Sb = ReturnType<typeof supabaseAdmin>;
 type Row = Record<string, unknown>;
 
-type ExternalPost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number };
-type Fetched = { externalId?: string; followers?: number; following?: number; posts?: number; totalViews?: number; media: ExternalPost[]; note?: string };
+type ExternalPost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number; viewsSource?: "api" | "profile" };
+type Fetched = { externalId?: string; followers?: number; following?: number; posts?: number; totalViews?: number; media: ExternalPost[]; note?: string; source?: "api" | "profile"; provider?: SyncState["provider"] };
 
 const TIMEOUT_MS = 8000;
 
@@ -22,10 +25,10 @@ const n = (value: unknown) => {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
 };
 
-async function getJson(url: string) {
+async function getJson(url: string, signal?: AbortSignal) {
   let res: Response;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+    res = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS), cache: "no-store", redirect: "error" });
   } catch {
     throw new SyncError("The platform didn't respond in time.");
   }
@@ -40,33 +43,37 @@ async function getJson(url: string) {
 /* ------------------------------- providers ------------------------------- */
 
 async function fetchYouTube(handle: string, config: SyncConfig): Promise<Fetched> {
+  const signal = AbortSignal.timeout(10_000);
   const key = encodeURIComponent(config.youtubeApiKey);
   const base = "https://www.googleapis.com/youtube/v3";
-  const channels = await getJson(`${base}/channels?part=statistics,contentDetails&forHandle=${encodeURIComponent(`@${handle}`)}&key=${key}`);
+  const channels = await getJson(`${base}/channels?part=statistics,contentDetails&forHandle=${encodeURIComponent(`@${handle}`)}&key=${key}`, signal);
   const channel = (channels.items as Row[] | undefined)?.[0];
   if (!channel) throw new SyncError(`No YouTube channel found for @${handle}. Check the handle on the account.`);
   const stats = (channel.statistics ?? {}) as Row;
   const uploads = String(((channel.contentDetails as Row)?.relatedPlaylists as Row | undefined)?.uploads ?? "");
   let media: ExternalPost[] = [];
+  let note: string | undefined;
   if (uploads) {
-    const items = await getJson(`${base}/playlistItems?part=contentDetails&maxResults=25&playlistId=${encodeURIComponent(uploads)}&key=${key}`);
-    const ids = ((items.items as Row[] | undefined) ?? []).map((i) => String((i.contentDetails as Row)?.videoId ?? "")).filter(Boolean);
-    if (ids.length) {
-      const videos = await getJson(`${base}/videos?part=statistics,snippet&id=${ids.join(",")}&key=${key}`);
-      media = ((videos.items as Row[] | undefined) ?? []).map((v) => {
-        const s = (v.statistics ?? {}) as Row;
-        const snippet = (v.snippet ?? {}) as Row;
-        return {
-          externalId: `yt:${String(v.id)}`,
-          url: `https://www.youtube.com/shorts/${String(v.id)}`,
-          caption: String(snippet.title ?? "").slice(0, 300) || undefined,
-          postedAt: typeof snippet.publishedAt === "string" ? snippet.publishedAt : undefined,
-          views: n(s.viewCount),
-          likes: n(s.likeCount),
-          comments: n(s.commentCount),
-        };
-      });
-    }
+    try {
+      const items = await getJson(`${base}/playlistItems?part=contentDetails&maxResults=25&playlistId=${encodeURIComponent(uploads)}&key=${key}`, signal);
+      const ids = ((items.items as Row[] | undefined) ?? []).map((i) => String((i.contentDetails as Row)?.videoId ?? "")).filter(Boolean);
+      if (ids.length) {
+        const videos = await getJson(`${base}/videos?part=statistics,snippet&id=${ids.join(",")}&key=${key}`, signal);
+        media = ((videos.items as Row[] | undefined) ?? []).map((v) => {
+          const s = (v.statistics ?? {}) as Row;
+          const snippet = (v.snippet ?? {}) as Row;
+          return {
+            externalId: `yt:${String(v.id)}`,
+            url: `https://www.youtube.com/shorts/${String(v.id)}`,
+            caption: String(snippet.title ?? "").slice(0, 300) || undefined,
+            postedAt: typeof snippet.publishedAt === "string" ? snippet.publishedAt : undefined,
+            views: n(s.viewCount),
+            likes: n(s.likeCount),
+            comments: n(s.commentCount),
+          };
+        });
+      }
+    } catch { note = "YouTube channel statistics refreshed. Recent video statistics were unavailable; existing video measurements are preserved."; }
   }
   return {
     externalId: String(channel.id ?? ""),
@@ -75,6 +82,7 @@ async function fetchYouTube(handle: string, config: SyncConfig): Promise<Fetched
     posts: n(stats.videoCount),
     totalViews: n(stats.viewCount),
     media,
+    note,
   };
 }
 
@@ -83,7 +91,42 @@ type Provider = { configured: (config: SyncConfig) => boolean; fetch: (handle: s
 function providerFor(platform: string): Provider | null {
   const id = accountPlatformFor(platform).id;
   if (id === "youtube") return { configured: (c) => !!c.youtubeApiKey, fetch: fetchYouTube };
-  if (id === "instagram") return { configured: () => true, fetch: (handle, _config, urls, publishedAfter) => fetchInstagramProfile(handle, urls, { publishedAfter }) };
+  if (id === "instagram") return { configured: () => true, fetch: async (handle, config, urls, publishedAfter) => {
+    const signal = AbortSignal.timeout(10_000);
+    let apiError: unknown;
+    if (config.metaAccessToken && config.metaIgBusinessId) {
+      try {
+        const profile = await fetchInstagramBusinessProfile(handle, config, signal);
+        const media: ExternalPost[] = [...profile.media];
+        // Business Discovery does not expose reel views. Supplement at most two verified public reels.
+        const targets = [...new Set([...(urls ?? []), ...media.filter(post => post.url.includes("/reel/")).map(post => post.url)])].slice(0, 2);
+        const readings = await Promise.allSettled(targets.map(url => fetchInstagramReel(handle, url, { signal })));
+        for (const result of readings) {
+          if (result.status !== "fulfilled" || !result.value) continue;
+          const reading = result.value;
+          const index = media.findIndex(post => post.externalId === reading.externalId);
+          const existing: Partial<ExternalPost> = index < 0 ? {} : media[index];
+          const measured = { ...existing, ...Object.fromEntries(Object.entries(reading).filter(([, value]) => value !== undefined)),
+            // Preserve exact API interaction counts if the public page only offers rounded metadata.
+            ...(existing.likes !== undefined ? { likes: existing.likes } : {}),
+            ...(existing.comments !== undefined ? { comments: existing.comments } : {}),
+            ...(reading.views !== undefined ? { viewsSource: "profile" as const } : {}) } as ExternalPost;
+          if (index < 0) media.push(measured); else media[index] = measured;
+        }
+        return { ...profile, media, source: "api", provider: "meta" };
+      }
+      catch (error) {
+        // A platform quota response must not trigger additional Instagram traffic.
+        if (error instanceof SocialSyncError && error.code === "rate_limited") throw error;
+        apiError = error;
+      }
+    }
+    try {
+      const profile = await fetchInstagramProfile(handle, urls, { publishedAfter, signal });
+      if (apiError) profile.note += " The API connection was unavailable; public profile fallback was used.";
+      return { ...profile, source: "profile", provider: "profile" };
+    } catch (error) { throw apiError instanceof SocialSyncError && apiError.code === "credentials" ? apiError : error; }
+  } };
   return null;
 }
 
@@ -100,9 +143,22 @@ export function syncAvailability(platform: string, config: Pick<SyncConfig, "you
 /** Postgres "undefined column": the auto-sync migration (202610080003) hasn't been applied yet. */
 const MISSING_COLUMN = "42703";
 
-async function updateAccount(sb: Sb, id: string, values: Row) {
-  const { error } = await sb.from("linked_social_accounts").update(values).eq("id", id);
-  if (error && error.code !== MISSING_COLUMN) throw new Error(`Couldn't save sync state (${error.code ?? "unknown"}).`);
+async function updateAccount(sb: Sb, id: string, values: Row, token?: string) {
+  let query = sb.from("linked_social_accounts").update(values).eq("id", id);
+  if (token) query = query.eq("sync_lock_token", token);
+  const { data, error } = await query.select("id");
+  databaseError(error);
+  if (token && !data?.length) throw new Error("This sync lease has expired. A newer refresh owns this account.");
+}
+
+/** Atomic PostgreSQL claims coordinate independent server processes and skip paused/leased accounts. */
+export async function claimSyncAccounts(sb: Sb, config: SyncConfig, count = 2, accountId?: string, force = false): Promise<Row[]> {
+  const { data, error } = await sb.rpc("claim_social_sync_accounts", {
+    p_limit: count, p_account_id: accountId ?? null, p_force: force, p_youtube_enabled: !!config.youtubeApiKey,
+  });
+  if (error?.code === "PGRST202" || error?.code === "42883") throw new ApiError(503, "Automatic syncing needs the latest database migration.", "schema_outdated");
+  databaseError(error);
+  return (data ?? []) as Row[];
 }
 
 /** Insert, retrying without the columns added by the auto-sync migration if it isn't applied yet. */
@@ -118,11 +174,18 @@ async function insertTolerant(sb: Sb, table: string, row: Row, newColumns: strin
  */
 const runningSyncs = new Map<string, Promise<SyncState>>();
 
-export async function syncAccount(sb: Sb, account: Row, configOverride?: SyncConfig): Promise<SyncState> {
+export async function syncAccount(sb: Sb, account: Row, configOverride?: SyncConfig, options: { claimed?: boolean; force?: boolean } = {}): Promise<SyncState> {
   const id = String(account.id);
   const running = runningSyncs.get(id);
   if (running) return running;
-  const task = performSyncAccount(sb, account, configOverride);
+  const task = (async () => {
+    if (account.status !== "active") return storedSyncState(account);
+    const config = configOverride ?? await resolveSyncConfig();
+    if (!providerFor(String(account.platform))?.configured(config)) return syncAvailability(String(account.platform), config) as SyncState;
+    const claimed = options.claimed ? account : (await claimSyncAccounts(sb, config, 1, id, options.force !== false))[0];
+    if (!claimed) return storedSyncState(account);
+    return performSyncAccount(sb, { ...account, ...claimed }, config);
+  })();
   runningSyncs.set(id, task);
   try { return await task; } finally { runningSyncs.delete(id); }
 }
@@ -141,12 +204,12 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
   }
   const now = new Date();
   try {
-    const source = accountPlatformFor(String(account.platform)).id === "instagram" ? "profile" : "api";
-
-    const [{ data: lastApi }, { data: existing }] = await Promise.all([
-      sb.from("social_account_snapshots").select("*").eq("account_id", id).eq("source", source).order("captured_at", { ascending: false }).limit(1).maybeSingle(),
+    const [{ data: previous, error: previousError }, { data: existing, error: postsError }] = await Promise.all([
+      sb.from("social_account_snapshots").select("*").eq("account_id", id).in("source", ["api", "profile"]).order("captured_at", { ascending: false }).limit(1).maybeSingle(),
       sb.from("social_account_posts").select("*").eq("account_id", id),
     ]);
+    databaseError(previousError);
+    databaseError(postsError);
     const posts = (existing ?? []) as Row[];
     const linkedAt = Date.parse(String(account.linked_at)) - 86_400_000;
     const tracked = [...posts].sort((a, b) => {
@@ -154,6 +217,8 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
       return Number(needsNumbers(b)) - Number(needsNumbers(a)) || Date.parse(String(a.views_captured_at ?? a.updated_at ?? "1970-01-01")) - Date.parse(String(b.views_captured_at ?? b.updated_at ?? "1970-01-01"));
     });
     const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), Number.isFinite(linkedAt) ? linkedAt : undefined);
+    const source = fetched.source ?? "api";
+    const lastApi = previous?.source === source ? previous : null;
     const byExternal = new Map<string, Row>();
     for (const post of posts) {
       const key = String(post.external_id || "") || externalPostId(String(post.url));
@@ -169,7 +234,7 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
         const { error } = await sb
           .from("social_account_posts")
           .update({
-            ...(media.views !== undefined ? { views: media.views, views_captured_at: now.toISOString(), views_source: source } : {}),
+            ...(media.views !== undefined ? { views: media.views, views_captured_at: now.toISOString(), views_source: media.viewsSource ?? source } : {}),
             ...(media.likes !== undefined ? { likes: media.likes } : {}),
             ...(media.comments !== undefined ? { comments: media.comments } : {}),
             ...(!known.posted_at && media.postedAt ? { posted_at: media.postedAt } : {}),
@@ -178,7 +243,7 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
           })
           .eq("id", String(known.id));
         if (error) throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
-      } else if (media.postedAt && Date.parse(media.postedAt) >= linkedAt && (source !== "profile" || media.url.includes('/reel/'))) {
+      } else if (media.postedAt && Date.parse(media.postedAt) >= linkedAt && (accountPlatformFor(String(account.platform)).id !== "instagram" || media.url.includes('/reel/'))) {
         // Posted for the gig after linking: track it automatically, pending the team's review for pay.
         await insertTolerant(
           sb,
@@ -190,7 +255,7 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
             posted_at: media.postedAt,
             views: media.views ?? null,
             views_captured_at: media.views !== undefined ? now.toISOString() : null,
-            views_source: media.views !== undefined ? source : null,
+            views_source: media.views !== undefined ? media.viewsSource ?? source : null,
             likes: media.likes ?? null,
             comments: media.comments ?? null,
             status: "submitted",
@@ -203,9 +268,9 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
       }
     }
 
-    // Public profile history refreshes every five minutes; API period snapshots remain hourly.
+    // Each successful sync has a dated snapshot; missing metrics remain unavailable.
     const lastAt = lastApi ? Date.parse(String(lastApi.captured_at)) : 0;
-    if (now.getTime() - lastAt >= (source === "profile" ? 5 * 60_000 : 60 * 60_000)) {
+    if (now.getTime() - lastAt >= 60_000) {
       const days = lastApi ? (now.getTime() - lastAt) / 86_400_000 : 7;
       const prevTotal = lastApi ? Number(lastApi.total_views ?? NaN) : NaN;
       const viewsGained = fetched.totalViews !== undefined && Number.isFinite(prevTotal) ? Math.max(0, fetched.totalViews - prevTotal) : undefined;
@@ -229,18 +294,34 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
       );
     }
 
-    await updateAccount(sb, id, { sync_status: "ok", last_synced_at: now.toISOString(), sync_error: "", ...(fetched.externalId ? { external_id: fetched.externalId } : {}) });
-    return { available: true, status: "ok", lastSyncedAt: now.toISOString() };
+    const finished = Date.now();
+    const values = { sync_status: "ok", last_synced_at: new Date(finished).toISOString(), sync_error: "", sync_error_code: "", sync_failures: 0,
+      next_sync_at: new Date(finished + syncInterval(String(account.platform))).toISOString(),
+      sync_provider: fetched.provider ?? "youtube", sync_locked_until: null, sync_lock_token: null,
+      ...(fetched.externalId ? { external_id: fetched.externalId } : {}) };
+    await updateAccount(sb, id, values, String(account.sync_lock_token));
+    return storedSyncState({ ...account, ...values });
   } catch (error) {
-    const message = (error instanceof Error ? error.message : "Sync failed.").slice(0, 300);
-    await updateAccount(sb, id, { sync_status: "error", last_synced_at: now.toISOString(), sync_error: message }).catch(() => undefined);
-    return { available: true, status: "error", lastSyncedAt: now.toISOString(), error: message };
+    let message = error instanceof Error ? error.message : "Sync failed.";
+    for (const secret of [config.youtubeApiKey, config.metaAccessToken]) if (secret) message = message.replaceAll(secret, "[redacted]");
+    message = message.slice(0, 300);
+    const code = classifySyncError(error);
+    const failures = Math.max(0, Number(account.sync_failures) || 0) + 1;
+    const values = { sync_status: "error", sync_error: message, sync_error_code: code, sync_failures: failures,
+      next_sync_at: new Date(Date.now() + retryDelayMs(code, failures, id, error instanceof SocialSyncError ? error.retryAfterMs : 0)).toISOString(),
+      sync_locked_until: null, sync_lock_token: null };
+    // A failed attempt never advances last_synced_at or discards saved measurements.
+    await updateAccount(sb, id, values, String(account.sync_lock_token));
+    return storedSyncState({ ...account, ...values });
   }
 }
 
 /** Determine refresh cadence separately from how frequently clients poll the saved data. */
 export function accountSyncDue(account: Row, now: number, staleMs: number): boolean {
   if (account.status !== "active") return false;
+  if ((Date.parse(String(account.sync_locked_until)) || 0) > now) return false;
+  const scheduled = Date.parse(String(account.next_sync_at));
+  if (Number.isFinite(scheduled)) return now >= scheduled;
   const last = account.last_synced_at ? Date.parse(String(account.last_synced_at)) : 0;
   if (!last || !Number.isFinite(last)) return true;
   const profile = accountPlatformFor(String(account.platform)).id === "instagram";
@@ -249,19 +330,41 @@ export function accountSyncDue(account: Row, now: number, staleMs: number): bool
 }
 
 /** Syncs accounts whose data is older than `staleMs`, a few at a time, within an overall time budget. */
-export async function syncStale(sb: Sb, accounts: Row[], staleMs: number, budgetMs: number, concurrency = 4) {
+export async function syncStale(sb: Sb, accounts: Row[], staleMs: number, budgetMs: number, concurrency = 2) {
   const config = await resolveSyncConfig();
   const now = Date.now();
   const due = accounts.filter((a) => {
     return providerFor(String(a.platform))?.configured(config) && accountSyncDue(a, now, staleMs);
-  });
+  }).sort((a, b) => (Date.parse(String(a.next_sync_at ?? a.last_sync_attempt_at ?? a.last_synced_at)) || 0) - (Date.parse(String(b.next_sync_at ?? b.last_sync_attempt_at ?? b.last_synced_at)) || 0));
   const deadline = now + budgetMs;
   let synced = 0;
   let failed = 0;
-  for (let i = 0; i < due.length && Date.now() < deadline; i += concurrency) {
-    const results = await Promise.all(due.slice(i, i + concurrency).map((a) => syncAccount(sb, a, config)));
-    synced += results.filter((r) => r.status === "ok").length;
-    failed += results.filter((r) => r.status === "error").length;
+  const width = Math.max(1, Math.min(4, concurrency));
+  for (let i = 0; i < due.length && (i === 0 || Date.now() + 10_000 < deadline); i += width) {
+    const results = await Promise.allSettled(due.slice(i, i + width).map((a) => syncAccount(sb, a, config, { force: false })));
+    synced += results.filter(r => r.status === "fulfilled" && r.value.status === "ok").length;
+    failed += results.filter(r => r.status === "rejected" || r.value.status === "error").length;
   }
   return { due: due.length, synced, failed };
+}
+
+/** No row cap or page-visit dependency: oldest deadlines are claimed directly from the whole database. */
+export async function runScheduledSocialSync(sb: Sb = supabaseAdmin(), configOverride?: SyncConfig, budgetMs = 25_000) {
+  const config = configOverride ?? await resolveSyncConfig();
+  const started = Date.now();
+  const { error } = await sb.from("social_sync_scheduler_state").upsert({ id: true, last_started_at: new Date(started).toISOString() });
+  databaseError(error);
+  let processed = 0, synced = 0, failed = 0;
+  // Claim only a batch we can actually start. Expired leases recover after a crashed process.
+  while (processed < 12 && (processed === 0 || Date.now() + 12_000 < started + budgetMs)) {
+    const accounts = await claimSyncAccounts(sb, config, 2);
+    if (!accounts.length) break;
+    const results = await Promise.allSettled(accounts.map(account => syncAccount(sb, account, config, { claimed: true })));
+    processed += accounts.length;
+    synced += results.filter(result => result.status === "fulfilled" && result.value.status === "ok").length;
+    failed += results.filter(result => result.status === "rejected" || result.value.status === "error").length;
+  }
+  const { error: finishError } = await sb.from("social_sync_scheduler_state").upsert({ id: true, last_finished_at: new Date().toISOString(), processed, synced, failed });
+  databaseError(finishError);
+  return { processed, synced, failed, durationMs: Date.now() - started };
 }

@@ -1,5 +1,7 @@
 import "server-only";
 import { fetchInstagramProfile } from "@/lib/api/instagramProfile";
+import { fetchInstagramBusinessProfile } from "@/lib/api/instagramGraph";
+import { syncInterval } from "@/lib/socialSyncSchedule";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decryptSecretText, encryptSecretText } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -96,6 +98,11 @@ export async function saveSyncSettings(actorId: string, updates: Partial<Record<
     databaseError(error);
   }
   await sb.from("audit_events").insert({ actor_id: actorId, action: "integration_settings_updated", resource_id: Object.keys(updates).join(",") }).then(() => undefined, () => undefined);
+  if (["youtubeApiKey", "metaAccessToken", "metaIgBusinessId"].some(name => name in updates)) {
+    // Newly connected credentials should recover waiting accounts on the next scheduler tick.
+    const { error } = await sb.from("linked_social_accounts").update({ next_sync_at: new Date().toISOString(), sync_failures: 0 }).eq("status", "active").in("sync_status", ["error", "pending", "not_configured"]);
+    databaseError(error);
+  }
   await loadStored(true);
 }
 
@@ -140,6 +147,12 @@ export async function testSyncProvider(provider: "youtube" | "instagram" | "visi
     return { ok: false, message: apiMessage(res.body) || `YouTube rejected the key (${res.status}). Check that YouTube Data API v3 is enabled for it.` };
   }
   try {
+    const metaAccessToken = candidate?.metaAccessToken?.trim() || config.metaAccessToken;
+    const metaIgBusinessId = candidate?.metaIgBusinessId?.trim() || config.metaIgBusinessId;
+    if (metaAccessToken || metaIgBusinessId) {
+      const profile = await fetchInstagramBusinessProfile(candidate?.instagramHandle || "instagram", { metaAccessToken, metaIgBusinessId });
+      return { ok: true, message: `Instagram API connected: ${profile.followers?.toLocaleString() ?? "hidden"} followers and ${profile.posts?.toLocaleString() ?? "hidden"} posts. Professional account statistics will sync automatically.` };
+    }
     const profile = await fetchInstagramProfile(candidate?.instagramHandle || "instagram");
     return { ok: true, message: `Public profile readable: ${profile.followers?.toLocaleString() ?? "hidden"} followers, ${profile.posts?.toLocaleString() ?? "hidden"} posts, ${profile.media.length} exposed posts read. ${profile.note}` };
   } catch (error) {
@@ -152,24 +165,40 @@ export async function syncIntegrationStatus() {
   const config = await resolveSyncConfig();
   const stored = await loadStored();
   const field = (name: SyncSettingName) => ({ source: config.source[name], hint: config.source[name] === "app" ? stored[name]?.hint ?? "set" : config.source[name] === "env" ? "set on server" : "" });
-  let health = { active: 0, ok: 0, failing: 0, lastSyncedAt: null as string | null };
+  let health = { active: 0, ok: 0, failing: 0, pending: 0, syncing: 0, lastSyncedAt: null as string | null };
+  let scheduler = { healthy: false, lastRunAt: null as string | null, running: false };
   try {
-    const { data } = await supabaseAdmin().from("linked_social_accounts").select("*").eq("status", "active").limit(2000);
+    const sb = supabaseAdmin();
+    const [{ data }, { data: heartbeat }] = await Promise.all([
+      sb.from("linked_social_accounts").select("*").eq("status", "active").limit(2000),
+      sb.from("social_sync_scheduler_state").select("*").eq("id", true).maybeSingle(),
+    ]);
     const rows = data ?? [];
     const synced = rows.map((r) => r.last_synced_at).filter(Boolean).map(String).sort();
+    const now = Date.now();
+    const fresh = (r: Record<string, unknown>) => r.sync_status === "ok" && now - Date.parse(String(r.last_synced_at)) <= syncInterval(String(r.platform)) + 120_000;
     health = {
       active: rows.length,
-      ok: rows.filter((r) => r.sync_status === "ok").length,
+      ok: rows.filter(fresh).length,
       failing: rows.filter((r) => r.sync_status === "error").length,
+      pending: rows.filter(r => !fresh(r) && r.sync_status !== "error").length,
+      syncing: rows.filter(r => Date.parse(String(r.sync_locked_until)) > now).length,
       lastSyncedAt: synced.at(-1) ?? null,
+    };
+    const last = heartbeat?.last_finished_at ? String(heartbeat.last_finished_at) : null;
+    scheduler = {
+      healthy: !!last && now - Date.parse(last) < 3 * 60_000,
+      lastRunAt: last,
+      running: !!heartbeat?.last_started_at && Date.parse(String(heartbeat.last_started_at)) > (Date.parse(String(last)) || 0) && now - Date.parse(String(heartbeat.last_started_at)) < 120_000,
     };
   } catch {
     // health is optional
   }
   return {
     youtube: { connected: !!config.youtubeApiKey, fields: { youtubeApiKey: field("youtubeApiKey") } },
-    instagram: { connected: true, mode: "profile" as const, fields: { metaAccessToken: field("metaAccessToken"), metaIgBusinessId: field("metaIgBusinessId") } },
+    instagram: { connected: true, mode: config.metaAccessToken && config.metaIgBusinessId ? "api" as const : "profile" as const, fields: { metaAccessToken: field("metaAccessToken"), metaIgBusinessId: field("metaIgBusinessId") } },
     vision: { connected: !!config.anthropicApiKey, fields: { anthropicApiKey: field("anthropicApiKey") } },
     health,
+    scheduler,
   };
 }

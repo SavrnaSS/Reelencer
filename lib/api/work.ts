@@ -11,6 +11,23 @@ export async function resolveWorkerUserId(value: string) {
   return String(data.id);
 }
 
+/** Resolve an assignment target without allowing new work for an inactive account. */
+export async function resolveActiveWorkerUserId(value: string) {
+  const userId = await resolveWorkerUserId(value);
+  const sb = supabaseAdmin();
+  const [profile, worker] = await Promise.all([
+    sb.from("profiles").select("id,active").eq("id", userId).maybeSingle(),
+    sb.from("workers").select("id,active").eq("user_id", userId).maybeSingle(),
+  ]);
+  databaseError(profile.error);
+  databaseError(worker.error);
+  if (!profile.data || !worker.data) throw new ApiError(404, "Worker not found.", "not_found");
+  if (!profile.data.active || !worker.data.active) {
+    throw new ApiError(409, "Restore this worker's access before assigning accounts or creating work.", "worker_inactive");
+  }
+  return userId;
+}
+
 export async function assignedAccounts(userId: string) {
   const sb = supabaseAdmin();
   const results = await Promise.all([

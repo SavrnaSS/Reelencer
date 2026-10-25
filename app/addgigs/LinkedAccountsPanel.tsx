@@ -9,6 +9,8 @@ import { isCurrentAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 import { readAdminFilter, saveAdminFilter } from "@/lib/adminPreferences";
 import { LINKED_ACCOUNTS_CACHE_KEY, LINKED_ACCOUNTS_FRESH_MS, LINKED_SYNC_CACHE_KEY, LINKED_SYNC_ATTEMPT_KEY, isLinkedAccountsData, isLinkedSyncAttempt, linkedAccountsData, linkedSyncDue, type LinkedAccountsData } from "@/lib/linkedAccountCache";
 import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
+import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
+import { syncPresentation } from "@/lib/socialSyncSchedule";
 import type { AdminLiveKind } from "@/lib/useAdminLive";
 import { accountPlatformFor } from "@/lib/accountSetup";
 import {
@@ -52,7 +54,7 @@ const POST_FIELDS = ["views", "reach", "likes", "comments", "shares", "saves"] a
 const isDue = (account: LinkedSocialAccount, now: number) => {
   if (account.status !== "active") return false;
   // Healthy auto-sync keeps the numbers fresh by itself.
-  if (account.sync.available && account.sync.status === "ok") return false;
+  if (syncPresentation(account, now).tone === "success") return false;
   const days = daysSinceSnapshot(account.snapshots, now);
   return days === undefined || days >= STALE_AFTER_DAYS;
 };
@@ -433,29 +435,15 @@ function AccountDetail({
           <p className="mt-0.5 truncate text-[12.5px] text-[#616a64]">
             {platform.label} · {account.gigTitle ?? account.gigId} · creator {account.workerCode}
           </p>
-          <p className="mt-0.5 text-[11.5px] text-[#8a928c]">
-            Linked {formatDate(account.linkedAt)} ·{" "}
-            {account.sync.available ? (
-              <span className={account.sync.status === "error" ? "font-semibold text-[#9a5b00]" : "text-[#2e7d4f]"}>
-                {account.sync.status === "error"
-                  ? `Sync failed: ${account.sync.error ?? "unknown error"}`
-                  : account.sync.lastSyncedAt
-                    ? `Auto-synced ${formatRelative(account.sync.lastSyncedAt)}`
-                    : "Auto-sync pending"}
-              </span>
-            ) : account.sync.status === "not_configured" ? (
-              "Auto-sync not connected (see Auto-sync above)"
-            ) : (
-              "Manual check-ins only for this platform"
-            )}
-          </p>
+          <p className="mt-0.5 text-[11.5px] text-[#8a928c]">Linked {formatDate(account.linkedAt)}</p>
+          <div className="mt-2"><SocialSyncStatus account={account} now={now} /></div>
         </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           {account.sync.available ? (
             <button
               type="button"
-              className={`${btnGhost} flex-1 sm:flex-none`}
-              disabled={busy === "sync"}
+              className={`${btnGhost} whitespace-nowrap sm:flex-none`}
+              disabled={!!busy || account.status !== "active" || account.sync.inProgress}
               onClick={async () => {
                 setBusy("sync");
                 setError(null);
@@ -470,10 +458,10 @@ function AccountDetail({
               }}
             >
               {busy === "sync" ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.refresh} />}
-              Sync now
+              {busy === "sync" || account.sync.inProgress ? "Syncing…" : "Sync now"}
             </button>
           ) : null}
-          <a href={`/addgigs/applications?gig=${encodeURIComponent(account.gigId)}`} className={`${btnGhost} flex-1 sm:flex-none`} title="Login details are on the application">
+          <a href={`/addgigs/applications?gig=${encodeURIComponent(account.gigId)}`} className={`${btnGhost} whitespace-nowrap sm:flex-none`} title="Login details are on the application">
             <Icon d={ICONS.lock} />
             Login details
           </a>
@@ -488,7 +476,7 @@ function AccountDetail({
               const status = e.target.value as SocialAccountStatus;
               void run("status", { action: "status", accountId: account.id, status }, () => onChange({ ...account, status }));
             }}
-            className={`${fieldClass} h-9 w-auto flex-1 sm:flex-none`}
+            className={`${fieldClass} col-span-2 h-9 w-full sm:w-auto sm:flex-none`}
           >
             <option value="active">Active</option>
             <option value="paused">Paused</option>
@@ -502,7 +490,7 @@ function AccountDetail({
         {due ? (
           <div className="flex items-start gap-2 rounded-[12px] border border-[#ecd8a8] bg-[#fff8e8] px-3.5 py-2.5 text-[12.5px] text-[#6b4a05]">
             <Icon d={ICONS.clock} className="mt-0.5 h-4 w-4 shrink-0" />
-            {days === undefined ? "No numbers recorded yet. Public profile sync runs automatically; private insights can be added below." : `Last check-in was ${days} days ago. Creators expect weekly updates.`}
+            {days === undefined ? account.sync.status === "error" ? "The platform has not returned readable statistics yet. Check the connection in Auto-sync above; retries are scheduled automatically. You can add private insights below." : "Waiting for the first automatic reading. Private insights can also be added below." : `Last check-in was ${days} days ago. Creators expect weekly updates.`}
           </div>
         ) : null}
 
@@ -529,7 +517,7 @@ function AccountDetail({
               <div key={item.label} className="min-w-0 rounded-[10px] border border-[#eef0ec] bg-[#fafbf9] px-3 py-2">
                 <dt className="text-[11px] font-medium text-[#8a928c]">{item.label}</dt>
                 <dd className="text-[16px] font-semibold tabular-nums text-[#1a201c]">{item.value}</dd>
-                {item.sub ? <dd className="truncate text-[10.5px] text-[#8a928c]">{item.sub}</dd> : null}
+                {item.sub ? <dd className="break-words text-[10.5px] leading-4 text-[#8a928c]">{item.sub}</dd> : null}
               </div>
             ))}
           </dl>
@@ -787,14 +775,14 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
     const data = await refreshSaved({ force: false });
     if (data && mounted.current) { setNow(Date.now()); void syncAccounts(); }
   }, [refreshSaved, syncAccounts]);
-  // Saved reads are cheap; expensive platform readers run only when their five-minute window is due.
-  useVisibleRefresh(refreshVisible, 60_000);
+  // Check deadlines frequently; database leases and per-account schedules bound platform traffic.
+  useVisibleRefresh(refreshVisible, 30_000);
   useEffect(() => {
     const refresh = () => { void syncAccounts(true); };
     const live = (event: Event) => {
       const kinds = (event as CustomEvent<AdminLiveKind[] | null>).detail;
       if (!kinds) void refreshSaved({ force: false });
-      else if (kinds.includes("gig_applications") || kinds.includes("social_account_requests")) void refreshSaved({ force: true, afterCurrent: true });
+      else if (kinds.some(kind => ["gig_applications", "social_account_requests", "linked_social_accounts", "social_account_snapshots", "social_account_posts"].includes(kind))) void refreshSaved({ force: true, afterCurrent: true });
     };
     const online = () => { void refreshVisible(); };
     window.addEventListener("admin-refresh", refresh);
@@ -860,7 +848,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
         <div>
           <h1 className="text-[22px] font-semibold tracking-tight text-[#1a201c] sm:text-[24px]">Linked accounts</h1>
           <p className="mt-1 max-w-[70ch] text-[13px] text-[#616a64]">
-            Accounts creators set up for Content Posting gigs, linked when you approve them. Instagram reads public profiles automatically. Other connected platforms sync by themselves; add private insights from screenshots or weekly check-ins. Updates refresh automatically while this page is open. Creators see everything in their dashboard.
+            Linked accounts refresh automatically on their own schedules. Track connection health, upcoming retries and the last successful reading. Add private insights from screenshots or check-ins; creators see saved updates in their dashboard.
           </p>
         </div>
         <button type="button" className={`${btnGhost} self-start sm:self-auto`} onClick={refreshAll} disabled={loading}>
@@ -927,7 +915,6 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
             }`}
           >
             {visible.map((account) => {
-              const days = daysSinceSnapshot(account.snapshots, now);
               const followers = metricChange(account.snapshots, "followers").value;
               const active = selected?.id === account.id;
               return (
@@ -953,9 +940,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
                           ) : null}
                           {account.gigTitle ?? account.gigId}
                         </span>
-                        <span className={`shrink-0 ${isDue(account, now) ? "font-semibold text-[#9a5b00]" : "text-[#8a928c]"}`}>
-                          {account.status !== "active" ? account.status : days === undefined ? "No check-ins" : days === 0 ? "Today" : `${days}d ago`}
-                        </span>
+                        <SocialSyncStatus account={account} now={now} compact />
                       </span>
                     </span>
                   </button>

@@ -4,7 +4,7 @@ export const LINKED_ACCOUNTS_CACHE_KEY = "linked-accounts:v1";
 export const LINKED_SYNC_CACHE_KEY = "linked-accounts-sync:v1";
 export const LINKED_SYNC_ATTEMPT_KEY = "linked-accounts-sync-attempt:v1";
 export const LINKED_ACCOUNTS_FRESH_MS = 30_000;
-export const LINKED_SYNC_INTERVAL_MS = 5 * 60_000;
+export const LINKED_SYNC_INTERVAL_MS = 30_000;
 
 export type LinkedAccountsData = { accounts: LinkedSocialAccount[]; screenshotReader: boolean };
 type Row = Record<string, unknown>;
@@ -36,7 +36,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
       if (!record(account) || !record(account.sync) || !Array.isArray(account.snapshots) || !Array.isArray(account.posts)) throw new Error("Linked accounts returned an unreadable response. Please retry.");
       return {
         ...pick(account, ["id", "applicationId", "gigId", "gigTitle", "company", "workerCode", "platform", "handle", "profileUrl", "status", "linkedAt", "payout", "payoutType"]),
-        sync: pick(account.sync, ["available", "status", "lastSyncedAt", "error"]),
+        sync: pick(account.sync, ["available", "status", "lastSyncedAt", "lastAttemptAt", "nextSyncAt", "inProgress", "consecutiveFailures", "provider", "errorCode", "error"]),
         snapshots: account.snapshots.map(snapshot => {
           if (!record(snapshot)) throw new Error("Invalid account snapshot.");
           return pick(snapshot, ["id", "capturedAt", "periodDays", ...metrics, "source", "note"]);

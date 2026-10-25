@@ -3,7 +3,8 @@ import { accountPlatformFor, isPlatformProfileUrl, readStoredAccountSetup } from
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decodeWorkerName, resolveNotificationContext, sendLifecycleNotification, type MailStatus } from "@/lib/api/gigApplications";
 import { emailBaseUrl } from "@/lib/email/send";
-import { syncAccount, syncAvailability, syncStale } from "@/lib/api/socialSync";
+import { runScheduledSocialSync, syncAccount, syncAvailability, syncStale } from "@/lib/api/socialSync";
+import { storedSyncState } from "@/lib/socialSyncSchedule";
 import { resolveSyncConfig, type SyncConfig } from "@/lib/api/integrations";
 import { linkSocialAccount } from "@/lib/api/socialLink";
 import { openRequestCount } from "@/lib/api/accountRequests";
@@ -58,12 +59,9 @@ const toPost = (r: Row): SocialPost => ({
 
 const toSync = (r: Row, config: SyncConfig): SyncState => {
   const availability = syncAvailability(String(r.platform), config);
-  const stored = ["pending", "ok", "error"].includes(String(r.sync_status)) ? (r.sync_status as SyncState["status"]) : "pending";
   return {
-    available: availability.available,
-    status: availability.available ? stored : availability.status,
-    lastSyncedAt: str(r.last_synced_at),
-    error: availability.available && stored === "error" ? str(r.sync_error) : undefined,
+    ...storedSyncState(r, availability.available),
+    ...(!availability.available ? availability : {}),
   };
 };
 
@@ -320,7 +318,7 @@ export async function deletePost(id: string) {
 export async function setAccountStatus(accountId: string, status: SocialAccountStatus) {
   const sb = supabaseAdmin();
   await requireAccount(sb, accountId);
-  const { error } = await sb.from("linked_social_accounts").update({ status, updated_at: new Date().toISOString() }).eq("id", accountId);
+  const { error } = await sb.from("linked_social_accounts").update({ status, updated_at: new Date().toISOString(), ...(status === "active" ? { next_sync_at: new Date().toISOString() } : {}) }).eq("id", accountId);
   databaseError(error);
 }
 
@@ -497,21 +495,23 @@ export async function syncAccountNow(accountId: string, actor: { aliases: string
   databaseError(error);
   if (!data || (!actor.isAdmin && !actor.aliases.includes(String(data.worker_code)))) throw new ApiError(404, "Linked account not found.");
   const row = data as Row;
+  if (row.status !== "active") throw new ApiError(409, "Resume this account before syncing its statistics.");
   const availability = syncAvailability(String(row.platform), await resolveSyncConfig());
   if (!availability.available) {
     throw new ApiError(409, availability.status === "unsupported" ? "This platform doesn't offer automatic stats. The team updates them." : "Automatic sync isn't connected yet. The team updates stats meanwhile.");
   }
-  const last = row.last_synced_at ? Date.parse(String(row.last_synced_at)) : 0;
+  const last = row.last_sync_attempt_at ? Date.parse(String(row.last_sync_attempt_at)) : row.last_synced_at ? Date.parse(String(row.last_synced_at)) : 0;
   const waitMs = last + SYNC_COOLDOWN_MINUTES * 60_000 - Date.now();
-  if (!actor.isAdmin && waitMs > 0) throw new ApiError(429, `Synced recently. Try again in ${Math.ceil(waitMs / 60_000)} min.`, "cooldown");
-  await syncAccount(sb, row);
+  if (waitMs > 0 && !(Date.parse(String(row.sync_locked_until)) > Date.now())) throw new ApiError(429, `Checked recently. Try again in ${Math.ceil(waitMs / 1000)} seconds.`, "cooldown");
+  if (row.sync_error_code === "rate_limited" && Date.parse(String(row.next_sync_at)) > Date.now()) throw new ApiError(429, "The platform has limited requests. Automatic sync will retry at the scheduled time.", "cooldown");
+  await syncAccount(sb, row, undefined, { force: true });
   const { data: fresh, error: freshError } = await sb.from("linked_social_accounts").select("*").eq("id", accountId).maybeSingle();
   databaseError(freshError);
   const [account] = await hydrate(sb, fresh ? [fresh as Row] : []);
   return account;
 }
 
-/** Legacy cron endpoint remains compatible, but reads are now driven by visible account sections. */
+/** Shared by external cron and the optional long-running local scheduler. */
 export async function syncAllAccounts() {
-  return { synced: 0, failed: 0, due: 0, skipped: true, reason: "visit_driven_sync" };
+  return runScheduledSocialSync();
 }

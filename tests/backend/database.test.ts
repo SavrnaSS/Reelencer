@@ -561,3 +561,92 @@ test('authenticity deductions are bounded, audited, immutable and permanently ex
   for(const resource of ['social_post_measurements','view_payout_claim_items']) assert.equal(await scalar<boolean>(`select has_table_privilege('authenticated','public.${resource}','select') as value`),false);
   assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.review_view_payout_claim_authenticity(uuid,uuid,text,text,text,jsonb)','execute') as value"),false);
 });
+
+test('worker moderation archives access atomically, protects administrators, and retains financial and audit records', async () => {
+  const subject='aaaa1111-1111-4111-8111-111111111111';
+  const peer='bbbb2222-2222-4222-8222-222222222222';
+  for (const [id,email] of [[subject,'moderation@example.test'],[peer,'moderation-peer@example.test']]) {
+    await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,email]);
+    await db.query('select public.bootstrap_worker($1)',[id]);
+  }
+  const code=await scalar<string>('select worker_code as value from public.profiles where id=$1',[subject]);
+  const historical=await scalar<string>("insert into public.work_items(public_id,worker_id,title,status,reward_inr) values('moderation-financial-history',$1,'Approved prior work','Approved',75) returning id as value",[subject]);
+  const act=(action:string,reason='Documented policy violation',confirmation:string|null=null,ip:string|null=null,actorIp:string|null='1.1.1.1',actor=admin)=>scalar<{status:string;changed:boolean}>('select public.moderate_worker($1,$2,$3,$4,$5,$6,$7) as value',[actor,subject,action,reason,confirmation,ip,actorIp]);
+  const status=()=>scalar<string>('select status as value from public.worker_moderation where user_id=$1',[subject]);
+  const count=()=>scalar<number>('select count(*)::int as value from public.worker_moderation_events where user_id=$1',[subject]);
+  await assert.rejects(act('suspend','Documented policy violation',null,null,null,peer),/forbidden/);
+  await assert.rejects(db.query("select public.moderate_worker($1,$1,'suspend','Self moderation must be blocked')",[admin]),/forbidden/);
+  await assert.rejects(act('suspend','bad'),/moderation_reason_required/);
+  await assert.rejects(act('unknown'),/invalid_moderation_action/);
+  await db.query("select public.record_worker_access($1,'8.8.8.8')",[subject]);
+  await db.query("select public.record_worker_access($1,'9.9.9.9')",[subject]);
+  const firstSeen=await scalar<string>("select last_seen_at::text as value from public.worker_access_ips where user_id=$1 and ip='8.8.8.8'",[subject]);
+  await db.query("select public.record_worker_access($1,'8.8.8.8')",[subject]);
+  assert.equal(await scalar<string>("select last_seen_at::text as value from public.worker_access_ips where user_id=$1 and ip='8.8.8.8'",[subject]),firstSeen,'frequent requests do not rewrite IP telemetry');
+  await assert.rejects(act('suspend_ip','Observed address should be required',null,'4.2.2.2'),/worker_ip_not_observed/);
+  await assert.rejects(act('suspend_ip','Administrator connection must be known',null,'8.8.8.8',null),/actor_ip_required/);
+  await assert.rejects(act('suspend_ip','Shared administrator address is protected',null,'8.8.8.8','8.8.8.8'),/admin_ip_protected/);
+  await db.query("select public.record_worker_access($1,'9.9.9.9')",[admin]);
+  await assert.rejects(act('suspend_ip','Historical administrator address is protected',null,'9.9.9.9'),/admin_ip_protected/);
+  assert.equal(await count(),0,'failed actions leave no audit events or changed access');
+  assert.deepEqual(await act('suspend_ip','Verified repeated abuse from captured address',null,'8.8.8.8'),{status:'suspended',changed:true});
+  assert.equal(await status(),'suspended');
+  assert.equal(await scalar<boolean>('select active as value from public.profiles where id=$1',[subject]),false);
+  assert.equal(await scalar<boolean>('select active as value from public.workers where user_id=$1',[subject]),false);
+  assert.equal(await count(),1);
+  assert.equal((await act('suspend_ip','Retrying the same moderation action',null,'8.8.8.8')).changed,false);
+  assert.equal(await count(),1,'retrying a completed action does not duplicate audit evidence');
+  await assert.rejects(db.query("select public.record_worker_access($1,'8.8.8.8')",[peer]),/ip_blocked/);
+  await assert.rejects(db.query("select public.record_worker_access($1,'4.2.2.2')",[subject]),/account_inactive/);
+  assert.equal((await act('unblock_ip','Shared network review completed',null,'8.8.8.8')).status,'suspended');
+  assert.equal(await status(),'suspended','removing an address block does not restore the account');
+  await db.query("select public.record_worker_access($1,'8.8.8.8')",[peer]);
+  await assert.rejects(act('delete','Archival confirmation must match','WRONG-ID'),/moderation_confirmation_required/);
+  assert.equal((await act('delete','Account removed after completed review',code)).status,'deleted');
+  assert.equal(await scalar<boolean>('select deleted_at is not null as value from public.worker_moderation where user_id=$1',[subject]),true);
+  assert.equal(await scalar<number>('select count(*)::int as value from auth.users where id=$1',[subject]),1);
+  assert.equal(await scalar<string>('select reward_inr::text as value from public.work_items where id=$1',[historical]),'75.00');
+  await assert.rejects(act('suspend'),/invalid_transition/);
+  assert.equal((await act('restore','Appeal accepted and access restored')).status,'active');
+  assert.equal(await scalar<boolean>('select active as value from public.profiles where id=$1',[subject]),true);
+  assert.equal(await scalar<boolean>('select deleted_at is null and suspended_at is null as value from public.worker_moderation where user_id=$1',[subject]),true);
+  await act('suspend_ip','Recurrent confirmed policy abuse',null,'8.8.8.8');
+  await act('restore','Second appeal accepted by administrator');
+  assert.equal(await scalar<number>('select count(*)::int as value from public.worker_ip_blocks where user_id=$1',[subject]),0,'restore removes blocks owned by this worker');
+  await db.query("select public.record_worker_access($1,'8.8.8.8')",[subject]);
+  const latest=await scalar<{actor:string;reason:string}>('select jsonb_build_object(\'actor\',actor_label,\'reason\',reason) as value from public.worker_moderation_events where user_id=$1 order by created_at desc limit 1',[subject]);
+  assert.equal(latest.actor,'Test Admin');
+  assert.equal(latest.reason,'Second appeal accepted by administrator');
+  for (const table of ['worker_moderation','worker_access_ips','worker_ip_blocks','worker_moderation_events']) {
+    assert.equal(await scalar<boolean>(`select has_table_privilege('authenticated','public.${table}','select') as value`),false);
+    assert.equal(await scalar<boolean>(`select has_table_privilege('anon','public.${table}','select') as value`),false);
+    assert.equal(await scalar<boolean>(`select has_table_privilege('service_role','public.${table}','select') as value`),true);
+    assert.equal(await scalar<boolean>(`select has_table_privilege('service_role','public.${table}','update') as value`),false);
+  }
+  assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.moderate_worker(uuid,uuid,text,text,text,inet,inet)','execute') as value"),false);
+  for (const ip of ['127.0.0.1','10.0.0.1','100.64.0.1','192.0.2.1','224.0.0.1','::1','::ffff:8.8.8.8','fc00::1','2001:db8::1','8.8.8.0/24']) {
+    await assert.rejects(db.query('select public.record_worker_access($1,$2)',[subject,ip]),/invalid_worker_ip/);
+  }
+  await db.query("select public.record_worker_access($1,'2606:4700:4700::1111')",[subject]);
+});
+
+test('trusted-IP enforcement allows first verified login before profile bootstrap while retaining network restrictions', async () => {
+  const fresh='cccc3333-3333-4333-8333-333333333333';
+  const unconfirmed='dddd4444-4444-4444-8444-444444444444';
+  const blockedUser='eeee5555-5555-4555-8555-555555555555';
+  for (const [id,email] of [[fresh,'fresh-moderation@example.test'],[blockedUser,'blocked-fresh@example.test']]) {
+    await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,email]);
+  }
+  await db.query("insert into auth.users(id,email) values($1,'unconfirmed-moderation@example.test')",[unconfirmed]);
+  await db.query('select public.bootstrap_worker($1)',[blockedUser]);
+  await db.query("select public.record_worker_access($1,'8.8.4.4')",[blockedUser]);
+  await db.query("select public.moderate_worker($1,$2,'suspend_ip','Confirmed repeated policy abuse',null,'8.8.4.4','1.1.1.1')",[admin,blockedUser]);
+  await assert.rejects(db.query("select public.record_worker_access($1,'8.8.4.4')",[fresh]),/ip_blocked/);
+  assert.equal(await scalar<boolean>("select public.record_worker_access($1,'4.2.2.2') as value",[fresh]),true);
+  assert.equal(await scalar<number>('select count(*)::int as value from public.worker_access_ips where user_id=$1',[fresh]),0);
+  await db.query('select public.bootstrap_worker($1)',[fresh]);
+  await db.query("select public.record_worker_access($1,'4.2.2.2')",[fresh]);
+  assert.equal(await scalar<number>('select count(*)::int as value from public.worker_access_ips where user_id=$1',[fresh]),1);
+  await assert.rejects(db.query("select public.record_worker_access($1,'4.2.2.2')",[unconfirmed]),/account_inactive/);
+  await assert.rejects(db.query("select public.record_worker_access('ffffffff-ffff-4fff-8fff-ffffffffffff','4.2.2.2')"),/account_inactive/);
+});

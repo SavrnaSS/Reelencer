@@ -11,7 +11,7 @@ const COOLDOWN_SECONDS = 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Asks the server to (re)send a confirmation link. Same answer for every address; only throttling/mail errors surface. */
-export async function requestConfirmationEmail(email: string, kind: "confirm" | "reset" = "confirm"): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function requestConfirmationEmail(email: string, kind: "confirm" | "reset" | "signin" = "confirm"): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const res = await fetch(kind === "reset" ? "/api/auth/password-reset" : "/api/auth/resend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }) });
     if (res.ok) return { ok: true };
@@ -243,7 +243,7 @@ export function CheckInbox({ email, onChangeEmail }: { email: string; onChangeEm
 }
 
 /** Standalone "send me a new link" form (expired links, unconfirmed log-in attempts). */
-export function ResendConfirmation({ initialEmail = "", compact = false, kind = "confirm" }: { initialEmail?: string; compact?: boolean; kind?: "confirm" | "reset" }) {
+export function ResendConfirmation({ initialEmail = "", compact = false, kind = "confirm" }: { initialEmail?: string; compact?: boolean; kind?: "confirm" | "reset" | "signin" }) {
   const [email, setEmail] = useState(initialEmail);
   const [left, restart] = useCooldown();
   const [sending, setSending] = useState(false);
@@ -264,7 +264,9 @@ export function ResendConfirmation({ initialEmail = "", compact = false, kind = 
       text: result.ok
         ? kind === "reset"
           ? `If ${trimmed} has a Reelencer account, a reset link is on its way.`
-          : `If ${trimmed} has an account waiting for confirmation, a new link is on its way.`
+          : kind === "signin"
+            ? `If ${trimmed} has a Reelencer account, a fresh sign-in link is on its way. Use the newest email.`
+            : `If ${trimmed} has an account waiting for confirmation, a new link is on its way.`
         : result.error,
       n: (prev?.n ?? 0) + 1,
     }));
@@ -275,7 +277,7 @@ export function ResendConfirmation({ initialEmail = "", compact = false, kind = 
     return (
       <div className="grid gap-2">
         <button type="button" onClick={() => void submit()} disabled={sending || left > 0} className={secondaryBtn}>
-          {sending ? "Sending…" : left > 0 ? `Resend in ${left}s` : "Resend confirmation email"}
+          {sending ? "Sending…" : left > 0 ? `Resend in ${left}s` : kind === "signin" ? "Send a new sign-in link" : "Resend confirmation email"}
         </button>
         {note && <AuthFeedback key={note.n} tone={note.tone} message={note.text} />}
       </div>
@@ -300,7 +302,7 @@ export function ResendConfirmation({ initialEmail = "", compact = false, kind = 
       </AuthField>
       {note && <AuthFeedback key={note.n} tone={note.tone} message={note.text} />}
       <button type="submit" disabled={sending || left > 0} aria-busy={sending} className={primaryBtn}>
-        {sending ? "Sending…" : left > 0 ? `Resend in ${left}s` : kind === "reset" ? "Send a new reset link" : "Send a new link"}
+        {sending ? "Sending…" : left > 0 ? `Resend in ${left}s` : kind === "reset" ? "Send a new reset link" : kind === "signin" ? "Send a new sign-in link" : "Send a new link"}
       </button>
     </form>
   );

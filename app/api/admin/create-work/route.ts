@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { resolveWorkerUserId } from "@/lib/api/work";
+import { resolveActiveWorkerUserId } from "@/lib/api/work";
 import { withApi } from "@/lib/api/route";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminAuth";
@@ -37,7 +37,7 @@ async function handlePOST(req: NextRequest) {
     title,
     type: b?.type ?? "Reel posting",
     account_id: accountId,
-    worker_id: await resolveWorkerUserId(workerId),
+    worker_id: await resolveActiveWorkerUserId(workerId),
     created_by: adminId,
     due_at: b?.dueAt, // should be ISO
     status: "Open",

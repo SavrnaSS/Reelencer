@@ -1,5 +1,6 @@
 import "server-only";
 import { canonicalInstagramReelUrl } from "@/lib/socialAnalytics";
+import { SocialSyncError } from "@/lib/socialSyncSchedule";
 
 type Row = Record<string, unknown>;
 export type ProfilePost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number };
@@ -121,8 +122,12 @@ async function readPage(path: string, signal: AbortSignal): Promise<string> {
       signal, cache: "no-store", redirect: "manual",
     });
   } catch { throw new Error("Instagram profile could not be reached. Try later or update from screenshots."); }
-  if (response.status === 429) throw new Error("Instagram has temporarily limited profile reads. Automatic sync will retry later; use screenshots meanwhile.");
-  if (response.status >= 300 && response.status < 400) throw new Error("Instagram redirected this profile read, possibly to login. Use screenshots or retry later.");
+  if (response.status === 429) {
+    const retry = response.headers.get("retry-after");
+    const delay = retry && /^\d+$/.test(retry) ? Number(retry) * 1000 : retry ? Math.max(0, Date.parse(retry) - Date.now()) : 0;
+    throw new SocialSyncError("Instagram has temporarily limited profile reads. Automatic sync will retry later; use screenshots meanwhile.", "rate_limited", delay || 0);
+  }
+  if (response.status >= 300 && response.status < 400) throw new SocialSyncError("Instagram redirected this profile read to a page that may require login. Connect the Instagram API in Auto-sync for eligible professional accounts, or add insight screenshots.", "login_required");
   if (!response.ok) throw new Error(`Instagram profile is unavailable (${response.status}). Check the handle or update from screenshots.`);
   if (!response.headers.get("content-type")?.includes("text/html")) throw new Error("Instagram returned an unreadable profile page.");
   // Bound untrusted response size without first buffering an unlimited body.
@@ -205,13 +210,13 @@ function postPath(input: string): string | undefined {
 const stopsReads = (error: unknown) => /limited|redirected/i.test(error instanceof Error ? error.message : "");
 
 /** Fetch a submitted reel directly; its owner and shortcode must match before any numbers are accepted. */
-export async function fetchInstagramReel(input: string, url: string): Promise<ProfilePost | undefined> {
+export async function fetchInstagramReel(input: string, url: string, options: { signal?: AbortSignal } = {}): Promise<ProfilePost | undefined> {
   const handle = normalizeInstagramHandle(input);
   const canonical = canonicalInstagramReelUrl(url);
   if (!canonical) throw new Error("Paste a valid Instagram reel link.");
   const path = new URL(canonical).pathname;
   const code = path.split("/")[2];
-  const signal = AbortSignal.timeout(8000);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
   let embedded: ProfilePost | undefined;
   try {
     embedded = extractInstagramPost(await readPage(`${path}embed/`, signal), handle, code);
@@ -229,12 +234,29 @@ export async function fetchInstagramReel(input: string, url: string): Promise<Pr
   return embedded ? { ...embedded, url: canonical } : undefined;
 }
 
-export async function fetchInstagramProfile(input: string, trackedUrls: string[] = [], options: { publishedAfter?: number } = {}): Promise<InstagramProfile> {
+export async function fetchInstagramProfile(input: string, trackedUrls: string[] = [], options: { publishedAfter?: number; signal?: AbortSignal } = {}): Promise<InstagramProfile> {
   const handle = normalizeInstagramHandle(input);
   // All page reads share one time budget so background refresh cannot fan out indefinitely.
-  const signal = AbortSignal.timeout(8000);
-  const html = await readPage(`/${handle}/`, signal);
-  const profile = extractInstagramProfile(html, handle);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
+  let html: string;
+  let profile: InstagramProfile;
+  let usedEmbed = false;
+  try {
+    html = await readPage(`/${handle}/`, AbortSignal.any([signal, AbortSignal.timeout(3500)]));
+    profile = extractInstagramProfile(html, handle);
+  } catch (error) {
+    // One public embed fallback can survive a profile login wall. Rate limits are always respected.
+    if (signal.aborted || (error instanceof SocialSyncError && error.code === "rate_limited") || /\(404\)/.test(error instanceof Error ? error.message : "")) throw error;
+    try {
+      html = await readPage(`/${handle}/embed/`, AbortSignal.any([signal, AbortSignal.timeout(2500)]));
+      profile = extractInstagramProfile(html, handle);
+      profile.note += " Read from the public profile embed because the main profile was unavailable.";
+      usedEmbed = true;
+    } catch (fallbackError) {
+      if (fallbackError instanceof SocialSyncError && fallbackError.code === "rate_limited") throw fallbackError;
+      throw error;
+    }
+  }
   if (profile.note.includes("account is private")) return profile;
   const mergeMedia = (media: ProfilePost) => {
     const existing = profile.media.find((post) => post.externalId === media.externalId);
@@ -257,7 +279,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
   collect(html);
   let blocked = false;
   if (profile.posts !== 0 && !signal.aborted) {
-    try { collect(await readPage(`/${handle}/embed/`, AbortSignal.any([signal, AbortSignal.timeout(2500)]))); }
+    try { if (!usedEmbed) collect(await readPage(`/${handle}/embed/`, AbortSignal.any([signal, AbortSignal.timeout(2500)]))); }
     catch (error) { blocked = stopsReads(error); }
     // The profile feed can be pinned, cached, or omit reels shared only to the Reels tab.
     if (!blocked && !signal.aborted) {

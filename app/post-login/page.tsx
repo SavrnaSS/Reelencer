@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 
 type StepState = "pending" | "active" | "done" | "error";
 type ProgressStep = { id: string; label: string; state: StepState };
-type PostLoginResponse = { redirectTo?: string; error?: string };
+type PostLoginResponse = { redirectTo?: string; error?: string; role?: "Admin" | "Worker"; workerCode?: string; name?: string };
 
 function parsePostLoginResponse(text: string): PostLoginResponse | null {
   if (!text) return null;
@@ -18,6 +18,9 @@ function parsePostLoginResponse(text: string): PostLoginResponse | null {
     return {
       redirectTo: typeof obj.redirectTo === "string" ? obj.redirectTo : undefined,
       error: typeof obj.error === "string" ? obj.error : undefined,
+      role: obj.role === "Admin" || obj.role === "Worker" ? obj.role : undefined,
+      workerCode: typeof obj.workerCode === "string" ? obj.workerCode : typeof obj.worker_code === "string" ? obj.worker_code : undefined,
+      name: typeof obj.display_name === "string" ? obj.display_name : undefined,
     };
   } catch {
     return null;
@@ -77,6 +80,7 @@ export default function PostLoginPage() {
 
       const text = await res.text();
       const payload = parsePostLoginResponse(text);
+      if (cancelled) return;
 
       if (!res.ok || !payload?.redirectTo) {
         const reason = payload?.error || `Post-login failed (HTTP ${res.status}).`;
@@ -86,6 +90,17 @@ export default function PostLoginPage() {
         return;
       }
 
+      if (payload.role) {
+        try {
+          window.localStorage.setItem("igops:auth", JSON.stringify({
+            role: payload.role,
+            ...(payload.role === "Worker" && payload.workerCode ? { workerId: payload.workerCode } : {}),
+            email: session.user.email?.trim().toLowerCase(),
+            name: payload.name || session.user.user_metadata?.name || session.user.user_metadata?.full_name || "",
+            at: Date.now(),
+          }));
+        } catch { /* Identity hints speed up the UI; API access always uses the real session. */ }
+      }
       setActiveStep(3);
       setMsg("Redirecting to your dashboard...");
       router.replace(payload.redirectTo);

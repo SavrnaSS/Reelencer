@@ -3,29 +3,24 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { EmailOtpType } from "@supabase/supabase-js";
 import { AuthShell } from "@/app/_components/AuthShell";
 import { ResendConfirmation, SignupProgress } from "@/app/_components/ResendConfirmation";
 import { clearAuthEmail, readAuthEmail } from "@/lib/authEmailHandoff";
 import { FIND_GIGS_HREF } from "@/lib/routes";
 import { AUTH_LINK_TTL } from "@/lib/authLinkTtl";
+import { authEmailIntent, readAuthEmailLink, type AuthEmailIntent } from "@/lib/authEmailLinks";
 import { supabase } from "@/lib/supabaseClient";
 
-const OTP_TYPES: EmailOtpType[] = ["signup", "magiclink", "email", "invite", "email_change", "recovery"];
 const REDIRECT_SECONDS = 3;
-
-/** Only same-site paths are allowed as the post-confirmation destination. */
-function safeNext(raw: string | null) {
-  return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/post-login";
-}
 
 type State =
   | { phase: "verifying"; step: 0 | 1 | 2 }
   | { phase: "done"; name: string }
-  | { phase: "failed"; reason: "expired" | "invalid" };
+  | { phase: "failed"; reason: "expired" | "invalid" | "unavailable" };
 
 const CHECKS = ["Checking your secure link", "Activating your account", "Signing you in"] as const;
 const RESET_CHECKS = ["Checking your reset link", "Verifying it's you", "Opening the new-password screen"] as const;
+const SIGNIN_CHECKS = ["Checking your secure link", "Verifying your account", "Opening your workspace"] as const;
 
 const shellLinks = { loginHref: "/login?next=/", signupHref: "/signup?next=/" } as const;
 
@@ -55,44 +50,66 @@ function ConfirmInner() {
   const searchParams = useSearchParams();
   const [state, setState] = useState<State>({ phase: "verifying", step: 0 });
   const [left, setLeft] = useState(REDIRECT_SECONDS);
-  // Password-reset links share this page but skip the sign-up celebration and go straight to /reset-password.
-  const [isReset, setIsReset] = useState(false);
+  const [intent, setIntent] = useState<AuthEmailIntent>(() => authEmailIntent(searchParams?.get("intent") ?? null, searchParams?.get("type") ?? null));
+  const isReset = intent === "reset";
+  const isSignin = intent === "signin";
+  const [attempt, setAttempt] = useState(0);
   const nextRef = useRef("/post-login");
-  const startedRef = useRef(false);
+  const linkRef = useRef<ReturnType<typeof readAuthEmailLink> | null>(null);
+  const verificationRef = useRef<{ attempt: number; result: ReturnType<typeof supabase.auth.verifyOtp> } | null>(null);
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    const tokenHash = searchParams?.get("token_hash");
-    const type = searchParams?.get("type") as EmailOtpType | null;
-    nextRef.current = safeNext(searchParams?.get("next") ?? null);
-    // Tokens are single-use: take them out of the address bar right away.
-    window.history.replaceState(window.history.state, "", "/auth/confirm");
+    // Retain the credential only in memory. Strict Mode and URL cleanup may replay this effect;
+    // subscribe to the same request rather than redeeming a single-use token twice.
+    const link = linkRef.current ??= readAuthEmailLink(window.location.href);
+    setIntent(link.intent);
+    nextRef.current = link.next;
+    window.history.replaceState(window.history.state, "", link.cleanPath);
+    if (!link.tokenHash || !link.type) {
+      setState({ phase: "failed", reason: "invalid" });
+      return;
+    }
+    if (verificationRef.current?.attempt !== attempt) {
+      verificationRef.current = { attempt, result: supabase.auth.verifyOtp({ token_hash: link.tokenHash, type: link.type }) };
+    }
+    const request = verificationRef.current.result;
+    let active = true;
+    let successTimer: number | undefined;
+    setState({ phase: "verifying", step: 1 });
 
     void (async () => {
-      if (!tokenHash || !type || !OTP_TYPES.includes(type)) {
-        setState({ phase: "failed", reason: "invalid" });
-        return;
+      try {
+        const { data, error } = await request;
+        if (!active) return;
+        if (error) throw error;
+        if (!data.session?.access_token || !data.user?.id) throw new Error("The link did not create a sign-in session.");
+        setState({ phase: "verifying", step: 2 });
+        clearAuthEmail();
+        // Email links can switch accounts in a shared browser. The authenticated post-login
+        // response rebuilds identity; never show the previous user's cached applications.
+        try {
+          window.localStorage.removeItem("igops:auth");
+          window.localStorage.removeItem("igops:gig-apps");
+        } catch { /* Browser storage is optional; Supabase still owns the authenticated session. */ }
+        if (link.intent !== "confirm") {
+          // verifyOtp persists the session before resolving. Post-login enforces account access
+          // and chooses the correct creator/admin destination even in a brand-new browser.
+          router.replace(link.next);
+          return;
+        }
+        const meta = data.user.user_metadata ?? {};
+        const name = String(meta.name ?? meta.full_name ?? "").trim().split(/\s+/)[0] ?? "";
+        successTimer = window.setTimeout(() => { if (active) setState({ phase: "done", name }); }, 450);
+      } catch (error) {
+        if (!active) return;
+        const detail = error as { message?: string; status?: number; code?: string };
+        const unavailable = detail.status === 0 || detail.status === 429 || (detail.status ?? 0) >= 500 || /network|fetch|offline|timeout/i.test(detail.message ?? "");
+        const expired = detail.code === "otp_expired" || /expired|already.*used|invalid.*(?:token|otp)/i.test(detail.message ?? "");
+        setState({ phase: "failed", reason: unavailable ? "unavailable" : expired ? "expired" : "invalid" });
       }
-      setIsReset(type === "recovery");
-      setState({ phase: "verifying", step: 1 });
-      const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-      if (error) {
-        setState({ phase: "failed", reason: /expired|invalid/i.test(error.message) ? "expired" : "invalid" });
-        return;
-      }
-      setState({ phase: "verifying", step: 2 });
-      if (type === "recovery") {
-        router.replace(nextRef.current);
-        return;
-      }
-      clearAuthEmail();
-      const meta = data.user?.user_metadata ?? {};
-      const name = String(meta.name ?? meta.full_name ?? "").trim().split(/\s+/)[0] ?? "";
-      // A beat on the last check so the checklist reads as finished before the success state.
-      window.setTimeout(() => setState({ phase: "done", name }), 450);
     })();
-  }, [router, searchParams]);
+    return () => { active = false; window.clearTimeout(successTimer); };
+  }, [router, searchParams, attempt]);
 
   // Count down, then continue to the workspace (the button skips the wait). The tick only updates state;
   // navigating happens in its own effect, never inside a state updater (which React may run during render).
@@ -108,15 +125,17 @@ function ConfirmInner() {
 
   if (state.phase === "failed") {
     const expired = state.reason === "expired";
+    const unavailable = state.reason === "unavailable";
+    const linkName = isReset ? "reset" : isSignin ? "sign-in" : "confirmation";
     return (
       <AuthShell
-        mode={isReset ? "login" : "signup"}
+        mode={isReset || isSignin ? "login" : "signup"}
         {...shellLinks}
-        title={`This ${isReset ? "reset " : ""}link ${expired ? "has expired" : "didn't work"}`}
-        subtitle="No problem, we'll send you a fresh one."
+        title={unavailable ? "We couldn't connect right now" : `This ${linkName} link ${expired ? "has expired" : "didn't work"}`}
+        subtitle={unavailable ? "Check your connection and try this link again." : "Request a fresh link to continue securely."}
         footer={
           <>
-            {isReset ? "Remembered it?" : "Already confirmed?"}{" "}
+            {isReset || isSignin ? "Prefer your password?" : "Already confirmed?"}{" "}
             <Link href="/login?next=/" className="font-bold text-[#aef07f] transition hover:text-white">
               Log in
             </Link>
@@ -124,7 +143,7 @@ function ConfirmInner() {
         }
       >
         <div className="grid gap-5 sm:gap-6">
-          {!isReset && <SignupProgress current={1} />}
+          {intent === "confirm" && <SignupProgress current={1} />}
           <StatusCard
             tone="warning"
             badge={
@@ -140,15 +159,16 @@ function ConfirmInner() {
             }
           >
             <div className="grid gap-1.5" role="status">
-              <p className="text-[0.98rem] font-bold text-white">{expired ? `${isReset ? "Reset" : "Confirmation"} links last ${AUTH_LINK_TTL}` : "We couldn't read this link"}</p>
+              <p className="text-[0.98rem] font-bold text-white">{unavailable ? "Your link couldn't be checked" : expired ? `${isReset ? "Reset" : isSignin ? "Sign-in" : "Confirmation"} links last ${AUTH_LINK_TTL}` : "We couldn't read this link"}</p>
               <p className="mx-auto max-w-[24rem] text-balance text-[0.85rem] leading-relaxed text-white/60">
-                {expired
+                {unavailable ? "A connection issue interrupted verification. Try again, or request a new email below if the link has already been used." : expired
                   ? "Each link also works only once, so an older email or a second click won't work. Request a new link below and use the newest email."
                   : "It may be incomplete (some email apps split long links) or from an older email. Request a new link below and use the newest email."}
               </p>
             </div>
           </StatusCard>
-          <ResendConfirmation initialEmail={readAuthEmail() ?? ""} kind={isReset ? "reset" : "confirm"} />
+          {unavailable ? <button type="button" className={primaryBtn} onClick={() => setAttempt(value => value + 1)}>Try this link again</button> : null}
+          <ResendConfirmation initialEmail={readAuthEmail() ?? ""} kind={intent} />
         </div>
       </AuthShell>
     );
@@ -199,9 +219,9 @@ function ConfirmInner() {
   }
 
   return (
-    <AuthShell mode={isReset ? "login" : "signup"} {...shellLinks} title={isReset ? "Checking your reset link" : "Confirming your email"} subtitle="Hang tight, this only takes a second.">
+    <AuthShell mode={isReset || isSignin ? "login" : "signup"} {...shellLinks} title={isReset ? "Checking your reset link" : isSignin ? "Signing you in" : "Confirming your email"} subtitle="Hang tight, this only takes a second.">
       <div className="grid gap-5 sm:gap-6">
-        {!isReset && <SignupProgress current={1} />}
+        {intent === "confirm" && <SignupProgress current={1} />}
         <StatusCard
           tone="pending"
           badge={
@@ -217,7 +237,7 @@ function ConfirmInner() {
           }
         >
           <ul className="grid w-full max-w-[17rem] gap-2.5 text-left" role="status" aria-live="polite">
-            {(isReset ? RESET_CHECKS : CHECKS).map((label, index) => {
+            {(isReset ? RESET_CHECKS : isSignin ? SIGNIN_CHECKS : CHECKS).map((label, index) => {
               const done = index < state.step;
               const active = index === state.step;
               return (
