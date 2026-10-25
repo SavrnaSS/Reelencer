@@ -747,7 +747,9 @@ export default function GigAdminConsole({
   useAdminLive(adminReady && active, kinds => {
     if (!kinds) void loadGigs({ afterCurrent: true });
     if (!kinds || kinds.has("worker_kyc")) void fetchKyc({ preserveFeedback: true, afterCurrent: true });
-    if (!kinds || kinds.has("gig_applications")) void loadApps({ announce: true, afterCurrent: true });
+    if (!kinds || kinds.has("gig_applications") || kinds.has("worker_moderation") || kinds.has("worker_deletion_jobs")) {
+      void loadApps({ announce: !kinds?.has("worker_moderation"), afterCurrent: true });
+    }
     if (!kinds || kinds.has("gig_assignments") || kinds.has("gig_account_credentials")) void loadAssignments({ afterCurrent: true });
     if (!kinds || kinds.has("social_account_requests")) void loadLinkedSummary({ afterCurrent: true });
     window.dispatchEvent(new CustomEvent<AdminLiveKind[] | null>("admin-live", { detail: kinds ? [...kinds] : null }));
@@ -2772,7 +2774,7 @@ export default function GigAdminConsole({
               <div className="min-w-0">
                 <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-[#1a201c] sm:text-[22px]">Applications</h1>
                 <p className="mt-0.5 max-w-[70ch] text-[13px] text-[#616a64]">
-                  Screen applicants, message them in bulk and let rules handle the repetitive moves.
+                  Review applications from current workers, send updates in bulk and automate follow-ups.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

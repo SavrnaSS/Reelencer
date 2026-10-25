@@ -1,6 +1,7 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ApiError, databaseError } from "@/lib/api/errors";
+import { readCurrentApplications } from "@/lib/api/applicationReads";
 import { applyApplicationUpdate, decodeWorkerName, type ApplicationUpdates, type ProposalPayload } from "@/lib/api/gigApplications";
 import { ACTIONS, matchesConditions, sanitizeConditions, type BulkAction, type MatchableApplication, type RuleConditions } from "@/lib/applicationAutomationRules";
 
@@ -97,9 +98,7 @@ async function selectAll(build: (from: number, to: number) => PromiseLike<{ data
 
 export async function loadAutomationApplications(): Promise<AutomationApplication[]> {
   const sb = supabaseAdmin();
-  const rows = await selectAll((from, to) =>
-    sb.from("gig_applications").select("id,gig_id,worker_code,worker_name,status,applied_at,decided_at").order("applied_at", { ascending: false }).range(from, to),
-  );
+  const rows = await readCurrentApplications(sb);
   return rows.map((r) => {
     const decoded = decodeWorkerName(r.worker_name);
     return {

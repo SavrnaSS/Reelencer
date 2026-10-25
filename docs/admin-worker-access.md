@@ -12,6 +12,10 @@ Actions require the verified administrator identity. Self moderation and adminis
 
 Suspension stops new assignments and planned work. The scheduler skips inactive workers and continues processing active workers. Suspended accounts keep their records; the seven-day removal policy applies to accounts explicitly marked Deleted.
 
+## Application visibility
+
+Apply `202610250003_current_worker_applications.sql` with the application update. Deleted workers leave the Applications queue, its counts, gig applicant totals, bulk selections and automation matches immediately. Their retained applications are still stored during the seven-day restore window and reappear when access is restored. The service-only `current_gig_applications` view resolves current identities by worker code, user ID and legacy email or encoded owner metadata; records without a current identity remain outside the operational queue. Reads filter before pagination, and database guards reject stale application updates after deletion. Moderation and cleanup events refresh the queue automatically.
+
 ## Automatic permanent removal
 
 Apply `202610250002_worker_permanent_deletion.sql`. Existing Deleted users are queued using their original `deleted_at`, so a deployment does not restart or shorten their seven-day window. Each deadline is exactly 168 hours after deletion. A background job runs after that deadline; no force/early-delete endpoint is exposed.

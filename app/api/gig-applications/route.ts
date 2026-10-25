@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { resolveWorkerUserId } from "@/lib/api/work";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { decodePublicWorkerName } from "@/lib/api/accountSetup";
+import { readCurrentApplications } from "@/lib/api/applicationReads";
 import {
   getDevDashboardApplications,
   isDashboardDevMode,
@@ -19,7 +20,6 @@ import {
   hasMeaningfulProposalSubmission,
   resolveNotificationContext,
   sendLifecycleNotification,
-  type DbRecord,
   type MailStatus,
 } from "@/lib/api/gigApplications";
 
@@ -33,14 +33,8 @@ async function handleGET(req: Request) {
   }
 
   const sb = supabaseAdmin();
-  let query = sb.from("gig_applications").select("*").order("applied_at", { ascending: false });
-  if (gigId) query = query.eq("gig_id", gigId);
-  if (workerId) query = actor.isAdmin ? query.eq("worker_code", workerId) : query.in("worker_code", actor.aliases);
-  const { data, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
-  }
-  const payload = ((data ?? []) as DbRecord[]).map((a) => ({
+  const data = await readCurrentApplications(sb, { gigId, workerAliases: workerId ? actor.isAdmin ? [workerId] : actor.aliases : undefined });
+  const payload = data.map((a) => ({
     ...(decodePublicWorkerName(a.worker_name)),
     id: String(a.id),
     gigId: String(a.gig_id),

@@ -306,7 +306,7 @@ export async function applyApplicationUpdate(actor: ApplicationActor, id: string
   let updates: ApplicationUpdates = requestedUpdates ?? {};
   const sb = supabaseAdmin();
   const { data: prevRow, error: previousError } = await sb
-    .from("gig_applications")
+    .from("current_gig_applications")
     .select("*")
     .eq("id", id)
     .maybeSingle();

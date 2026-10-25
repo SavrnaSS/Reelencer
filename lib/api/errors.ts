@@ -37,6 +37,7 @@ export function databaseError(error: { code?: string; message?: string } | null)
       history_exists: [409, "This account has work history and cannot be deleted. Unassign it to stop new work."],
       worker_history_exists: [409, "This worker has work or verification history and cannot be permanently deleted."],
       worker_inactive: [409, "Restore this worker's access before assigning accounts or creating work."],
+      worker_deleted: [409, "This worker has been deleted. Refresh applications before continuing."],
       documents_required: [400, "Upload your identity document and selfie before submitting verification."],
     };
     const match = messages[error.message ?? ""];
