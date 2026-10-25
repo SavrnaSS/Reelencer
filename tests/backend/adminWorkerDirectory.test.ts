@@ -7,6 +7,7 @@ import {
   updateWorkerSelection,
   workerAccessStatus,
   workerDirectoryCsv,
+  currentWorkerRecords,
   type WorkerDirectoryRecord,
 } from "../../lib/adminWorkerDirectory";
 
@@ -15,6 +16,14 @@ const worker = (id: string, overrides: Partial<WorkerDirectoryRecord> = {}): Wor
   accountCount: 0, submittedCount: 0, resubmitCount: 0, approvedINR: 0, ...overrides,
 });
 const defaults = { status: "current", assignment: "all", payment: "all", sort: "name_asc" } as const;
+
+test("operational worker lists exclude deleted accounts before limiting and preserve suspended users and source records", () => {
+  const deleted = Array.from({ length: 6 }, (_, index) => worker(`deleted-${index}`, { active: true, moderationStatus: "deleted" }));
+  const rows = [...deleted, worker("active"), worker("suspended", { active: false, moderationStatus: "suspended" })];
+  assert.deepEqual(currentWorkerRecords(rows).slice(0, 6).map(row => row.id), ["active", "suspended"]);
+  assert.equal(rows.length, 8, "The restore directory retains the original records");
+  assert.deepEqual(currentWorkerRecords(deleted), []);
+});
 
 test("directory access status never lets an active moderation label override disabled access", () => {
   assert.equal(workerAccessStatus(worker("active")), "active");

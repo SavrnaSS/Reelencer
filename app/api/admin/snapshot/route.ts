@@ -4,6 +4,7 @@ import { databaseError } from '@/lib/api/errors';
 import { workItemResponse } from '@/lib/api/work';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { getAdminWorkers } from '../_workers';
+import { currentWorkerRecords } from '@/lib/adminWorkerDirectory';
 
 export const GET=withApi({auth:'admin'},async()=>{
   const sb=supabaseAdmin();
@@ -20,7 +21,7 @@ export const GET=withApi({auth:'admin'},async()=>{
   for(const row of [...(assignments.data??[]),...(legacy.data??[])]) {
     unique.set(row.worker_id+':'+row.account_id,{workerId:codes.get(row.worker_id)??row.worker_id,accountId:row.account_id,schedule:row.schedule});
   }
-  return NextResponse.json({ok:true,workers,
+  return NextResponse.json({ok:true,workers:currentWorkerRecords(workers),
     accounts:(accounts.data??[]).map(a=>({id:a.id,handle:a.handle,niche:a.niche,ownerTeam:a.owner_team,policyTier:a.policy_tier,health:a.health,rules:a.rules,allowedAudios:a.allowed_audios,requiredHashtags:a.required_hashtags})),
     assignments:[...unique.values()],
     workItems:(items.data??[]).map(row=>workItemResponse(row,codes.get(row.worker_id)??row.worker_id)),

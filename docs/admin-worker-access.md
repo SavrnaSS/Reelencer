@@ -12,6 +12,8 @@ Actions require the verified administrator identity. Self moderation and adminis
 
 Suspension stops new assignments and planned work. The scheduler skips inactive workers and continues processing active workers. Suspended accounts keep their records; the seven-day removal policy applies to accounts explicitly marked Deleted.
 
+Overview snapshots, assignment lists and work selectors show current workers only. The admin worker API excludes Deleted accounts by default; the restoration directory explicitly requests `includeDeleted=true`. Deleted accounts therefore stay available in the Workers management view without occupying overview cards or operational pickers. Snapshot history keeps its original worker aliases and approved earnings. A deletion arriving during a refresh queues another read so stale results cannot remain until the next poll.
+
 ## Application visibility
 
 Apply `202610250003_current_worker_applications.sql` with the application update. Deleted workers leave the Applications queue, its counts, gig applicant totals, bulk selections and automation matches immediately. Their retained applications are still stored during the seven-day restore window and reappear when access is restored. The service-only `current_gig_applications` view resolves current identities by worker code, user ID and legacy email or encoded owner metadata; records without a current identity remain outside the operational queue. Reads filter before pagination, and database guards reject stale application updates after deletion. Moderation and cleanup events refresh the queue automatically.

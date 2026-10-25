@@ -26,6 +26,11 @@ export function workerAccessStatus(worker: Pick<WorkerDirectoryRecord, "active" 
   return worker.active ? "active" : "suspended";
 }
 
+/** Operational views exclude deleted accounts; the management directory retains the restore window. */
+export function currentWorkerRecords<T extends { moderationStatus?: WorkerAccessStatus }>(workers: readonly T[]): T[] {
+  return workers.filter(worker => worker.moderationStatus !== "deleted");
+}
+
 export function filterWorkerDirectory<T extends WorkerDirectoryRecord>(workers: readonly T[], options: {
   query?: string;
   status: WorkerDirectoryFilter;

@@ -21,6 +21,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, type WorkTiming } from "@/lib/workDates";
 import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
 import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
+import { currentWorkerRecords, workerAccessStatus } from "@/lib/adminWorkerDirectory";
 
 const GigAdminConsole = dynamic(() => import("@/app/addgigs/GigAdminConsole"), {
   loading: () => <AdminSectionLoading />,
@@ -1283,7 +1284,7 @@ function AssignmentsMatrix({
                       ) : (
                         <div className="flex items-center gap-2">
                           <Chip tone="neutral">—</Chip>
-                          <Button variant="secondary" onClick={() => onAssign(w.id, a.id)} title="Assign this account to worker">
+                          <Button variant="secondary" onClick={() => onAssign(w.id, a.id)} disabled={workerAccessStatus(w) !== "active"} title="Assign this account to worker">
                             <Icon name="plus" />
                             Assign
                           </Button>
@@ -1525,6 +1526,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   // data
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const currentWorkers = useMemo(() => currentWorkerRecords(workers), [workers]);
+  const assignableWorkers = useMemo(() => currentWorkers.filter(worker => workerAccessStatus(worker) === "active"), [currentWorkers]);
   const [workerDetailOpen, setWorkerDetailOpen] = useState(false);
   const [accounts, setAccounts] = useState<AssignedAccount[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -1633,15 +1636,16 @@ function AdminConsole({ adminId }: { adminId: string }) {
   }, [router]);
 
   const refreshLock = useRef(false);
+  const snapshotRefreshPending = useRef(false);
   const [snapshotLoaded, setSnapshotLoaded] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const scheduleLock = useRef(false);
-  const loadSnapshot = useCallback(async () => {
-    if (refreshLock.current) return;
+  const loadSnapshot = useCallback(async function refreshSnapshot(): Promise<void> {
+    if (refreshLock.current) { snapshotRefreshPending.current = true; return; }
     refreshLock.current = true;
     const payoutVersionAtStart = payoutVersion.current;
     try {
-      const workersReq = fetchWithAuth<{ ok: boolean; workers: Worker[]; error?: string }>("/api/admin/workers", { method: "GET" });
+      const workersReq = fetchWithAuth<{ ok: boolean; workers: Worker[]; error?: string }>("/api/admin/workers?includeDeleted=true", { method: "GET" });
       const upiReq = fetchWithAuth<{ ok: boolean; upiConfigs: UpiConfig[] }>("/api/admin/upi-configs", { method: "GET" });
       const payoutsReq = fetchWithAuth<{ ok: boolean; payoutBatches: AdminPayoutBatch[] }>("/api/admin/payoutbatches", { method: "GET" });
       // 1) try API snapshot first (kept)
@@ -1728,6 +1732,10 @@ function AdminConsole({ adminId }: { adminId: string }) {
       if (typeof window !== "undefined") {
         window.setTimeout(() => {
           refreshLock.current = false;
+          if (snapshotRefreshPending.current) {
+            snapshotRefreshPending.current = false;
+            void refreshSnapshot();
+          }
         }, 400);
       } else {
         refreshLock.current = false;
@@ -2257,6 +2265,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
   }, [workers, accountsForWorker]);
 
   const selectedWorker = useMemo(() => (selectedWorkerId ? workerById(selectedWorkerId) : null), [selectedWorkerId, workerById]);
+  const operationalWorker = useMemo(() => currentWorkers.find(worker => worker.id === selectedWorkerId) ?? currentWorkers[0] ?? null, [currentWorkers, selectedWorkerId]);
 
   useEffect(() => {
     if (!selectedWorker) return;
@@ -2586,7 +2595,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   const openCreateWork = (prefillWorkerId?: string) => {
     const preferred = prefillWorkerId ?? selectedWorkerId;
-    const wid = workers.find(worker => worker.id === preferred && worker.active)?.id ?? workers.find(worker => worker.active)?.id ?? "";
+    const wid = assignableWorkers.find(worker => worker.id === preferred)?.id ?? assignableWorkers[0]?.id ?? "";
     setCreateWorkWorkerId(wid);
     const firstAcc = accountsForWorker(wid)[0] ?? accounts[0]?.id ?? "";
     setCreateWorkAccountId(firstAcc);
@@ -2603,7 +2612,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const createWork = async () => {
     const wid = createWorkWorkerId.trim();
     const aid = createWorkAccountId.trim();
-    if (!wid || !aid || !createWorkTitle.trim()) return;
+    if (!assignableWorkers.some(worker => worker.id === wid) || !aid || !createWorkTitle.trim()) return;
     const newId = `WI-${Math.floor(1000 + Math.random() * 9000)}`;
     const dueAt = `${today}T${createWorkDueHHMM}`;
     const acc = accountById(aid);
@@ -2781,8 +2790,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const selectedDirectoryWorker = workerDirectoryRows.find(worker => worker.id === selectedWorkerId);
 
   const workForSelectedWorker = useMemo(() => {
-    if (!selectedWorkerId) return [];
-    let arr = workItems.filter((w) => w.workerId === selectedWorkerId);
+    if (!operationalWorker) return [];
+    let arr = workItems.filter((w) => w.workerId === operationalWorker.id || w.workerId === operationalWorker.userId);
     if (!showCancelled) arr = arr.filter((w) => w.status !== "Cancelled");
     if (ql) {
       arr = arr.filter((w) => {
@@ -2800,7 +2809,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
       return compareWorkDeadlines(a.dueAt, b.dueAt);
     });
-  }, [workItems, selectedWorkerId, ql, accountById, showCancelled]);
+  }, [workItems, operationalWorker, ql, accountById, showCancelled]);
 
   const scheduleRowsForSelected = useMemo(() => {
     if (!selectedWorkerId) return [];
@@ -3107,7 +3116,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                   }
                 >
                   <div className="space-y-3">
-                    {workers.slice(0, 6).map((w) => {
+                    {currentWorkers.slice(0, 6).map((w) => {
                       const assignedCount = accountsForWorker(w.id).length;
                       const pending = workItems.filter((it) => isWorkerMatch(w, it) && isCountedSubmission(it)).length;
                       const resubmits = workItems.filter((it) => isWorkerMatch(w, it) && isResubmission(it)).length;
@@ -3160,14 +3169,14 @@ function AdminConsole({ adminId }: { adminId: string }) {
                         </div>
                       );
                     })}
-                    {workers.length === 0 && <div className="text-sm text-slate-600">Loading workers…</div>}
-                    {workers.length > 6 && (
+                    {currentWorkers.length === 0 && <div className="text-sm text-slate-600">No current workers. Create a worker to get started.</div>}
+                    {currentWorkers.length > 6 && (
                       <button
                         type="button"
                         onClick={() => setActiveSection("Workers")}
                         className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-[13px] font-semibold text-[#2b5d4a] transition hover:bg-[#f3f4f1]"
                       >
-                        View all {workers.length} workers
+                        View all {currentWorkers.length} workers
                         <Icon name="chevRight" className="h-3.5 w-3.5" />
                       </button>
                     )}
@@ -3561,7 +3570,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
             {/* Assignments */}
             {activeSection === "Assignments" && (
               <Card title="Assignments matrix" subtitle="Admin-owned mapping between workers and accounts.">
-                <AssignmentsMatrix workers={workers} accounts={accounts} assignments={assignments} onAssign={assignAccount} onRemove={removeAssignment} />
+                <AssignmentsMatrix workers={currentWorkers} accounts={accounts} assignments={assignments} onAssign={assignAccount} onRemove={removeAssignment} />
               </Card>
             )}
 
@@ -3575,18 +3584,19 @@ function AdminConsole({ adminId }: { adminId: string }) {
                     right={
                       <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                         <select
-                          value={selectedWorkerId ?? ""}
+                          value={operationalWorker?.id ?? ""}
                           onChange={(e) => setSelectedWorkerId(e.target.value || null)}
                           aria-label="Worker"
                           className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-medium text-slate-900 outline-none sm:w-56 sm:flex-none"
                         >
-                          {workers.map((w) => (
+                          {!operationalWorker && <option value="">No current workers</option>}
+                          {currentWorkers.map((w) => (
                             <option key={w.id} value={w.id}>
                               {w.name} ({w.id})
                             </option>
                           ))}
                         </select>
-                        <Button variant="primary" onClick={() => openCreateWork(selectedWorkerId ?? undefined)} disabled={!selectedWorkerId || !selectedWorker?.active}>
+                        <Button variant="primary" onClick={() => openCreateWork(operationalWorker?.id)} disabled={!operationalWorker || workerAccessStatus(operationalWorker) !== "active"}>
                           <Icon name="plus" />
                           Create work
                         </Button>
@@ -4688,7 +4698,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
               <Button variant="secondary" onClick={() => setCreateWorkOpen(false)}>
                 Cancel
               </Button>
-              <Button variant="primary" onClick={createWork} disabled={!createWorkWorkerId || !createWorkAccountId || !createWorkTitle.trim()}>
+              <Button variant="primary" onClick={createWork} disabled={!assignableWorkers.some(worker => worker.id === createWorkWorkerId) || !createWorkAccountId || !createWorkTitle.trim()}>
                 <Icon name="check" />
                 Create
               </Button>
@@ -4699,7 +4709,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
             <div>
               <div className="text-sm font-extrabold text-slate-800">Worker</div>
               <select
-                value={createWorkWorkerId}
+                aria-label="Worker for new work"
+                value={assignableWorkers.some(worker => worker.id === createWorkWorkerId) ? createWorkWorkerId : ""}
                 onChange={(e) => {
                   const wid = e.target.value;
                   setCreateWorkWorkerId(wid);
@@ -4708,7 +4719,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 }}
                 className="mt-2 w-full rounded-md border border-slate-300 bg-white px-3 py-3 text-sm font-extrabold text-slate-900 outline-none"
               >
-                {workers.filter(worker => worker.active).map((w) => (
+                <option value="" disabled>Choose a current worker</option>
+                {assignableWorkers.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name} ({w.id})
                   </option>
