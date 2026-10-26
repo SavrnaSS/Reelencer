@@ -5813,11 +5813,10 @@ export default function DashboardPage() {
                       { label: "Requested changes", body: recruiterExplanation },
                     ].filter((message) => message.body);
                     const timelinePresets = requiresBudget ? ["Within 3 days", "1 week", "2 weeks", "Ongoing monthly"] : ["Start today", "Within 24 hours", "This week", "Flexible"];
+                    const approvedOn = selectedGigApplication?.proposal?.reviewedAt;
                     const headerTitle = applicationLocked
                       ? selectedGigReviewStatus === "Accepted"
-                        ? isDirectApplicationFlow
-                          ? "Application approved"
-                          : "Proposal approved"
+                        ? "You're in. Welcome aboard!"
                         : "Your application"
                       : isDirectApplicationFlow
                         ? "Apply to this gig"
@@ -5826,9 +5825,7 @@ export default function DashboardPage() {
                           : "Send a proposal";
                     const headerDescription = applicationLocked
                       ? selectedGigReviewStatus === "Accepted"
-                        ? isDirectApplicationFlow
-                          ? "Recruiter screening is complete. The next onboarding update from the hiring team will appear here."
-                          : "Your proposal has been approved. The next update from the hiring team will appear here."
+                        ? `${selectedGig.company} approved your ${isDirectApplicationFlow ? "application" : "proposal"} for ${selectedGig.title}${approvedOn ? ` on ${formatDetailedDate(approvedOn)}` : ""}. Your progress and everything you need are below.`
                         : selectedGigReviewStatus === "Rejected"
                           ? isDirectApplicationFlow
                             ? "This application was closed by the hiring team. Review any recruiter notes below."
@@ -5857,9 +5854,18 @@ export default function DashboardPage() {
                         {/* Header */}
                         <div className="flex flex-col gap-3 border-b border-[#ebedea] px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5">
                           <div className="flex min-w-0 items-start gap-3">
-                            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[#2b5d4a]" aria-hidden="true">
-                              <UiIcon.Clipboard className="h-[18px] w-[18px]" />
-                            </span>
+                            {selectedGigReviewStatus === "Accepted" ? (
+                              <span className="dashboard-success-badge relative mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#2e7d4f] text-white" aria-hidden="true">
+                                <span className="dashboard-success-ring absolute inset-0 rounded-full border-2 border-[#2e7d4f]/40" />
+                                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+                                  <path className="dashboard-success-check" d="m5.5 12.5 4.2 4.2L18.5 7.8" />
+                                </svg>
+                              </span>
+                            ) : (
+                              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[#2b5d4a]" aria-hidden="true">
+                                <UiIcon.Clipboard className="h-[18px] w-[18px]" />
+                              </span>
+                            )}
                             <div className="min-w-0">
                               <h2 id="gig-application-title" className="text-[16px] font-semibold text-[#1a201c]">
                                 {headerTitle}
@@ -5970,7 +5976,7 @@ export default function DashboardPage() {
                               </dl>
                               ) : null}
 
-                              {needsAccountSetup && selectedGigApplication ? (
+                              {needsAccountSetup && selectedGigApplication && !(selectedGigReviewStatus === "Accepted" && accountSetup?.status === "Verified") ? (
                                 <AccountSetupPanel
                                   key={selectedGigApplication.id}
                                   gig={selectedGig}
@@ -6067,25 +6073,7 @@ export default function DashboardPage() {
                                     ];
                                     const nextIndex = steps.findIndex((step) => !step.done);
                                     return (
-                                      <div className="overflow-hidden rounded-xl border border-[#b9d5c0]">
-                                        <div className="flex items-start gap-3 bg-[#f1f8ef] p-4 sm:p-5">
-                                          <span className="dashboard-success-badge relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2e7d4f] text-white" aria-hidden="true">
-                                            <span className="dashboard-success-ring absolute inset-0 rounded-full border-2 border-[#2e7d4f]/40" />
-                                            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                                              <path className="dashboard-success-check" d="m5.5 12.5 4.2 4.2L18.5 7.8" />
-                                            </svg>
-                                          </span>
-                                          <div className="min-w-0 flex-1">
-                                            <h3 className="text-[16px] font-semibold text-[#1a201c]">You&apos;re in — congratulations!</h3>
-                                            <p className="mt-0.5 text-[13px] leading-5 text-[#3b443e]">
-                                              {selectedGig.company} approved you for <span className="font-semibold">{selectedGig.title}</span>.{" "}
-                                              {assignment ? "Your assignment is ready." : "Complete the steps below to start work."}
-                                            </p>
-                                          </div>
-                                        </div>
-
-                                        <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} creatorName={profileDisplayName} gigId={String(selectedGig.id)} forReels={isContentPostingGig(selectedGig)} embedded />
-
+                                      <div className="-mx-4 overflow-hidden border-y border-[#b9d5c0] sm:mx-0 sm:rounded-xl sm:border-x">
                                         <div className="@container bg-white">
                                           <div className="grid @2xl:grid-cols-[minmax(0,1fr)_15rem]">
                                             {/* Next steps: a connected tracker; the step to do now is raised with its action. */}
@@ -6195,7 +6183,7 @@ export default function DashboardPage() {
                                                 {([] as Array<[string, string]>)
                                                   .concat(proposal?.budget ? [["Your quote", proposal.budget]] : [])
                                                   .concat(proposal?.timeline ? [[proposalTimelineLabel, proposal.timeline]] : [])
-                                                  .concat([["Approved on", proposal?.reviewedAt ? formatDetailedDate(proposal.reviewedAt) : "Recently"]])
+                                                  .concat(isContentPostingGig(selectedGig) && linkedHandle ? [["Posting on", `@${linkedHandle}`]] : [])
                                                   .map(([label, value]) => (
                                                     <div key={label} className="flex items-baseline justify-between gap-3 border-t border-[#eef1ec] px-3.5 py-2.5">
                                                       <dt className="shrink-0 text-[12px] text-[#7a827c]">{label}</dt>
@@ -6203,8 +6191,17 @@ export default function DashboardPage() {
                                                     </div>
                                                   ))}
                                               </dl>
+                                              {isContentPostingGig(selectedGig) && linkedHandle ? (
+                                                <button type="button" onClick={() => navigateFromView("accounts")} className="mt-2.5 inline-flex min-h-9 items-center gap-1 rounded-md px-0.5 text-[12.5px] font-semibold text-[#2e7d4f] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[#2e7d4f]">
+                                                  View account stats <UiIcon.ChevronRight className="h-3.5 w-3.5" />
+                                                </button>
+                                              ) : null}
                                             </aside>
                                           </div>
+                                        </div>
+
+                                        <div className="border-t border-[#e3efe0]">
+                                          <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} creatorName={profileDisplayName} gigId={String(selectedGig.id)} forReels={isContentPostingGig(selectedGig)} embedded />
                                         </div>
 
                                         {onboardingItems.length ? (
