@@ -33,6 +33,9 @@ import {
 import { AutomationDrawer, MessageDrawer, SmartSelectMenu, useApplicationAutomation } from "./ApplicationBulkTools";
 import { getMyRole } from "@/lib/role";
 import { supabase } from "@/lib/supabaseClient";
+import { MAX_ASSET_NOTE, splitBriefMediaLines, withAssetNote, withReelExample } from "@/lib/gigBriefMedia";
+import { parseReelKit, withReelKit } from "@/lib/reelKit";
+import ReelKitEditor from "./ReelKitEditor";
 import {
   type GigApplicationMode,
   parseGigRequirementMeta,
@@ -455,6 +458,8 @@ export default function GigAdminConsole({
   const [formError, setFormError] = useState<string | null>(null);
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  /** Reference URL whose in-reel example is uploading; it shares mediaUploading so publishing waits for it. */
+  const [reelExampleUploadingFor, setReelExampleUploadingFor] = useState<string | null>(null);
   const [samplesUploading, setSamplesUploading] = useState(false);
   // Success banner after publishing/updating, with links to the listings page.
   const [lastSaved, setLastSaved] = useState<{ kind: "created" | "updated"; id: string; title: string } | null>(null);
@@ -908,6 +913,19 @@ export default function GigAdminConsole({
     return null;
   };
 
+  const uploadBriefFile = useCallback(async (file: File, token: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch("/api/admin/gig-brief-media/upload", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload?.error || `Upload failed for ${file.name}`);
+    return String(payload?.url ?? "").trim();
+  }, []);
+
   const uploadCustomMediaFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
@@ -920,16 +938,7 @@ export default function GigAdminConsole({
 
         const nextUrls: string[] = [];
         for (const file of Array.from(files)) {
-          const formData = new FormData();
-          formData.append("file", file);
-          const res = await fetch("/api/admin/gig-brief-media/upload", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-            body: formData,
-          });
-          const payload = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(payload?.error || `Upload failed for ${file.name}`);
-          const url = String(payload?.url ?? "").trim();
+          const url = await uploadBriefFile(file, token);
           if (url) nextUrls.push(url);
         }
 
@@ -945,7 +954,49 @@ export default function GigAdminConsole({
         setMediaUploading(false);
       }
     },
-    []
+    [uploadBriefFile]
+  );
+
+  /** Uploads the reel kit's example reel; the URL is stored on the kit line, not as a reference picture. */
+  const uploadKitExample = useCallback(
+    async (file: File) => {
+      setMediaUploadError(null);
+      setMediaUploading(true);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) throw new Error("Admin session missing. Please login again.");
+        return (await uploadBriefFile(file, token)) || null;
+      } catch (error: unknown) {
+        setMediaUploadError(error instanceof Error ? error.message : "Example reel upload failed.");
+        return null;
+      } finally {
+        setMediaUploading(false);
+      }
+    },
+    [uploadBriefFile]
+  );
+
+  const uploadReelExample = useCallback(
+    async (forUrl: string, file: File | undefined) => {
+      if (!file) return;
+      setMediaUploadError(null);
+      setMediaUploading(true);
+      setReelExampleUploadingFor(forUrl);
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) throw new Error("Admin session missing. Please login again.");
+        const url = await uploadBriefFile(file, token);
+        if (url) setForm((prev) => ({ ...prev, customMedia: withReelExample(parseCustomRequirementsText(prev.customMedia), forUrl, url).join("\n") }));
+      } catch (error: unknown) {
+        setMediaUploadError(error instanceof Error ? error.message : "Reel example upload failed.");
+      } finally {
+        setMediaUploading(false);
+        setReelExampleUploadingFor(null);
+      }
+    },
+    [uploadBriefFile]
   );
 
   const createGig = async () => {
@@ -2037,34 +2088,120 @@ export default function GigAdminConsole({
                       {mediaUploadError}
                     </div>
                   )}
-                  <div className="mt-3 space-y-2">
-                    {parseCustomRequirementsText(form.customMedia).length === 0 && (
-                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-                        No media uploaded yet.
+                  {(() => {
+                    const lines = parseCustomRequirementsText(form.customMedia);
+                    const { assets: mediaAssets, examples, notes } = splitBriefMediaLines(lines);
+                    const isVideoUrl = (url: string) => /\.(mp4|m4v|mov|webm|ogv)(?:[?#]|$)/i.test(url);
+                    const fileLabel = (url: string) => {
+                      const name = url.split("/").pop()?.split(/[?#]/)[0] ?? "";
+                      try { return decodeURIComponent(name).replace(/^\d{13}-[a-z0-9]{6}-/i, ""); } catch { return name; }
+                    };
+                    const setMediaLines = (next: string[]) => setForm((prev) => ({ ...prev, customMedia: next.join("\n") }));
+                    const thumb = (url: string, className: string) =>
+                      isVideoUrl(url) ? (
+                        <video src={`${url}#t=0.5`} preload="metadata" muted playsInline className={`${className} bg-slate-900 object-cover`} />
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element -- admin preview of an uploaded file on any media host
+                        <img src={url} alt="" className={`${className} bg-slate-100 object-cover`} />
+                      );
+                    return (
+                      <div className="mt-3 space-y-2">
+                        {mediaAssets.length === 0 && (
+                          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                            No media uploaded yet.
+                          </div>
+                        )}
+                        {mediaAssets.length > 0 ? (
+                          <p className="text-[11px] text-slate-500">
+                            Optional: add an <span className="font-semibold text-slate-700">in-reel example</span> for a picture, a 9:16 screenshot or short clip showing how it should appear in the reel. Creators see it in the &ldquo;In a reel&rdquo; view.
+                          </p>
+                        ) : null}
+                        {mediaAssets.map((url, index) => {
+                          const example = examples.get(url);
+                          const uploadingExample = reelExampleUploadingFor === url;
+                          const exampleInputId = `gig-reel-example-${index}`;
+                          return (
+                            <div key={url} className="flex min-w-0 flex-col gap-3 rounded-lg border border-slate-300 bg-slate-50 p-2.5 text-xs text-slate-700 sm:flex-row sm:flex-wrap sm:items-center">
+                              <div className="flex min-w-0 flex-1 items-center gap-3">
+                                {thumb(url, "h-14 w-14 shrink-0 rounded-md border border-slate-200")}
+                                <div className="min-w-0 flex-1">
+                                  <a href={url} target="_blank" rel="noreferrer" className="block truncate font-semibold text-[#2f6655] hover:underline">
+                                    Asset {index + 1}
+                                  </a>
+                                  <div className="truncate text-[11px] text-slate-500">{fileLabel(url)}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="shrink-0 rounded-full border border-slate-300 px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
+                                  onClick={() => setMediaLines(withReelExample(lines.filter((line) => line.trim() !== url), url, null))}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                              {isVideoUrl(url) ? null : (
+                                <div className="flex min-w-0 items-center gap-2 border-t border-slate-200 pt-2.5 sm:w-[15.5rem] sm:shrink-0 sm:border-l sm:border-t-0 sm:pl-3 sm:pt-0">
+                                  {example ? (
+                                    <>
+                                      {thumb(example.url, "h-14 w-8 shrink-0 rounded border border-slate-200")}
+                                      <div className="min-w-0 flex-1">
+                                        <div className="font-semibold text-slate-700">In-reel example</div>
+                                        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1">
+                                          <label htmlFor={exampleInputId} className="cursor-pointer font-semibold text-[#2f6655] hover:underline">{uploadingExample ? "Uploading…" : "Replace"}</label>
+                                          <button type="button" onClick={() => setMediaLines(withReelExample(lines, url, null))} className="font-semibold text-slate-500 hover:text-rose-700">Remove</button>
+                                        </div>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <label
+                                      htmlFor={exampleInputId}
+                                      className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#9cc3ad] bg-white px-3 text-[11.5px] font-semibold text-[#2f6655] hover:bg-[#edf5ef]"
+                                    >
+                                      {uploadingExample ? "Uploading example…" : "+ Add in-reel example"}
+                                    </label>
+                                  )}
+                                  <input
+                                    id={exampleInputId}
+                                    type="file"
+                                    accept="image/*,video/*"
+                                    className="sr-only"
+                                    aria-label={`In-reel example for asset ${index + 1}`}
+                                    disabled={mediaUploading}
+                                    onChange={async (e) => {
+                                      const input = e.currentTarget;
+                                      await uploadReelExample(url, input.files?.[0]);
+                                      input.value = "";
+                                    }}
+                                  />
+                                </div>
+                              )}
+                              <label className="block min-w-0 basis-full">
+                                <span className="flex items-baseline justify-between gap-2 text-[11px] font-semibold text-slate-700">
+                                  What should creators show?
+                                  <span className="font-normal tabular-nums text-slate-400">{(notes.get(url) ?? "").length}/{MAX_ASSET_NOTE}</span>
+                                </span>
+                                <textarea
+                                  rows={2}
+                                  maxLength={MAX_ASSET_NOTE}
+                                  value={notes.get(url) ?? ""}
+                                  onChange={(e) => setMediaLines(withAssetNote(lines, url, e.target.value))}
+                                  placeholder="e.g. Show the Approved earnings card for 2–3 seconds, then the payout breakdown."
+                                  className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs leading-5 text-slate-900 outline-none placeholder:text-slate-400 focus:border-[#2f6655] focus:ring-2 focus:ring-[#2f6655]/20"
+                                />
+                              </label>
+                            </div>
+                          );
+                        })}
                       </div>
-                    )}
-                    {parseCustomRequirementsText(form.customMedia).map((item, index) => (
-                      <div key={`${item}-${index}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                        <a href={item} target="_blank" rel="noreferrer" className="truncate font-semibold text-[#2f6655] hover:underline">
-                          Asset {index + 1}
-                        </a>
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-300 px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400"
-                          onClick={() =>
-                            setForm((prev) => ({
-                              ...prev,
-                              customMedia: parseCustomRequirementsText(prev.customMedia)
-                                .filter((_, i) => i !== index)
-                                .join("\n"),
-                            }))
-                          }
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                    );
+                  })()}
+                  {form.gigType === "Content Posting" ? (
+                    <ReelKitEditor
+                      kit={parseReelKit(parseCustomRequirementsText(form.customMedia))}
+                      onChange={(kit) => setForm((prev) => ({ ...prev, customMedia: withReelKit(parseCustomRequirementsText(prev.customMedia), kit).join("\n") }))}
+                      onUploadExample={uploadKitExample}
+                      uploading={mediaUploading}
+                    />
+                  ) : null}
                   {mediaUploading && <div className="mt-2 text-xs font-semibold text-[#2f6655]">Uploading media...</div>}
                   </div>
                 )}

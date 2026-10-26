@@ -35,7 +35,7 @@ const nextConfig = {
       headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
     }, {
       // Signed-in, admin and auth pages never belong in search results, whichever way a crawler reaches them.
-      source: "/:area(api|admin|addgigs|dashboard|payouts|work-email-creator|workspace|post-login|logout|proceed|auth|reset-password)/:path*",
+      source: "/:area(api|admin|addgigs|dashboard|payouts|work-email-creator|workspace|post-login|logout|proceed|auth|reset-password|reel-kit)/:path*",
       headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
     }, {
       source: "/:area(admin|addgigs|dashboard|payouts|work-email-creator|workspace|post-login|logout|proceed|reset-password)",

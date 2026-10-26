@@ -95,4 +95,5 @@ export const PRIVATE_PATHS = [
   "/proceed",
   "/auth",
   "/reset-password",
+  "/reel-kit",
 ];

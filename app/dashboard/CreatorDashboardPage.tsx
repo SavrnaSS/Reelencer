@@ -1049,8 +1049,6 @@ function DashboardReveal({
 }
 
 
-
-
 function getDisplayName(user?: {
   email?: string | null;
   user_metadata?: { name?: string | null; full_name?: string | null };
@@ -6053,7 +6051,7 @@ export default function DashboardPage() {
                                           </div>
                                         </div>
 
-                                        <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} forReels={isContentPostingGig(selectedGig)} embedded />
+                                        <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} creatorName={profileDisplayName} gigId={String(selectedGig.id)} forReels={isContentPostingGig(selectedGig)} embedded />
 
                                         <div className="grid gap-px bg-[#e3efe0] sm:grid-cols-[minmax(0,1fr)_220px]">
                                           {/* Next steps */}

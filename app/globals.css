@@ -7997,3 +7997,9 @@ html[data-home-theme="light"] .rx-popover-head {
 @media (prefers-reduced-motion: reduce) {
   .rx-burst { animation: none; display: none; }
 }
+
+/* Reel kit: each step's content eases in when the creator moves between steps. */
+@keyframes reelkit-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
