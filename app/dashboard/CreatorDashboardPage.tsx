@@ -1,8 +1,8 @@
 "use client";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
-import { summarizePayoutBatches } from "@/lib/creatorEarnings";
-import { formatAmount as formatINR } from "@/lib/money";
+import { postingProgress, summarizePayoutBatches } from "@/lib/creatorEarnings";
+import { formatAmount as formatINR, formatMoney } from "@/lib/money";
 
 import Link from "next/link";
 import { BrandLogo } from "@/app/_components/BrandLogo";
@@ -5997,9 +5997,15 @@ export default function DashboardPage() {
                                       .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
                                       .filter(Boolean);
                                     // Content Posting work happens on the linked account: post reels, submit them, get paid per approval.
-                                    const linkedHandle = accountSetup?.status === "Verified" ? accountSetup.handle : null;
+                                    const gigAccount = linkedAccounts.find((account) => account.status !== "unlinked" && (String(account.gigId) === String(selectedGig.id) || (!!selectedGigApplication && String(account.applicationId) === String(selectedGigApplication.id)))) ?? null;
+                                    const linkedHandle = (accountSetup?.status === "Verified" ? accountSetup.handle : null) ?? gigAccount?.handle ?? null;
                                     const reelPay = payoutPhrase(selectedGig.payout, selectedGig.payoutType);
-                                    const steps: Array<{ title: string; body: string; done: boolean; action?: { label: string; onClick: () => void } }> = [
+                                    const posting = postingProgress(gigAccount, payoutBatches);
+                                    const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+                                    const money = (amount: number) => formatMoney(amount, posting.symbol);
+                                    type StepStat = { label: string; tone: "neutral" | "good" | "wait" | "bad" };
+                                    type NextStep = { title: string; body: string; done: boolean; action?: { label: string; onClick: () => void }; stats?: StepStat[]; amount?: { value: string; caption: string } };
+                                    const steps: NextStep[] = [
                                       { title: "Approved", body: `${selectedGig.company} accepted your ${isDirectApplicationFlow ? "application" : "proposal"}.`, done: true },
                                       ...(groupLink
                                         ? [{ title: "Join the onboarding group", body: groupJoined ? "You've confirmed you joined." : "Get briefs and instructions from the hiring team.", done: groupJoined }]
@@ -6008,19 +6014,46 @@ export default function DashboardPage() {
                                         ? [
                                             {
                                               title: `${accountPlatformLabel} account linked`,
-                                              body: linkedHandle ? `@${linkedHandle} is verified and linked to your profile.` : "Your account is being linked to your profile.",
+                                              body: linkedHandle ? `@${linkedHandle}, verified` : "Your account is being linked to your profile.",
                                               done: !!linkedHandle,
                                             },
                                             {
                                               title: "Post reels and submit them",
-                                              body: `Post the brief's reels on ${linkedHandle ? `@${linkedHandle}` : "the account"}, then send each reel's link from ${strings.nav.accounts} so it counts.`,
-                                              done: false,
-                                              action: { label: `Open ${strings.nav.accounts}`, onClick: () => navigateFromView("accounts") },
+                                              body: posting.submitted
+                                                ? "Keep posting: every approved reel counts."
+                                                : earningsLoading
+                                                  ? "Checking your submitted reels…"
+                                                  : `Post the brief's reels on ${linkedHandle ? `@${linkedHandle}` : "the account"}, then send each reel's link from ${strings.nav.accounts} so it counts.`,
+                                              done: posting.submitted > 0,
+                                              stats: posting.submitted || posting.rejected
+                                                ? ([
+                                                    { label: `${posting.submitted} submitted`, tone: "neutral" },
+                                                    posting.approved ? { label: `${posting.approved} approved`, tone: "good" } : null,
+                                                    posting.inReview ? { label: `${posting.inReview} in review`, tone: "wait" } : null,
+                                                    posting.rejected ? { label: `${posting.rejected} not accepted`, tone: "bad" } : null,
+                                                  ].filter(Boolean) as StepStat[])
+                                                : undefined,
+                                              action: posting.submitted ? undefined : { label: `Open ${strings.nav.accounts}`, onClick: () => navigateFromView("accounts") },
                                             },
                                             {
-                                              title: "Get paid for approved reels",
-                                              body: `${reelPay ? `You earn ${reelPay}` : "Approved reels are paid"}, credited to your wallet after the team's review.`,
-                                              done: false,
+                                              title: posting.paid ? "Getting paid" : posting.earned || posting.inPayout ? "Earning from approved reels" : "Get paid for approved reels",
+                                              body: posting.paid
+                                                ? posting.inPayout ? `${money(posting.inPayout)} more is in the current payout.` : "Paid to your wallet. New approvals join the next cycle."
+                                                : posting.inPayout
+                                                  ? "In the current payout cycle. It lands in your wallet once it's paid."
+                                                  : posting.earned
+                                                    ? "Credited to your wallet in the next payout cycle."
+                                                    : `${reelPay ? `You earn ${reelPay}` : "Approved reels are paid"}, credited to your wallet after the team's review.`,
+                                              // Earning counts as done: approved reels are already worth money, paid out each cycle.
+                                              done: posting.paid > 0 || posting.inPayout > 0 || posting.earned > 0,
+                                              amount: posting.paid
+                                                ? { value: money(posting.paid), caption: "paid so far" }
+                                                : posting.inPayout
+                                                  ? { value: money(posting.inPayout), caption: "in this payout" }
+                                                  : posting.earned
+                                                    ? { value: money(posting.earned), caption: `earned from ${plural(posting.approved, "approved reel")}` }
+                                                    : undefined,
+                                              action: posting.approved || posting.paid || posting.inPayout ? { label: `Open ${strings.nav.wallet}`, onClick: () => navigateFromView("wallet") } : undefined,
                                             },
                                           ]
                                         : [
@@ -6053,72 +6086,125 @@ export default function DashboardPage() {
 
                                         <GigBriefAssets key={String(selectedGig.id)} requirements={selectedGig.requirements} company={selectedGig.company} creatorName={profileDisplayName} gigId={String(selectedGig.id)} forReels={isContentPostingGig(selectedGig)} embedded />
 
-                                        <div className="grid gap-px bg-[#e3efe0] sm:grid-cols-[minmax(0,1fr)_220px]">
-                                          {/* Next steps */}
-                                          <ol className="space-y-3 bg-white p-4 sm:p-5" aria-label="Next steps">
-                                            {steps.map((step, index) => {
-                                              const current = index === nextIndex;
-                                              return (
-                                                <li key={step.title} className="flex gap-3">
-                                                  <span
-                                                    className={cx(
-                                                      "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
-                                                      step.done ? "bg-[#2e7d4f] text-white" : current ? "bg-[#1f2b24] text-white ring-4 ring-[#1f2b24]/10" : "bg-[#eef0ed] text-[#8a928c]"
-                                                    )}
-                                                    aria-hidden="true"
-                                                  >
-                                                    {step.done ? <UiIcon.Check className="h-3 w-3" /> : index + 1}
-                                                  </span>
-                                                  <div className="min-w-0 flex-1">
-                                                    <div className={cx("text-[13.5px] font-semibold", step.done || current ? "text-[#1a201c]" : "text-[#7a827c]")}>
-                                                      {step.title}
-                                                      <span className="sr-only">{step.done ? " (done)" : current ? " (next)" : ""}</span>
-                                                    </div>
-                                                    <div className="text-[12.5px] leading-5 text-[#616a64]">{step.body}</div>
-                                                    {step.action ? (
-                                                      <button type="button" onClick={step.action.onClick} className={buttonClassName(current ? "primary" : "secondary", "sm", "mt-2")}>
-                                                        {step.action.label}
-                                                      </button>
-                                                    ) : null}
-                                                    {step.title === "Join the onboarding group" && groupLink && !groupJoined ? (
-                                                      <a
-                                                        href={groupLink}
-                                                        target="_blank"
-                                                        rel="noreferrer noopener"
-                                                        className={buttonClassName(current ? "primary" : "secondary", "sm", "mt-2")}
+                                        <div className="@container bg-white">
+                                          <div className="grid @2xl:grid-cols-[minmax(0,1fr)_15rem]">
+                                            {/* Next steps: a connected tracker; the step to do now is raised with its action. */}
+                                            <section aria-labelledby={`next-steps-${selectedGig.id}`} className="min-w-0 p-4 sm:p-5">
+                                              <div className="flex items-center justify-between gap-3">
+                                                <h4 id={`next-steps-${selectedGig.id}`} className="text-[14px] font-semibold text-[#1a201c]">{nextIndex === -1 ? "Your progress" : "Your next steps"}</h4>
+                                                {nextIndex === -1 ? (
+                                                  <span className="inline-flex items-center gap-1 rounded-full bg-[#e3f1df] px-2 py-0.5 text-[11.5px] font-semibold text-[#1f5131]"><UiIcon.Check className="h-3 w-3" />All set</span>
+                                                ) : (
+                                                  <span className="text-[12px] font-medium tabular-nums text-[#616a64]">{steps.filter((step) => step.done).length} of {steps.length} done</span>
+                                                )}
+                                              </div>
+                                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#eef1ed]" aria-hidden="true">
+                                                <div className="h-full rounded-full bg-[#2e7d4f] transition-[width] duration-500" style={{ width: `${(steps.filter((step) => step.done).length / steps.length) * 100}%` }} />
+                                              </div>
+                                              <ol className="mt-4">
+                                                {steps.map((step, index) => {
+                                                  const current = index === nextIndex;
+                                                  const last = index === steps.length - 1;
+                                                  const groupAction = step.title === "Join the onboarding group" && groupLink && !groupJoined;
+                                                  // Finished steps without extra detail fold into one quiet line; detail and the current step get room.
+                                                  const compact = step.done && !step.stats && !step.amount && !step.action;
+                                                  const buttonClass = current ? buttonClassName("primary", "sm", "h-10 w-full @md:h-9 @md:w-auto") : "inline-flex min-h-8 items-center gap-1 rounded-md text-[12.5px] font-semibold text-[#2e7d4f] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[#2e7d4f]";
+                                                  return (
+                                                    <li key={step.title} className="relative flex gap-3">
+                                                      {last ? null : <span aria-hidden="true" className={cx("absolute bottom-0 left-[11px] w-px", compact ? "top-7" : "top-8", step.done ? "bg-[#9cc9a8]" : "bg-[#e3e7df]")} />}
+                                                      <span
+                                                        className={cx(
+                                                          "relative z-[1] flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold",
+                                                          compact ? "mt-1" : current ? "mt-3" : "mt-1.5",
+                                                          step.done ? "bg-[#2e7d4f] text-white" : current ? "bg-[#1f2b24] text-white ring-4 ring-[#1f2b24]/10" : "border border-[#dfe3dd] bg-white text-[#8a928c]"
+                                                        )}
+                                                        aria-hidden="true"
                                                       >
-                                                        Open group <UiIcon.External />
-                                                      </a>
-                                                    ) : null}
-                                                  </div>
-                                                </li>
-                                              );
-                                            })}
-                                          </ol>
+                                                        {step.done ? <UiIcon.Check className="h-3 w-3" /> : index + 1}
+                                                      </span>
+                                                      <div className={cx("min-w-0 flex-1", last ? "" : compact ? "pb-3" : "pb-4", current && "rounded-xl bg-[#f3f8f1] px-3.5 py-3 shadow-[inset_0_0_0_1px_#d6e8d6]", current && !last && "mb-4")}>
+                                                        {compact ? (
+                                                          <p className="flex flex-wrap items-baseline gap-x-2 text-[12.5px] leading-[22px]">
+                                                            <span className="font-semibold text-[#3b443e]">{step.title}</span>
+                                                            <span className="min-w-0 text-[#7a827c]">{step.body}</span>
+                                                            <span className="sr-only"> (done)</span>
+                                                          </p>
+                                                        ) : (
+                                                          <>
+                                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1">
+                                                              <span className={cx("text-[13.5px] font-semibold", current ? "text-[#1a201c]" : step.done ? "text-[#3b443e]" : "text-[#7a827c]")}>{step.title}</span>
+                                                              {current ? <span className="rounded-full bg-[#1f2b24] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-white">Up next</span> : null}
+                                                              <span className="sr-only">{step.done ? " (done)" : current ? " (next)" : ""}</span>
+                                                            </div>
+                                                            {step.amount ? (
+                                                              <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
+                                                                <span className="text-[22px] font-semibold leading-tight tabular-nums tracking-[-0.01em] text-[#1a201c]">{step.amount.value}</span>
+                                                                <span className="text-[12.5px] text-[#4b544e]">{step.amount.caption}</span>
+                                                              </p>
+                                                            ) : null}
+                                                            {step.stats ? (
+                                                              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Your reels">
+                                                                {step.stats.map((stat) => (
+                                                                  <li key={stat.label} className={cx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold tabular-nums", stat.tone === "good" ? "bg-[#e3f1df] text-[#1f5131]" : stat.tone === "wait" ? "bg-[#fdf3dc] text-[#7a5410]" : stat.tone === "bad" ? "bg-[#fbe9e7] text-[#8e2b20]" : "bg-[#eef1ed] text-[#3b443e]")}>
+                                                                    {stat.tone === "neutral" ? null : <span aria-hidden="true" className={cx("h-1.5 w-1.5 rounded-full", stat.tone === "good" ? "bg-[#2e7d4f]" : stat.tone === "wait" ? "bg-[#d29a2a]" : "bg-[#c4473a]")} />}
+                                                                    {stat.label}
+                                                                  </li>
+                                                                ))}
+                                                              </ul>
+                                                            ) : null}
+                                                            <p className={cx("text-[12.5px] leading-5", step.stats || step.amount ? "mt-1.5" : "mt-0.5", current ? "text-[#4b544e]" : "text-[#7a827c]")}>{step.body}</p>
+                                                            {step.action || groupAction ? (
+                                                              <div className={current ? "mt-3" : "mt-2"}>
+                                                                {step.action ? (
+                                                                  <button type="button" onClick={step.action.onClick} className={buttonClass}>
+                                                                    {step.action.label} <UiIcon.ChevronRight className="h-3.5 w-3.5" />
+                                                                  </button>
+                                                                ) : null}
+                                                                {groupAction ? (
+                                                                  <a href={groupLink} target="_blank" rel="noreferrer noopener" className={buttonClass}>
+                                                                    Open group <UiIcon.External />
+                                                                  </a>
+                                                                ) : null}
+                                                              </div>
+                                                            ) : null}
+                                                          </>
+                                                        )}
+                                                      </div>
+                                                    </li>
+                                                  );
+                                                })}
+                                              </ol>
+                                              {nextIndex === -1 ? (
+                                                <p className="mt-4 flex items-start gap-2.5 rounded-xl bg-[#e9f4e6] px-3.5 py-3 text-[12.5px] leading-5 text-[#1f5131]">
+                                                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#2e7d4f] text-white" aria-hidden="true"><UiIcon.Check className="h-3 w-3" /></span>
+                                                  <span>
+                                                    <span className="font-semibold">You&apos;re all set.</span>{" "}
+                                                    {isContentPostingGig(selectedGig) ? `Keep posting: submit each new reel from ${strings.nav.accounts} and every approval adds to your earnings.` : "Every step is complete for this gig."}
+                                                  </span>
+                                                </p>
+                                              ) : null}
+                                            </section>
 
-                                          {/* Terms */}
-                                          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 bg-[#fafbf9] p-4 text-[13px] sm:grid-cols-1 sm:p-5">
-                                            <div>
-                                              <dt className="text-[12px] text-[#616a64]">Listed payout</dt>
-                                              <dd className="mt-0.5 text-[#1a201c]"><JobPayout gig={selectedGig} /></dd>
-                                            </div>
-                                            {proposal?.budget ? (
-                                              <div>
-                                                <dt className="text-[12px] text-[#616a64]">Your quote</dt>
-                                                <dd className="mt-0.5 break-words font-semibold text-[#1a201c]">{proposal.budget}</dd>
-                                              </div>
-                                            ) : null}
-                                            {proposal?.timeline ? (
-                                              <div>
-                                                <dt className="text-[12px] text-[#616a64]">{proposalTimelineLabel}</dt>
-                                                <dd className="mt-0.5 break-words font-semibold text-[#1a201c]">{proposal.timeline}</dd>
-                                              </div>
-                                            ) : null}
-                                            <div>
-                                              <dt className="text-[12px] text-[#616a64]">Approved</dt>
-                                              <dd className="mt-0.5 font-semibold text-[#1a201c]">{proposal?.reviewedAt ? formatDetailedDate(proposal.reviewedAt) : "Recently"}</dd>
-                                            </div>
-                                          </dl>
+                                            {/* This gig at a glance: one card, the rate first, then the agreed details. Packed to the top, never stretched. */}
+                                            <aside aria-label="This gig" className="border-t border-[#e3efe0] bg-[#fafbf9] p-4 sm:p-5 @2xl:border-l @2xl:border-t-0">
+                                              <dl className="overflow-hidden rounded-xl bg-white text-[13px] shadow-[inset_0_0_0_1px_#e3efe0]">
+                                                <div className="p-3.5">
+                                                  <dt className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#616a64]"><UiIcon.Wallet className="h-3.5 w-3.5 text-[#2e7d4f]" />Listed payout</dt>
+                                                  <dd className="mt-1 text-[16px] text-[#1a201c]"><JobPayout gig={selectedGig} /></dd>
+                                                </div>
+                                                {([] as Array<[string, string]>)
+                                                  .concat(proposal?.budget ? [["Your quote", proposal.budget]] : [])
+                                                  .concat(proposal?.timeline ? [[proposalTimelineLabel, proposal.timeline]] : [])
+                                                  .concat([["Approved on", proposal?.reviewedAt ? formatDetailedDate(proposal.reviewedAt) : "Recently"]])
+                                                  .map(([label, value]) => (
+                                                    <div key={label} className="flex items-baseline justify-between gap-3 border-t border-[#eef1ec] px-3.5 py-2.5">
+                                                      <dt className="shrink-0 text-[12px] text-[#7a827c]">{label}</dt>
+                                                      <dd className="min-w-0 break-words text-right font-semibold tabular-nums text-[#1a201c]">{value}</dd>
+                                                    </div>
+                                                  ))}
+                                              </dl>
+                                            </aside>
+                                          </div>
                                         </div>
 
                                         {onboardingItems.length ? (

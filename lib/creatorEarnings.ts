@@ -57,3 +57,47 @@ export function summarizePayoutBatches(batches: Array<{ status: string; items: A
   }
   return { ...totals, credited: totals.credited / 100, pending: totals.pending / 100 };
 }
+
+const normalizeHandle = (handle?: string) => String(handle ?? "").trim().replace(/^@+/, "").toLowerCase();
+
+/**
+ * Where a Content Posting creator stands on one gig's linked account: reels submitted and reviewed, and money paid
+ * or queued for that account (payout items are matched by handle). Drives the "post, then get paid" steps.
+ */
+export function postingProgress(
+  account: Pick<LinkedSocialAccount, "handle" | "posts" | "payout" | "payoutType"> | null | undefined,
+  batches: Array<{ status: string; items: Array<{ amountINR: number; handle?: string }> }>,
+) {
+  const posts = account?.posts ?? [];
+  const approved = posts.filter((post) => post.status === "approved").length;
+  const inReview = posts.filter((post) => post.status === "submitted").length;
+  const rejected = posts.filter((post) => post.status === "rejected").length;
+  const handle = normalizeHandle(account?.handle);
+  let paid = 0;
+  let inPayout = 0;
+  if (handle) {
+    for (const batch of batches) {
+      const status = batch.status.trim().toLowerCase();
+      for (const item of batch.items ?? []) {
+        const value = Number(item.amountINR);
+        if (normalizeHandle(item.handle) !== handle || !Number.isFinite(value) || value <= 0) continue;
+        if (status === "paid") paid += Math.round(value * 100);
+        else if (isOpenPayoutStatus(status)) inPayout += Math.round(value * 100);
+      }
+    }
+  }
+  const earnings = account ? reelEarnings(account) : undefined;
+  return {
+    submitted: approved + inReview,
+    approved,
+    inReview,
+    rejected,
+    paid: paid / 100,
+    inPayout: inPayout / 100,
+    /** Earned on approved reels at the gig's rate, before payout; `symbol` is the rate's currency. */
+    earned: earnings?.approvedAmount ?? 0,
+    symbol: earnings?.symbol || "₹",
+  };
+}
+
+export type PostingProgress = ReturnType<typeof postingProgress>;

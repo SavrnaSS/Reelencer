@@ -1,0 +1,32 @@
+.panel {
+  container: recording-setup / inline-size;
+  min-width: 0;
+  border-radius: 16px;
+  margin-top: 10px;
+  background: #f4f7f2;
+  padding: 12px;
+}
+
+/* Phones: a small picture above the tips. Wider: the picture sits beside them. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.figure { width: 100%; max-width: 220px; min-width: 0; margin: 0 auto; }
+.artwork { display: block; width: 100%; height: auto; overflow: visible; }
+.captureLines { animation: camera-direction 18s linear infinite; }
+.recordDot { animation: recording-light 2.4s ease-in-out infinite; }
+
+@container recording-setup (min-width: 440px) {
+  .layout { grid-template-columns: minmax(150px, 38%) minmax(0, 1fr); gap: 16px; }
+  .figure { max-width: 240px; }
+}
+
+@keyframes camera-direction { to { stroke-dashoffset: -90; } }
+@keyframes recording-light { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) {
+  .captureLines, .recordDot { animation: none; }
+}

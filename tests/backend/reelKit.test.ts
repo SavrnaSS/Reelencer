@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_REEL_KIT, DEFAULT_WALLET_STEPS, TAKE_TIMELINE, demoPayoutBatches, takeSeconds, takeScenes, demoWalletHref, encodeReelKit, parseDemoWallet, parseReelKit, reelKitSteps, sanitizeReelKit, withReelKit } from "../../lib/reelKit";
+import { DEFAULT_REEL_KIT, TAKE_TIMELINE, demoPayoutBatches, demoWalletHref, encodeReelKit, parseDemoWallet, parseReelKit, reelShots, sanitizeReelKit, withReelKit } from "../../lib/reelKit";
 import { parseGigBriefAssets, splitBriefMediaLines, withReelExample } from "../../lib/gigBriefMedia";
 import { summarizePayoutBatches } from "../../lib/creatorEarnings";
 
@@ -28,8 +28,6 @@ test("untrusted kits are clamped and cleaned instead of breaking the creator vie
   assert.ok(kit.caption.startsWith("Big win !"));
   assert.deepEqual(kit.steps, ["One"]);
   assert.equal("example" in kit, false);
-  assert.deepEqual(reelKitSteps(kit), ["One"]);
-  assert.deepEqual(reelKitSteps({ ...kit, steps: [] }), DEFAULT_WALLET_STEPS);
   assert.ok(encodeReelKit(kit).startsWith("Kit::"));
 });
 
@@ -52,13 +50,19 @@ test("demo payout cycles add up exactly to the configured paid and pending figur
   assert.deepEqual(summarizePayoutBatches(demoPayoutBatches({ name: "x", paidOut: 1000, pendingWithdrawal: 0 }, now, 0.5)).credited, 500);
 });
 
-test("the storyboard follows the recording screen's timeline without gaps", () => {
-  for (const scroll of [true, false]) {
-    const scenes = takeScenes({ scroll });
-    assert.equal(scenes[0].fromMs, 0);
-    assert.equal(scenes.at(-1)!.toMs, TAKE_TIMELINE.endMs);
-    scenes.slice(1).forEach((scene, index) => assert.equal(scene.fromMs, scenes[index].toMs));
-    assert.equal(scenes.length, scroll ? 4 : 3);
-  }
-  assert.deepEqual([0, 1800, 2450, 6500].map(takeSeconds), ["0", "1.8", "2.5", "6.5"]);
+test("the shot list follows the sample reel and uses the kit's captions, falling back to the defaults", () => {
+  const shots = reelShots({ hook: "My hook", caption: "My close" });
+  assert.deepEqual(shots.map((shot) => shot.id), ["hook", "chrome", "search", "account", "apply", "proposal", "wallet"]);
+  assert.equal(shots[0].caption, "My hook");
+  assert.equal(shots[0].camera, "selfie");
+  assert.equal(shots.at(-1)!.caption, "My close");
+  const defaults = reelShots({ hook: "", caption: "" });
+  assert.equal(defaults[0].caption, DEFAULT_REEL_KIT.hook);
+  assert.equal(defaults.at(-1)!.caption, DEFAULT_REEL_KIT.caption);
+  assert.ok(shots.slice(1).every((shot) => shot.camera === "screen" && shot.placement === "lower"));
+});
+
+test("every scroll flick of a take finishes before the pointer heads to the payout cycle", () => {
+  for (const [offset, duration] of TAKE_TIMELINE.flicks) assert.ok(TAKE_TIMELINE.scrollAtMs + offset + duration <= TAKE_TIMELINE.openAtMs);
+  assert.ok(TAKE_TIMELINE.openAtMs + TAKE_TIMELINE.clickDelayMs < TAKE_TIMELINE.endMs);
 });

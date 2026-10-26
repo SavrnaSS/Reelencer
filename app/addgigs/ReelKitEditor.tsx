@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { DEFAULT_REEL_KIT, MAX_KIT_CAPTION, MAX_KIT_STEPS, demoWalletHref, sanitizeReelKit, type ReelKit } from "@/lib/reelKit";
 
-type Draft = Record<"approved" | "approvedReels" | "pending" | "pendingReels" | "paidOut" | "pendingWithdrawal" | "caption" | "steps", string>;
+type Draft = Record<"approved" | "approvedReels" | "pending" | "pendingReels" | "paidOut" | "pendingWithdrawal" | "hook" | "caption" | "steps", string>;
 
 const FIGURES: Array<{ key: keyof Draft; label: string; hint: string; money?: boolean }> = [
   { key: "approved", label: "Approved earnings", hint: "Reel earnings card", money: true },
@@ -20,7 +20,7 @@ const toDraft = (kit: ReelKit | null): Draft => {
     approved: String(value.approved), approvedReels: String(value.approvedReels),
     pending: String(value.pending), pendingReels: String(value.pendingReels),
     paidOut: String(value.paidOut), pendingWithdrawal: String(value.pendingWithdrawal),
-    caption: value.caption, steps: value.steps.join("\n"),
+    hook: value.hook, caption: value.caption, steps: value.steps.join("\n"),
   };
 };
 
@@ -72,7 +72,7 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
         <span className="min-w-0">
           <span className="block text-xs font-semibold text-slate-800">Reel kit · demo wallet screen</span>
           <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
-            Approved creators get a ready-to-film wallet screen with these sample figures, the on-screen caption, a shot list and your example reel. The screen is labelled as a demo workspace.
+            Approved creators get a shot list modelled on the sample reel (a selfie hook, quick clips of the site, then a ready-to-film demo wallet with these figures), caption ideas and your example reel.
           </span>
         </span>
       </label>
@@ -97,20 +97,27 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
             ))}
           </div>
 
-          <label className="block min-w-0">
-            <span className="flex items-baseline justify-between gap-2 text-[11px] font-semibold text-slate-700">
-              On-screen caption
-              <span className="font-normal tabular-nums text-slate-400">{draft.caption.length}/{MAX_KIT_CAPTION}</span>
-            </span>
-            <input
-              value={draft.caption}
-              maxLength={MAX_KIT_CAPTION}
-              onChange={(event) => update("caption", event.target.value)}
-              placeholder="Start earning just by posting reels 😱"
-              className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#2f6655] focus:ring-2 focus:ring-[#2f6655]/20"
-            />
-            <span className="mt-0.5 block text-[10.5px] text-slate-500">Creators can copy it or download it as a transparent sticker.</span>
-          </label>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {([
+              ["hook", "Hook caption idea", "For the opening selfie", DEFAULT_REEL_KIT.hook],
+              ["caption", "Closing caption idea", "For the wallet clip at the end", DEFAULT_REEL_KIT.caption],
+            ] as const).map(([key, label, hint, placeholder]) => (
+              <label key={key} className="block min-w-0">
+                <span className="flex items-baseline justify-between gap-2 text-[11px] font-semibold text-slate-700">
+                  {label}
+                  <span className="font-normal tabular-nums text-slate-400">{draft[key].length}/{MAX_KIT_CAPTION}</span>
+                </span>
+                <input
+                  value={draft[key]}
+                  maxLength={MAX_KIT_CAPTION}
+                  onChange={(event) => update(key, event.target.value)}
+                  placeholder={placeholder}
+                  className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#2f6655] focus:ring-2 focus:ring-[#2f6655]/20"
+                />
+                <span className="mt-0.5 block text-[10.5px] text-slate-500">{hint}. Shown to creators as an idea; they write their own. Empty uses the placeholder.</span>
+              </label>
+            ))}
+          </div>
 
           <label className="block min-w-0">
             <span className="block text-[11px] font-semibold text-slate-700">Notes for creators <span className="font-normal text-slate-500">· one per line, up to {MAX_KIT_STEPS} (optional)</span></span>
@@ -137,7 +144,7 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
             )}
             <div className="min-w-0 flex-1">
               <div className="text-[11.5px] font-semibold text-slate-700">Example reel</div>
-              <div className="text-[10.5px] leading-4 text-slate-500">{kit.example ? "Shown beside the steps." : "Optional. Without one, creators see an auto preview built from the screen and caption."}</div>
+              <div className="text-[10.5px] leading-4 text-slate-500">{kit.example ? "Linked from the shot list as the sample reel." : "Optional. Upload the sample reel creators should copy."}</div>
             </div>
             <label className="inline-flex min-h-9 cursor-pointer items-center rounded-lg border border-[#9cc3ad] bg-[#edf5ef] px-3 text-[11.5px] font-semibold text-[#2f6655] hover:bg-[#e2efe5]">
               {uploading ? "Uploading…" : kit.example ? "Replace" : "Upload"}
@@ -160,7 +167,7 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
           </div>
 
           <a href={demoWalletHref(kit, "Creator")} target="_blank" rel="noopener" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-[#1f2b24] px-3 text-[12px] font-semibold text-white hover:bg-[#2b3a31]">
-            Preview recording screen ↗
+            Preview demo wallet ↗
           </a>
         </div>
       ) : null}

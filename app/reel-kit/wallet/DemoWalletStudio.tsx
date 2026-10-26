@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SVGProps } from "react";
 import { BrandLogo } from "@/app/_components/BrandLogo";
 import DashboardWalletView from "@/app/dashboard/DashboardWalletView";
-import { cx, formatMoney, getInitials } from "@/app/dashboard/dashboardUi";
-import { REEL_KIT_MESSAGE, TAKE_TIMELINE, demoPayoutBatches, type DemoWallet } from "@/lib/reelKit";
+import { cx, getInitials } from "@/app/dashboard/dashboardUi";
+import { TAKE_TIMELINE, demoPayoutBatches, type DemoWallet } from "@/lib/reelKit";
 
 /*
  * Recording screen for Content Posting reels: the real creator wallet view, filled with the gig's sample figures,
  * inside a copy of the dashboard shell. Creators film it (usually a laptop, shot on a phone). A take counts the
- * figures up from zero and ends on a payout notification; the controls hide themselves so they stay out of the shot.
+ * figures up from zero, then glides down to the payout history; nothing else appears on screen until the take ends.
  * The brand line reads "Demo workspace" so the screen never passes as a real account.
  */
 
@@ -79,29 +79,31 @@ const subscribeFullscreen = (listener: () => void) => {
 const readFullscreen = () => Boolean(document.fullscreenElement);
 // iPhone Safari has no element fullscreen; the button hides there and the page is already edge to edge.
 const readFullscreenEnabled = () => Boolean(document.fullscreenEnabled);
+const readTouchScreen = () => window.matchMedia("(pointer: coarse)").matches;
 
-function ControlButton({ label, shortcut, onClick, active = false, primary = false, children }: { label: string; shortcut?: string; onClick: () => void; active?: boolean; primary?: boolean; children: ReactNode }) {
+/** Phones: a full-width Play button and labelled icon tiles. Larger screens: one row with keyboard hints. */
+function ControlButton({ label, short, shortcut, onClick, active = false, primary = false, children }: { label: string; short?: string; shortcut?: string; onClick: () => void; active?: boolean; primary?: boolean; children: ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={primary ? undefined : active}
+      aria-label={label}
       title={shortcut ? `${label} (${shortcut})` : label}
       className={cx(
-        "inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-3 text-[13px] font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
-        primary ? "bg-white text-[#101814] hover:bg-white/90" : active ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10 hover:text-white"
+        "inline-flex shrink-0 items-center justify-center rounded-xl font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
+        primary
+          ? "h-12 w-full gap-2 bg-white px-4 text-[15px] text-[#101814] hover:bg-white/90 sm:h-11 sm:w-auto sm:px-3 sm:text-[13px]"
+          : cx("min-h-14 min-w-0 flex-col gap-1 px-1 py-1.5 text-[10.5px] sm:h-11 sm:min-h-0 sm:flex-row sm:gap-2 sm:px-3 sm:py-0 sm:text-[13px]", active ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10 hover:text-white")
       )}
     >
       {children}
-      <span className={primary ? "" : "sr-only sm:not-sr-only"}>{label}</span>
+      {primary ? <span>{label}</span> : <span aria-hidden="true" className="max-w-full truncate leading-none"><span className="sm:hidden">{short ?? label}</span><span className="hidden sm:inline">{label}</span></span>}
       {shortcut ? <kbd className="hidden rounded border border-current/30 px-1 font-sans text-[10.5px] font-medium opacity-60 lg:inline">{shortcut}</kbd> : null}
     </button>
   );
 }
 
-const PREVIEW_LOOP_MS = TAKE_TIMELINE.endMs + 1500;
-
-/** `preview` is the looping, control-free thumbnail embedded in the creator's reel kit. */
 /** Glow around the Reel earnings card while the figures count up: draws the eye in the first beat of the take. */
 function spotlight(element: Element | null | undefined) {
   element?.animate(
@@ -114,22 +116,57 @@ function spotlight(element: Element | null | undefined) {
   );
 }
 
-export default function DemoWalletStudio({ wallet, now, preview = false }: { wallet: DemoWallet; now: number; preview?: boolean }) {
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+type Pointer = { x: number; y: number; visible: boolean; pressed: boolean; touch: boolean };
+type Point = { x: number; y: number };
+
+/** The on-screen hand of the take: a mouse pointer on laptops, a fingertip on touch screens. */
+function TakePointer({ pointer }: { pointer: Pointer }) {
+  if (!pointer.visible) return null;
+  return (
+    <div aria-hidden="true" className="pointer-events-none fixed left-0 top-0 z-50" style={{ transform: `translate3d(${pointer.x}px, ${pointer.y}px, 0)` }}>
+      {pointer.touch ? (
+        <span className={cx("block h-11 w-11 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90 bg-[#1a201c]/25 shadow-[0_4px_14px_rgba(0,0,0,0.25)] backdrop-blur-[1px] transition-transform duration-150", pointer.pressed ? "scale-75 bg-[#1a201c]/40" : "scale-100")} />
+      ) : (
+        <span className="relative block">
+          {pointer.pressed ? <span className="absolute -left-3 -top-3 h-7 w-7 rounded-full bg-[#2e7d4f]/25 motion-safe:animate-ping" /> : null}
+          <svg viewBox="0 0 24 24" className={cx("h-6 w-6 drop-shadow-[0_2px_3px_rgba(0,0,0,0.35)] transition-transform duration-100", pointer.pressed && "scale-90")}>
+            <path d="M5 3.2v15.6l4.1-3.9 2.6 6 2.5-1.1-2.6-5.9h5.7z" fill="#111" stroke="#fff" strokeWidth="1.4" strokeLinejoin="round" />
+          </svg>
+        </span>
+      )}
+    </div>
+  );
+}
+
+export default function DemoWalletStudio({ wallet, now }: { wallet: DemoWallet; now: number }) {
   const [name, setName] = useState(wallet.name);
   const [progress, setProgress] = useState(1);
   const [countdown, setCountdown] = useState(0);
   const [countdownOn, setCountdownOn] = useState(true);
-  const [toast, setToast] = useState(false);
+  /** From Play until the take ends: nothing but the wallet may appear on screen. */
+  const [taking, setTaking] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [editing, setEditing] = useState(false);
   const [hasPlayed, setHasPlayed] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [pointer, setPointer] = useState<Pointer>({ x: 0, y: 0, visible: false, pressed: false, touch: false });
+  const pointerAt = useRef<Point>({ x: 0, y: 0 });
+  const pointerFrame = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const greeting = useSyncExternalStore(subscribeNoop, readGreeting, () => "Welcome back");
   const fullscreen = useSyncExternalStore(subscribeFullscreen, readFullscreen, () => false);
   const fullscreenEnabled = useSyncExternalStore(subscribeNoop, readFullscreenEnabled, () => false);
+  // Payout dates and "5d ago" labels depend on the viewer's clock and timezone, which the server can't match, so
+  // the wallet renders in the browser only (a skeleton on the server) and hydration never disagrees.
+  const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false);
+  const touchScreen = useSyncExternalStore(subscribeNoop, readTouchScreen, () => false);
+  const taps = useRef<number[]>([]);
+  const scrolledAt = useRef(0);
   const timers = useRef<number[]>([]);
   const frame = useRef(0);
+  const scrollFrame = useRef(0);
   const idleTimer = useRef(0);
   const wakeLock = useRef<{ release: () => Promise<void> } | null>(null);
   const busy = countdown > 0 || progress < 1;
@@ -138,6 +175,8 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
     timers.current.forEach((id) => window.clearTimeout(id));
     timers.current = [];
     cancelAnimationFrame(frame.current);
+    cancelAnimationFrame(scrollFrame.current);
+    cancelAnimationFrame(pointerFrame.current);
   }, []);
   useEffect(() => clearTimers, [clearTimers]);
   useEffect(() => () => void wakeLock.current?.release().catch(() => undefined), []);
@@ -153,11 +192,50 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
   }, []);
   useEffect(() => () => window.clearTimeout(idleTimer.current), []);
 
+  /** One scroll flick: fast at first, then easing off like trackpad momentum. */
+  const flick = useCallback((by: number, ms: number) => {
+    const main = mainRef.current;
+    if (!main) return;
+    const from = main.scrollTop;
+    const start = performance.now();
+    const step = (time: number) => {
+      const t = Math.min(1, Math.max(0, (time - start) / ms));
+      main.scrollTop = from + by * easeOut(t);
+      if (t < 1) scrollFrame.current = requestAnimationFrame(step);
+    };
+    cancelAnimationFrame(scrollFrame.current);
+    scrollFrame.current = requestAnimationFrame(step);
+  }, []);
+
+  /** Moves the take's pointer along a gentle arc, the way a hand moves a mouse rather than a straight line. */
+  const movePointer = useCallback((to: Point, ms: number) => {
+    const from = { ...pointerAt.current };
+    const start = performance.now();
+    const arc = Math.min(60, Math.hypot(to.x - from.x, to.y - from.y) * 0.18);
+    const step = (time: number) => {
+      const t = Math.min(1, Math.max(0, (time - start) / ms));
+      const e = easeInOut(t);
+      const lift = Math.sin(Math.PI * t) * arc;
+      const point = { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e - lift };
+      pointerAt.current = point;
+      setPointer((current) => ({ ...current, ...point }));
+      if (t < 1) pointerFrame.current = requestAnimationFrame(step);
+    };
+    cancelAnimationFrame(pointerFrame.current);
+    pointerFrame.current = requestAnimationFrame(step);
+  }, []);
+
+  const placePointer = useCallback((point: Point, touch: boolean, visible = true) => {
+    pointerAt.current = point;
+    setPointer({ ...point, visible, pressed: false, touch });
+  }, []);
+
   const reset = useCallback(() => {
     clearTimers();
+    setTaking(false);
+    setPointer((current) => ({ ...current, visible: false }));
     setCountdown(0);
     setProgress(1);
-    setToast(false);
     mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [clearTimers]);
 
@@ -165,25 +243,87 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
     clearTimers();
     setEditing(false);
     setHasPlayed(true);
-    setToast(false);
+    setTaking(true);
     setProgress(0);
+    // The bar hides the moment Play is pressed and stays hidden, countdown included, until the take ends.
+    window.clearTimeout(idleTimer.current);
+    setControlsVisible(false);
     mainRef.current?.scrollTo({ top: 0 });
-    // Keep the laptop awake while it is being filmed.
+    setPointer((current) => ({ ...current, visible: false }));
+    // Close any payout cycle the previous take opened.
+    mainRef.current?.querySelectorAll<HTMLButtonElement>("#wallet-cycles ~ * button[aria-expanded='true'], [aria-labelledby='wallet-cycles'] button[aria-expanded='true']").forEach((button) => button.click());
+    // Keep the screen awake while it is being filmed.
     const nav = navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } };
-    if (!preview && !wakeLock.current && nav.wakeLock) nav.wakeLock.request("screen").then((lock) => (wakeLock.current = lock)).catch(() => undefined);
-    // The take follows TAKE_TIMELINE, the same timeline the creator's storyboard is written against.
+    if (!wakeLock.current && nav.wakeLock) nav.wakeLock.request("screen").then((lock) => (wakeLock.current = lock)).catch(() => undefined);
+    // The take follows TAKE_TIMELINE: count-up, a few scroll flicks, then a click that opens the latest cycle.
     const run = () => {
       setCountdown(0);
-      setControlsVisible(false);
-      // The embedded thumbnail tells the reel kit when a take starts, so its timeline and storyboard follow along.
-      if (preview && window.parent !== window) window.parent.postMessage({ source: REEL_KIT_MESSAGE, type: "take-start" }, window.location.origin);
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      later(() => setToast(true), TAKE_TIMELINE.toastAtMs);
+      const { scrollAtMs, flicks, openAtMs, clickDelayMs, endMs } = TAKE_TIMELINE;
+      later(() => { setTaking(false); setPointer((current) => ({ ...current, visible: false })); }, endMs);
       if (autoScroll) {
+        const main = mainRef.current;
+        const touch = window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 768;
+        const centre = (element: Element | null | undefined, dx = 0.5, dy = 0.5): Point | null => {
+          const rect = element?.getBoundingClientRect();
+          return rect && rect.width ? { x: rect.left + rect.width * dx, y: rect.top + rect.height * dy } : null;
+        };
+        const cyclesSection = () => main?.querySelector("[aria-labelledby='wallet-cycles']");
+        // The person watches the number climb with the pointer resting on it.
+        if (!touch && !reduced) {
+          later(() => placePointer({ x: window.innerWidth * 0.66, y: window.innerHeight * 0.78 }, false), 150);
+          later(() => {
+            const card = centre(main?.querySelector("[aria-label='Reel earnings summary'] dl > div"), 0.42, 0.62);
+            if (card) movePointer(card, 950);
+          }, 650);
+        }
+        // Scroll down in a few flicks, overshooting a touch and correcting, like a hand on a trackpad.
         later(() => {
-          const target = mainRef.current?.querySelector("#wallet-cycles")?.closest("section");
-          target?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
-        }, TAKE_TIMELINE.scrollAtMs);
+          if (!main) return;
+          const max = main.scrollHeight - main.clientHeight;
+          const section = cyclesSection();
+          const target = section ? Math.min(max, Math.max(0, section.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop - 12)) : max;
+          const total = target - main.scrollTop;
+          if (reduced || total < 8) { main.scrollTop = target; return; }
+          const overshoot = Math.min(28, Math.max(0, max - target), total * 0.1);
+          const amounts = total < 120 ? [total] : [total * 0.4, total * 0.33, total * 0.27 + overshoot, -overshoot];
+          amounts.forEach((amount, index) => {
+            const [offset, duration] = flicks[index] ?? flicks[flicks.length - 1];
+            later(() => {
+              flick(amount, duration);
+              if (touch && amount > 0) {
+                // A fingertip swipes up while the page moves.
+                const x = window.innerWidth * (0.56 + index * 0.03);
+                const y = window.innerHeight * 0.74;
+                placePointer({ x, y }, true);
+                movePointer({ x: x - 6, y: y - Math.min(170, amount * 0.6) }, duration * 0.8);
+                later(() => setPointer((current) => ({ ...current, visible: false })), duration * 0.85);
+              } else if (!touch) {
+                // The hand drifts a little on the trackpad between flicks.
+                movePointer({ x: pointerAt.current.x + 8 - index * 5, y: pointerAt.current.y + (amount > 0 ? 10 : -6) }, duration);
+              }
+            }, offset);
+          });
+        }, scrollAtMs);
+        // Open the latest payout cycle: travel to it, press, release.
+        if (!reduced) {
+          later(() => {
+            const button = [...(cyclesSection()?.querySelectorAll<HTMLButtonElement>("button[aria-expanded]") ?? [])].find((candidate) => candidate.getClientRects().length > 0);
+            const spot = centre(button, touch ? 0.5 : 0.08, 0.5);
+            if (!button || !spot) return;
+            if (!touch) movePointer(spot, clickDelayMs - 120);
+            later(() => {
+              if (touch) placePointer(spot, true);
+              setPointer((current) => ({ ...current, pressed: true }));
+              later(() => {
+                setPointer((current) => ({ ...current, pressed: false }));
+                button.click();
+                if (touch) later(() => setPointer((current) => ({ ...current, visible: false })), 260);
+                else later(() => movePointer({ x: pointerAt.current.x + Math.min(320, window.innerWidth * 0.2), y: pointerAt.current.y + 40 }, 900), 450);
+              }, 140);
+            }, clickDelayMs);
+          }, openAtMs);
+        }
       }
       if (reduced) return setProgress(1);
       spotlight(mainRef.current?.querySelector("[aria-label='Reel earnings summary']"));
@@ -196,21 +336,13 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
       };
       frame.current = requestAnimationFrame(tick);
     };
-    if (!countdownOn || preview) return run();
-    // The countdown lives in the control bar, which hides before the take starts, so the shot stays clean.
+    if (!countdownOn) return run();
+    // The countdown is silent: the screen holds at ₹0 (trim it later) while the creator frames the shot.
     setCountdown(3);
     later(() => setCountdown(2), 1000);
     later(() => setCountdown(1), 2000);
     later(run, TAKE_TIMELINE.countdownMs);
-  }, [autoScroll, clearTimers, countdownOn, later, preview]);
-
-  // The thumbnail replays the take on a loop; reduced motion keeps it on the finished frame.
-  useEffect(() => {
-    if (!preview || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const first = window.setTimeout(play, 600);
-    const loop = window.setInterval(play, PREVIEW_LOOP_MS);
-    return () => { window.clearTimeout(first); window.clearInterval(loop); };
-  }, [play, preview]);
+  }, [autoScroll, clearTimers, countdownOn, flick, later, movePointer, placePointer]);
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
@@ -218,18 +350,22 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
   }, []);
 
   useEffect(() => {
-    if (preview) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, [contenteditable='true']") || event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
+      // Mid-take only Escape or R stop it (and bring the controls back); other keys would show the bar on camera.
+      if (taking) {
+        if (key === "escape" || key === "r") { reset(); showControls(); }
+        return;
+      }
       if (key === " " || key === "enter") {
         // Let focused buttons act on their own; Space anywhere else plays a take.
         if (target.closest("button, a")) return;
         event.preventDefault();
         play();
+        return;
       } else if (key === "f" && fullscreenEnabled) toggleFullscreen();
-      else if (key === "t") setToast((value) => !value);
       else if (key === "s") setAutoScroll((value) => !value);
       else if (key === "r") reset();
       else if (key === "h") { window.clearTimeout(idleTimer.current); setControlsVisible(false); return; }
@@ -239,7 +375,7 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreenEnabled, play, preview, reset, showControls, toggleFullscreen]);
+  }, [fullscreenEnabled, play, reset, showControls, taking, toggleFullscreen]);
 
   const scaled = useMemo(() => {
     const money = (value: number) => Math.round(value * progress * 100) / 100;
@@ -258,17 +394,33 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
   const displayName = name.trim() || "Creator";
   const firstName = displayName.split(/\s+/)[0];
   const initials = getInitials(displayName);
-  const toastAmount = wallet.pendingWithdrawal > 0 ? wallet.pendingWithdrawal : wallet.approved;
-  const toastDetail = wallet.pendingWithdrawal > 0 ? "Withdrawal sent to your UPI" : `From ${wallet.approvedReels} approved reel${wallet.approvedReels === 1 ? "" : "s"}`;
 
   return (
     <div
       className={cx(
         "creator-dashboard-theme relative flex h-[100dvh] overflow-hidden bg-[#f8f4ec] text-[#20352c] [font-family:var(--font-geist-sans)]",
-        (preview || (!controlsVisible && !editing)) && "cursor-none"
+        (taking || (!controlsVisible && !editing)) && "cursor-none"
       )}
-      onPointerMove={showControls}
-      onPointerDown={showControls}
+      // During a take, taps and mouse movement never bring the controls back into the shot.
+      onPointerMove={taking ? undefined : (event) => {
+        // Touch moves are part of a swipe, and moves right after a scroll are the hand still scrolling.
+        if (event.pointerType === "touch" || performance.now() - scrolledAt.current < 500) return;
+        showControls();
+      }}
+      onPointerDown={
+        taking
+          ? () => {
+              // There is no Esc on a phone: three quick taps stop the take and bring the controls back.
+              const now = performance.now();
+              taps.current = [...taps.current.filter((time) => now - time < 700), now];
+              if (taps.current.length >= 3) {
+                taps.current = [];
+                reset();
+                showControls();
+              }
+            }
+          : showControls
+      }
     >
       {/* Desktop sidebar */}
       <aside className="hidden h-full w-[248px] shrink-0 flex-col border-r border-[#e3e5e1] bg-white xl:flex 2xl:w-[264px]">
@@ -336,7 +488,6 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
                 <h1 className="flex items-center justify-center gap-1.5 text-[16px] font-semibold text-[#20352c] md:justify-start md:text-[20px] md:leading-tight md:tracking-[-0.02em]">
                   <NavIcons.wallet aria-hidden="true" className="h-4 w-4 shrink-0 text-[#2e7d4f] md:hidden" />
                   Wallet
-                  <span className="rounded-full bg-[#eef1ed] px-1.5 py-0.5 text-[10px] font-semibold tracking-normal text-[#6b736d] xl:hidden">Demo</span>
                 </h1>
               </div>
             </div>
@@ -371,16 +522,24 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
         {/* Links in the real wallet would leave the recording screen; keep every tap on this page. */}
         <main
           ref={mainRef}
+          onScroll={() => {
+            // Scrolling the page by hand hides the controls so they never sit over the part being looked at;
+            // a tap or mouse move brings them back. The take's own scrolling happens while they are hidden anyway.
+            if (taking || editing) return;
+            scrolledAt.current = performance.now();
+            window.clearTimeout(idleTimer.current);
+            setControlsVisible(false);
+          }}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3.5 pb-28 pt-4 [scrollbar-width:none] min-[380px]:px-4 sm:px-5 sm:pt-5 md:px-6 lg:px-7 xl:pt-7 2xl:px-8"
           onClickCapture={(event) => {
             if ((event.target as HTMLElement).closest("a[href]")) event.preventDefault();
           }}
         >
           <DashboardWalletView
-            loading={false}
-            payoutBatches={batches}
+            loading={!mounted}
+            payoutBatches={mounted ? batches : []}
             accountEarnings={accountEarnings}
-            earningsLoading={false}
+            earningsLoading={!mounted}
             onOpenAccounts={() => undefined}
             assignmentsCount={wallet.approvedReels > 0 ? 1 : 0}
             workerId="DEMO"
@@ -388,37 +547,13 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
         </main>
       </div>
 
-      {/* Payout notification: the closing beat of the take. */}
-      <div
-        role="status"
-        aria-live="polite"
-        className={cx(
-          "pointer-events-none fixed inset-x-3 top-3 z-30 mx-auto max-w-sm transition duration-500 ease-[cubic-bezier(.2,.9,.25,1.15)] sm:inset-x-auto sm:right-6 sm:top-5 motion-reduce:transition-none",
-          toast ? "translate-y-0 opacity-100" : "-translate-y-6 opacity-0"
-        )}
-      >
-        {toast ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-[#cfe3d4] bg-white/95 p-3.5 pr-5 shadow-[0_18px_40px_-16px_rgba(16,40,26,0.45)] backdrop-blur">
-            <span className="dashboard-success-badge relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2e7d4f] text-white">
-              <span className="dashboard-success-ring absolute inset-0 rounded-full border-2 border-[#2e7d4f]/40" />
-              <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path className="dashboard-success-check" d="m5.5 12.5 4.2 4.2L18.5 7.8" />
-              </svg>
-            </span>
-            <span className="min-w-0">
-              <span className="block text-[12px] font-semibold text-[#2e7d4f]">Reelencer · now</span>
-              <span className="block text-[15px] font-semibold tabular-nums text-[#1a201c]">{formatMoney(toastAmount)} credited</span>
-              <span className="block truncate text-[12px] text-[#616a64]">{toastDetail}</span>
-            </span>
-          </div>
-        ) : null}
-      </div>
+      <TakePointer pointer={pointer} />
 
       {/* Recording controls: hidden while idle so the filmed screen is just the wallet. */}
-      {preview ? null : <div
+      <div
         className={cx(
           "fixed inset-x-0 bottom-0 z-40 flex flex-col items-center gap-2 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition duration-300 motion-reduce:transition-none",
-          controlsVisible || editing || countdown > 0 ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-4 opacity-0"
+          (controlsVisible || editing) && !taking ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-4 opacity-0"
         )}
         onPointerMove={(event) => event.stopPropagation()}
       >
@@ -435,22 +570,24 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
             <p className="mt-2 text-[11.5px] leading-4 text-white/55">The figures come from the gig brief, so every creator shows the same numbers.</p>
           </form>
         ) : !hasPlayed ? (
-          <p className="rounded-full bg-[#101814]/85 px-3.5 py-1.5 text-center text-[12px] text-white/85 backdrop-blur">
-            Start recording, then press <kbd className="font-sans font-semibold text-white">Space</kbd> or tap <span className="font-semibold text-white">Play take</span>. These controls hide on their own.
+          <p className="w-full max-w-md rounded-2xl bg-[#101814]/85 px-4 py-2.5 text-center text-[12.5px] leading-[1.15rem] text-white/85 backdrop-blur sm:w-auto sm:max-w-xl sm:rounded-full sm:py-1.5 sm:text-[12px]">
+            {touchScreen ? (
+              <>Start your camera, then tap <span className="font-semibold text-white">Play take</span>. Everything here disappears until the take ends. To stop early, tap the screen three times.</>
+            ) : (
+              <>Start recording, then press <kbd className="font-sans font-semibold text-white">Space</kbd> or click <span className="font-semibold text-white">Play take</span>. Everything here disappears until the take ends; press <kbd className="font-sans font-semibold text-white">Esc</kbd> to stop early.</>
+            )}
           </p>
         ) : null}
-        <div role="toolbar" aria-label="Recording controls" className="flex max-w-full items-center gap-1 overflow-x-auto rounded-2xl bg-[#101814]/90 p-1.5 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.55)] backdrop-blur [scrollbar-width:none]">
-          <ControlButton primary label={countdown > 0 ? `Starting in ${countdown}` : hasPlayed ? "Play again" : "Play take"} shortcut="Space" onClick={play}>
+        <div role="toolbar" aria-label="Recording controls" className="flex w-full max-w-md flex-col gap-1.5 rounded-2xl bg-[#101814]/90 p-1.5 shadow-[0_18px_40px_-12px_rgba(0,0,0,0.55)] backdrop-blur sm:w-auto sm:max-w-full sm:flex-row sm:items-center sm:gap-1">
+          <ControlButton primary label={hasPlayed ? "Play again" : "Play take"} shortcut="Space" onClick={play}>
             <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 0 0 1.53.85l10.2-6.4a1 1 0 0 0 0-1.7L9.53 4.75A1 1 0 0 0 8 5.6Z" /></svg>
           </ControlButton>
-          <ControlButton label="3s countdown" active={countdownOn} onClick={() => setCountdownOn((value) => !value)}>
+          <div className="grid auto-cols-fr grid-flow-col gap-1 sm:flex sm:items-center">
+          <ControlButton label="3s countdown" short="Timer" active={countdownOn} onClick={() => setCountdownOn((value) => !value)}>
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className="h-4 w-4" aria-hidden="true"><circle cx="10" cy="11" r="6.5" /><path d="M10 7.5V11l2 1.5M8 2.5h4" /></svg>
           </ControlButton>
-          <ControlButton label="Auto-scroll" shortcut="S" active={autoScroll} onClick={() => setAutoScroll((value) => !value)}>
+          <ControlButton label="Auto-browse" short="Browse" shortcut="S" active={autoScroll} onClick={() => setAutoScroll((value) => !value)}>
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true"><rect x="5" y="2.5" width="10" height="15" rx="2" /><path d="M10 6v6m-2.5-2.5L10 12l2.5-2.5" /></svg>
-          </ControlButton>
-          <ControlButton label="Payout alert" shortcut="T" active={toast} onClick={() => setToast((value) => !value)}>
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 4-1.5 5.5-1.5 5.5h12s-1.5-1.5-1.5-5.5A4.5 4.5 0 0 0 10 3ZM8.5 16a1.6 1.6 0 0 0 3 0" /></svg>
           </ControlButton>
           <ControlButton label="Reset" shortcut="R" onClick={reset}>
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true"><path d="M4 10a6 6 0 1 0 1.8-4.3M4 4v3.5h3.5" /></svg>
@@ -459,15 +596,16 @@ export default function DemoWalletStudio({ wallet, now, preview = false }: { wal
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true"><path d="m12.5 4.5 3 3L8 15H5v-3z" /></svg>
           </ControlButton>
           {fullscreenEnabled ? (
-            <ControlButton label={fullscreen ? "Exit full screen" : "Full screen"} shortcut="F" active={fullscreen} onClick={toggleFullscreen}>
+            <ControlButton label={fullscreen ? "Exit full screen" : "Full screen"} short={fullscreen ? "Exit" : "Full"} shortcut="F" active={fullscreen} onClick={toggleFullscreen}>
               <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className="h-4 w-4" aria-hidden="true"><path d={fullscreen ? "M8 3v5H3m14 0h-5V3M3 12h5v5m4 0v-5h5" : "M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"} /></svg>
             </ControlButton>
           ) : null}
           <ControlButton label="Hide" shortcut="H" onClick={() => { window.clearTimeout(idleTimer.current); setEditing(false); setControlsVisible(false); }}>
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true"><path d="M3 10s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5ZM4 16 16 4" /></svg>
           </ControlButton>
+          </div>
         </div>
-      </div>}
+      </div>
     </div>
   );
 }

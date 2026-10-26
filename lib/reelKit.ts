@@ -1,5 +1,5 @@
 // Reel kit: what a creator needs to record a Content Posting reel. Admins configure a demo screen (today: the
-// creator wallet) with sample figures, the caption to put on screen and an optional shot list. Stored inside the
+// creator wallet) with sample figures, the hook and closing captions, and optional notes for creators. Stored inside the
 // gig's private media list as `Kit::{json}`, so it is saved as a `Media::Kit::…` requirement line: hidden like other
 // Media:: lines and ignored by readers that predate it. Pure module: shared by the admin form, creator UI and tests.
 
@@ -15,9 +15,11 @@ export type ReelKit = {
   /** Paid payout cycles and the open withdrawal, shown in the metric tiles and payout list. */
   paidOut: number;
   pendingWithdrawal: number;
-  /** On-screen text for the reel, e.g. "Start earning just by posting reels 😱". */
+  /** Caption over the opening selfie, e.g. "Unemployed people gonna KISS me after seeing THIS 😭". */
+  hook: string;
+  /** Caption over the closing wallet clip, e.g. "Start earning by posting content every day". */
   caption: string;
-  /** Shot list; empty means the default steps for the screen. */
+  /** The admin's own notes for creators, shown above the steps. */
   steps: string[];
   /** Optional example reel (video or image) shown beside the steps. */
   example?: string;
@@ -38,17 +40,11 @@ export const DEFAULT_REEL_KIT: ReelKit = {
   pendingReels: 26,
   paidOut: 0,
   pendingWithdrawal: 0,
-  caption: "Start earning just by posting reels 😱",
+  hook: "Unemployed people gonna KISS me after seeing THIS 😭",
+  caption: "Start earning by posting content every day",
   steps: [],
 };
 
-export const DEFAULT_WALLET_STEPS = [
-  "Open the recording screen on a laptop and go full screen (press F).",
-  "Hold your phone upright and frame the laptop screen at a slight angle, like the example.",
-  "Start recording, then press Space or tap Play: the earnings count up and a payout notification lands.",
-  "Add the on-screen caption in the lower middle of the frame, above the reel's caption area.",
-  "Keep it short and end on the payout notification. Post it, then submit the reel link.",
-];
 
 const amount = (value: unknown, fallback: number) => {
   const n = Number(value);
@@ -74,6 +70,7 @@ export function sanitizeReelKit(raw: unknown): ReelKit | null {
     pendingReels: count(v.pendingReels, 0),
     paidOut: amount(v.paidOut, 0),
     pendingWithdrawal: amount(v.pendingWithdrawal, 0),
+    hook: text(v.hook, MAX_KIT_CAPTION),
     caption: text(v.caption, MAX_KIT_CAPTION),
     steps,
     ...(isSafeMediaUrl(v.example) ? { example: v.example } : {}),
@@ -112,92 +109,79 @@ export function withReelKit(lines: string[], kit: ReelKit | null) {
   return kit ? [...rest, encodeReelKit(kit)] : rest;
 }
 
-export const reelKitSteps = (kit: ReelKit) => (kit.steps.length ? kit.steps : DEFAULT_WALLET_STEPS);
 
 /* ------------------------------------------------------------------ */
 /* The take: one timeline shared by the recording screen and the brief */
 /* ------------------------------------------------------------------ */
 
-/** postMessage `source` the embedded recording screen uses to announce each take to the reel kit. */
-export const REEL_KIT_MESSAGE = "reelencer-reel-kit";
-
-/** Milliseconds from the moment the take starts (after the optional 3 s countdown). */
+/**
+ * Milliseconds from the moment the take starts (after the optional 3 s countdown). The figures count up, then the
+ * screen is browsed like a person would: a few scroll flicks down to the payouts, a click that opens the latest
+ * payout cycle, and a hold before the cut.
+ */
 export const TAKE_TIMELINE = {
   countdownMs: 3000,
   countUpMs: 1800,
-  toastAtMs: 2450,
-  scrollAtMs: 4000,
-  endMs: 6500,
+  scrollAtMs: 2400,
+  /** Each scroll flick: [start offset from scrollAtMs, duration]. The third overshoots slightly, the fourth corrects. */
+  flicks: [[0, 480], [700, 460], [1350, 520], [1950, 380]] as ReadonlyArray<readonly [number, number]>,
+  openAtMs: 4800,
+  /** The pointer travels to the payout cycle, then clicks. */
+  clickDelayMs: 750,
+  endMs: 7600,
 } as const;
 
-/** Area of the 16:10 screen each scene is about, in percent, for the storyboard thumbnails. */
-export type SceneFocus = { left: number; top: number; width: number; height: number };
+/* ------------------------------------------------------------------ */
+/* The reel: a selfie hook, then a quick walkthrough of the site      */
+/* ------------------------------------------------------------------ */
 
-export type TakeScene = { title: string; fromMs: number; toMs: number; screen: string; camera: string; focus: SceneFocus };
+export type ReelShot = {
+  id: "hook" | "chrome" | "search" | "account" | "apply" | "proposal" | "wallet";
+  title: string;
+  /** Suggested length on the timeline, in seconds. */
+  seconds: string;
+  camera: "selfie" | "screen";
+  film: string;
+  caption: string;
+  /** Hook captions sit mid-screen over the face; walkthrough captions sit in the lower middle. */
+  placement: "middle" | "lower";
+};
 
-/** The storyboard creators follow, timed to what the recording screen does. */
-export function takeScenes(options: { scroll: boolean } = { scroll: true }): TakeScene[] {
-  const { countUpMs, toastAtMs, scrollAtMs, endMs } = TAKE_TIMELINE;
-  const scenes: TakeScene[] = [
-    {
-      title: "Hook",
-      fromMs: 0,
-      toMs: countUpMs,
-      screen: "Earnings count up from ₹0 while the Reel earnings card glows.",
-      camera: "Wide and steady: the whole laptop screen in frame, caption on top.",
-      focus: { left: 0, top: 0, width: 100, height: 100 },
-    },
-    {
-      title: "The number lands",
-      fromMs: countUpMs,
-      toMs: toastAtMs,
-      screen: "Approved and pending earnings settle on their final figures.",
-      camera: "Push in slowly towards the Reel earnings card.",
-      focus: { left: 22, top: 20, width: 76, height: 36 },
-    },
-    {
-      title: "Payout alert",
-      fromMs: toastAtMs,
-      toMs: options.scroll ? scrollAtMs : endMs,
-      screen: "A “credited” notification drops in at the top right.",
-      camera: "Tilt up and hold on the notification so it can be read.",
-      focus: { left: 64, top: 2, width: 34, height: 18 },
-    },
+/**
+ * The shot list, modelled on the gig's sample reel (about 14 s): a selfie hook, five quick clips of the site filmed
+ * off a screen with the phone's back camera, and the demo wallet to close. Captions come from the kit where set.
+ */
+export function reelShots(kit: Pick<ReelKit, "hook" | "caption">): ReelShot[] {
+  return [
+    { id: "hook", title: "Your hook", seconds: "4–5s", camera: "selfie", placement: "middle", caption: kit.hook || DEFAULT_REEL_KIT.hook, film: "Film yourself on the front camera somewhere bright. Look into the lens, smile and move naturally: a hair touch, a nod, a little lean." },
+    { id: "chrome", title: "Chrome", seconds: "1–2s", camera: "screen", placement: "lower", caption: "Go to Chrome", film: "Film the app launcher on your laptop or second device, moving in on the Chrome icon as you open it." },
+    { id: "search", title: "Search", seconds: "1–2s", camera: "screen", placement: "lower", caption: "Search “Reelencer”", film: "Film the laptop's address bar as reelencer.com is typed in." },
+    { id: "account", title: "Home page", seconds: "1s", camera: "screen", placement: "lower", caption: "Create an account", film: "Film the Reelencer home page." },
+    { id: "apply", title: "Find gigs", seconds: "2s", camera: "screen", placement: "lower", caption: "Apply to these campaigns and follow the given instructions", film: "Film the Find gigs page with the campaign cards in view." },
+    { id: "proposal", title: "Proposal", seconds: "2s", camera: "screen", placement: "lower", caption: "Send the Proposal", film: "Film a gig page while you scroll down to its proposal section." },
+    { id: "wallet", title: "Wallet", seconds: "2–3s", camera: "screen", placement: "lower", caption: kit.caption || DEFAULT_REEL_KIT.caption, film: "Film the demo wallet while a take plays, and catch the moment the earnings count up." },
   ];
-  if (options.scroll) {
-    scenes.push({
-      title: "Proof of payouts",
-      fromMs: scrollAtMs,
-      toMs: endMs,
-      screen: "The page scrolls down to the payout cycles and breakdown.",
-      camera: "Follow the scroll, hold a beat on the breakdown, then cut.",
-      focus: { left: 22, top: 52, width: 76, height: 46 },
-    });
-  }
-  return scenes;
 }
 
-/** "0", "1.8", "6.5": seconds into the take, for storyboard labels. */
-export const takeSeconds = (ms: number) => String(Math.round(ms / 100) / 10);
-
+/**
+ * The reel is always filmed with the creator's smartphone camera, like the sample video; the setup is which device
+ * shows the recording screen: a laptop, or a second phone or tablet.
+ */
 export type RecordingSetup = "laptop" | "phone";
 
-/** Built-in instructions per setup; an admin's own shot list is shown separately as their notes. */
-export const SETUP_STEPS: Record<RecordingSetup, string[]> = {
+/** Built-in preparation per setup; an admin's own notes are shown separately. */
+export type SetupTip = { kind: "screen" | "glare" | "angle"; title: string; detail: string };
+
+export const SETUP_STEPS: Record<RecordingSetup, SetupTip[]> = {
   laptop: [
-    "Open the recording screen on a laptop, turn the brightness up and press F for full screen.",
-    "Clean the screen and dim the room lights so there is no glare or reflection.",
-    "Hold your phone upright (9:16) about an arm's length away, slightly angled, with the whole screen in frame.",
-    "Start recording on your phone, then press Space on the laptop. The 3-second countdown gives you time to get steady.",
-    "Follow the storyboard as the take plays. Stop recording a beat after the payout breakdown.",
-    "Add the caption sticker in your editor, trim the countdown, then post and submit the reel link.",
+    { kind: "screen", title: "Bright and full screen", detail: "Open the demo wallet on the laptop, turn the brightness up and press F." },
+    { kind: "glare", title: "No glare", detail: "Wipe the screen and keep lamps and windows out of its reflection." },
+    { kind: "angle", title: "Phone upright, slightly angled", detail: "About an arm's length away, with the whole screen in frame." },
   ],
   phone: [
-    "Open the recording screen on your phone and turn on Do Not Disturb so no real notifications appear.",
-    "Start your phone's screen recorder (Control Centre on iPhone, Quick Settings on Android).",
-    "Tap Play take. The controls hide on their own, so only the wallet is recorded.",
-    "Let the full take play through to the payout breakdown, then stop the screen recording.",
-    "Trim the start, add the caption sticker and, if you like, a short clip of yourself reacting, then post and submit the link.",
+    { kind: "screen", title: "Bright and quiet", detail: "Open the demo wallet on the second phone or tablet, turn the brightness up and Do Not Disturb on." },
+    { kind: "glare", title: "No glare", detail: "Prop it up or lay it flat, away from lamps and windows." },
+    { kind: "angle", title: "Phone upright, slightly angled", detail: "Hold your main phone close, with the whole screen in frame." },
   ],
 };
 

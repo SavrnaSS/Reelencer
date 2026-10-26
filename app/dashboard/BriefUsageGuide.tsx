@@ -141,7 +141,7 @@ export default function BriefUsageGuide({
   const done = checks.filter((item) => checked.has(item)).length;
 
   const filmAction: Action | undefined = hasKit
-    ? { label: "Go to recording screen", href: "#reel-kit" }
+    ? { label: "Go to the demo wallet", href: "#reel-kit" }
     : onOpenFullScreen ? { label: "Open full screen", onClick: onOpenFullScreen } : undefined;
   const editAction: Action | undefined = download
     ? download.onClick
@@ -165,7 +165,7 @@ export default function BriefUsageGuide({
       <ul className="mt-3 grid gap-3 @xl:grid-cols-3">
         <Method icon={MethodIcons.film} title="Film it on a screen" tag="Most natural" primary action={filmAction}>
           {hasKit
-            ? "Use the live recording screen above. It counts the figures up and ends on a payout alert, ready to film."
+            ? "Use the demo wallet above. It counts the earnings up and ends on a payout alert, ready to film."
             : `Open ${picture} full screen on a ${landscape ? "laptop" : "laptop or tablet"}, then record it with your phone held upright, slightly angled.`}
         </Method>
         <Method icon={MethodIcons.edit} title="Add it in your editor" action={editAction}>

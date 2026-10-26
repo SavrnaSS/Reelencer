@@ -8,6 +8,9 @@ const __dirname = path.dirname(__filename);
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // The dev-only route badge sits over the app (and over the reel kit's recording screen while it is filmed).
+  // Compile and runtime errors still surface without it.
+  devIndicators: false,
   async redirects() {
     return [
       { source: "/api/admin", destination: "/admin", permanent: false },
