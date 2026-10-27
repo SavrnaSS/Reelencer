@@ -10,7 +10,8 @@ import { formatAmount as formatINR, formatMoney } from "@/lib/money";
 import Link from "next/link";
 import { BrandLogo } from "@/app/_components/BrandLogo";
 import { useSearchParams } from "next/navigation";
-import { findGigHref } from "@/lib/routes";
+import { dashboardLocation, findGigHref, type DashboardSection } from "@/lib/routes";
+import GigDetailPending from "./GigDetailPending";
 import GigWorkPanel, { requestGigWorkStart, type WorkAssignment } from "./GigWorkPanel";
 import GigBriefAssets from "./GigBriefAssets";
 import DashboardJobsView, { type JobPosting } from "./DashboardJobsView";
@@ -43,6 +44,7 @@ import {
   startTransition,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -66,7 +68,6 @@ import { resolveGigApplicationMode, type GigApplicationMode } from "@/lib/gigApp
 import { supabase } from "@/lib/supabaseClient";
 
 type Role = "Admin" | "Worker";
-type DashboardSection = "profile" | "dashboard" | "jobs" | "find" | "accounts" | "messages" | "wallet";
 type AuthSession = { role?: Role; workerId?: string; email?: string; name?: string; at?: number | string };
 
 type Gig = {
@@ -290,9 +291,6 @@ const GIGS_CACHE_TTL_MS = 1000 * 60 * 15;
 const DIRECT_APPLY_CONSENT_TEXT =
   "I understand that recruiter screening, campaign instructions, and brand-specific operating guidelines for this role will be managed through Reelencer after submission.";
 
-// Jobs (applications + assignments) is what creators come back for, so it's the landing section and first tab.
-const DEFAULT_DASHBOARD_SECTION: DashboardSection = "jobs";
-
 const NAV_ITEMS = [
   { id: "jobs", icon: JobsIcon },
   { id: "dashboard", icon: DashboardIcon },
@@ -306,7 +304,6 @@ const NAV_ITEMS = [
 // The upload flow and stored videos are untouched; set to true to bring it back.
 const PRESENTATION_VIDEO_ENABLED = false;
 
-const DASHBOARD_SECTION_IDS = new Set<DashboardSection>(["profile", "dashboard", "jobs", "find", "accounts", "messages", "wallet"]);
 
 const LANGUAGE_OPTIONS: LanguageOption[] = [
   { code: "en", locale: "en-US", dir: "ltr", flag: "🇬🇧", nativeName: "English", englishName: "English" },
@@ -827,12 +824,6 @@ function resolveInitialLanguageCode(): LanguageCode {
   } catch {
     return resolveLanguageCodeFromBrowser();
   }
-}
-
-function resolveDashboardSectionParam(value: string | null): DashboardSection | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase() as DashboardSection;
-  return DASHBOARD_SECTION_IDS.has(normalized) ? normalized : null;
 }
 
 function readCachedSession(): AuthSession | null {
@@ -3562,7 +3553,8 @@ function DashboardPageShell({
 
 export default function DashboardPage() {
   const dashboardQuery = useSearchParams()?.toString() ?? "";
-  const [currentSection, setCurrentSection] = useState<DashboardSection>(DEFAULT_DASHBOARD_SECTION);
+  const location = useMemo(() => dashboardLocation(dashboardQuery), [dashboardQuery]);
+  const [currentSection, setCurrentSection] = useState<DashboardSection>(location.section);
   const [languageCode, setLanguageCode] = useState<LanguageCode>(() => resolveInitialLanguageCode());
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -3597,7 +3589,7 @@ export default function DashboardPage() {
   const [searchText, setSearchText] = useState("");
   const [platformFilter, setPlatformFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All regions");
-  const [selectedGigId, setSelectedGigId] = useState<string | null>(null);
+  const [selectedGigId, setSelectedGigId] = useState<string | null>(location.intent === "details" ? location.gigId : null);
   const [selectedGigIntent, setSelectedGigIntent] = useState<"details" | "apply">("details");
   const [proposalDeskOpen, setProposalDeskOpen] = useState(false);
   const [proposalPitch, setProposalPitch] = useState("");
@@ -3607,13 +3599,13 @@ export default function DashboardPage() {
   const [proposalSaving, setProposalSaving] = useState(false);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [proposalSuccess, setProposalSuccess] = useState<string | null>(null);
-  const [directApplyGigId, setDirectApplyGigId] = useState<string | null>(null);
+  const [directApplyGigId, setDirectApplyGigId] = useState<string | null>(location.intent === "apply" ? location.gigId : null);
   const [directApplyModalOpen, setDirectApplyModalOpen] = useState(false);
   const [directApplyAgreementChecked, setDirectApplyAgreementChecked] = useState(false);
   const [directApplyError, setDirectApplyError] = useState<string | null>(null);
   const [directApplyAuthEmail, setDirectApplyAuthEmail] = useState("");
   const [directApplyContactLoading, setDirectApplyContactLoading] = useState(false);
-  const [directApplyLaunchGigId, setDirectApplyLaunchGigId] = useState<string | null>(null);
+  const [directApplyLaunchGigId, setDirectApplyLaunchGigId] = useState<string | null>(location.intent === "apply" ? location.gigId : null);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [expandedBriefGigId, setExpandedBriefGigId] = useState<string | null>(null);
   const [copiedGigLinkId, setCopiedGigLinkId] = useState<string | null>(null);
@@ -3697,34 +3689,15 @@ export default function DashboardPage() {
     []
   );
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(dashboardQuery);
-    const requestedSection = resolveDashboardSectionParam(params.get("section") ?? params.get("view"));
-    const requestedGigId = params.get("gigId") ?? params.get("gigid");
-    if (!requestedGigId) {
-      setSelectedGigId(null);
-      setDirectApplyGigId(null);
-      setDirectApplyLaunchGigId(null);
-      setProposalDeskOpen(false);
-      if (requestedSection) setCurrentSection(requestedSection);
-      return;
-    }
-
-    const requestedIntent = params.get("intent") === "apply" ? "apply" : "details";
-    if (requestedIntent === "apply") {
-      setSelectedGigId(null);
-      setSelectedGigIntent("details");
-      setDirectApplyGigId(requestedGigId);
-      setDirectApplyLaunchGigId(requestedGigId);
-    } else {
-      setSelectedGigId(requestedGigId);
-      setSelectedGigIntent("details");
-      setDirectApplyGigId(null);
-      setDirectApplyLaunchGigId(null);
-    }
-    setCurrentSection("find");
-  }, [dashboardQuery]);
+  // URL changes (including Back/Forward) settle before paint, so the previous section never flashes.
+  useLayoutEffect(() => {
+    setCurrentSection(location.section);
+    setSelectedGigId(location.intent === "details" ? location.gigId : null);
+    setSelectedGigIntent("details");
+    setDirectApplyGigId(location.intent === "apply" ? location.gigId : null);
+    setDirectApplyLaunchGigId(location.intent === "apply" ? location.gigId : null);
+    setProposalDeskOpen(false);
+  }, [location]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -4474,7 +4447,7 @@ export default function DashboardPage() {
     }
   }, [directApplyTargetApplication, directApplyTargetGig?.id, directApplyWorkerEmail, submissionWorkerId, workerId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!directApplyLaunchGigId) return;
     if (loading || profileLoading || gigsLoading) return;
     if (!directApplyTargetGig || String(directApplyTargetGig.id) !== String(directApplyLaunchGigId)) return;
@@ -5340,6 +5313,15 @@ export default function DashboardPage() {
     }
 
     if (currentSection === "find") {
+      const pendingGigId = selectedGigId ?? directApplyLaunchGigId;
+      if (pendingGigId && (!gigById.has(pendingGigId) || loading || profileLoading)) {
+        return <GigDetailPending
+          loading={loading || profileLoading || gigsLoading || liveSyncing}
+          failed={Boolean(error)}
+          onBack={() => navigateFromView("find")}
+          onRetry={() => { void refreshLiveData(true); }}
+        />;
+      }
       if (selectedGig) {
         const detailBrief = getGigBrief(selectedGig);
         const detailRequirements = getGigRequirementItems(selectedGig);

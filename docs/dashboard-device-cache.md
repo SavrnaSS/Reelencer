@@ -10,4 +10,6 @@ An explicit allowlist preserves display fields. Passwords, authentication tokens
 
 The client coalesces overlapping dashboard reads. A confirmed mutation can queue a fresh follow-up and prevents an older response from overwriting the result. One visible-page polling loop and realtime invalidations refresh the dashboard; profile details refresh separately. Hidden tabs pause work and reconnecting requests a catch-up. The header distinguishes saved data from successfully refreshed data.
 
+The URL selects the initial dashboard section and requested gig before the first render. Back/Forward changes settle before paint. A gig deep link retains its detail layout while listing and application data load, rather than briefly rendering Jobs or the discovery list. Failed reads offer a retry; a missing listing has an explicit unavailable state. Saved detail data remains visible during background refreshes.
+
 The first visit on a device still needs a successful read to populate the cache. A full offline page load is not provided by a service worker; saved data protects the dashboard when its API reads are slow or unavailable after the page shell loads.

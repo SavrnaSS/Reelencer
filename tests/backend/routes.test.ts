@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CREATOR_HOME_HREF, findGigHref, legacyGigDestination } from "../../lib/routes";
+import { CREATOR_HOME_HREF, dashboardLocation, findGigHref, legacyGigDestination } from "../../lib/routes";
 
 test("gig details and application links encode IDs inside the dashboard", () => {
   const id = "campaign & reel/1";
@@ -27,4 +27,21 @@ test("missing legacy gigs return to Jobs and redirect parameters cannot leave th
   assert.equal(target.pathname, "/dashboard");
   assert.equal(target.searchParams.has("next"), false);
   assert.equal(target.searchParams.has("intent"), false);
+});
+
+test("the initial dashboard view follows the requested section instead of defaulting to Jobs", () => {
+  for (const section of ["profile", "dashboard", "jobs", "find", "accounts", "messages", "wallet"]) {
+    assert.deepEqual(dashboardLocation(`section=${section}`), { section, gigId: null, intent: "details" });
+  }
+  assert.equal(dashboardLocation("").section, "jobs");
+  assert.equal(dashboardLocation("section=unknown").section, "jobs");
+  assert.equal(dashboardLocation("view=wallet").section, "wallet");
+});
+
+test("deep links resolve the exact gig and application intent before data becomes available", () => {
+  assert.deepEqual(dashboardLocation("section=find&gigId=reaction-video"), { section: "find", gigId: "reaction-video", intent: "details" });
+  assert.deepEqual(dashboardLocation("section=jobs&gigId=reaction-video&intent=apply"), { section: "find", gigId: "reaction-video", intent: "apply" });
+  assert.deepEqual(dashboardLocation("view=find&gigid=%20reaction-video%20"), { section: "find", gigId: "reaction-video", intent: "details" });
+  assert.deepEqual(dashboardLocation("section=find&gigId=video&intent=external"), { section: "find", gigId: "video", intent: "details" });
+  assert.equal(dashboardLocation(`section=find&gigId=${"x".repeat(101)}`).gigId, null);
 });
