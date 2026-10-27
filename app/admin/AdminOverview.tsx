@@ -172,14 +172,14 @@ export default function AdminOverview({ adminId, counts, countsUpdatedAt, onCoun
     {resource.error ? <div role="status" className={styles.notice}><span>{data ? "Showing saved activity. The latest update could not be loaded." : "User activity is temporarily unavailable. Your other admin tools are ready to use."}</span><button type="button" onClick={refreshAll}>Try again</button></div> : null}
     <div className={styles.stats}>
       {([
-        { label: "Total users", value: data?.totalUsers, icon: "users" as Glyph, description: summary ? `${number(summary.newUsers)} joined in the last ${period} days` : "Creator accounts on the platform", section: "Workers" as AdminSection, growth: null },
-        { label: "Active users", value: summary?.activeUsers, icon: "pulse" as Glyph, description: `Joined or took action in ${period} days`, section: "Workers" as AdminSection, growth: summary && previous ? { current: summary.activeUsers, previous: previous.activeUsers } : null },
-        { label: "Linked accounts", value: totals?.linkedAccounts, icon: "link" as Glyph, description: "Active and paused social profiles", section: "linked-accounts" as AdminSection, growth: null },
-        { label: "Pending payouts", value: totals?.pendingPayouts, icon: "wallet" as Glyph, description: totals ? `${totals.pendingClaims} earnings claim${totals.pendingClaims === 1 ? "" : "s"} · ${totals.pendingWithdrawals} withdrawal${totals.pendingWithdrawals === 1 ? "" : "s"}` : "Earnings claims and withdrawals", section: "Payouts" as AdminSection, growth: null },
-      ]).map((stat, index) => <button key={stat.label} type="button" className={`${styles.stat} ${index === 1 ? styles.featuredStat : ""}`} aria-busy={stat.value === undefined && resource.loading || undefined} onClick={() => onNavigate(stat.section)}>
-        <span className={styles.statTop}><span>{stat.label}</span><span className={styles.statIcon}><Glyph name={stat.icon} /></span></span>
-        <strong>{stat.value === undefined ? "–" : number(stat.value)}</strong><span className={styles.statDescription}>{stat.description}</span>
-        {stat.growth ? <span className={styles.statFoot}><Delta {...stat.growth} days={period} /></span> : <span className={styles.statFoot}>View {stat.label.toLowerCase()}<Glyph name="arrow" /></span>}
+        { label: "Total users", value: data?.totalUsers, icon: "users" as Glyph, description: summary ? `${number(summary.newUsers)} joined · ${period} days` : "Creator accounts on the platform", section: "Workers" as AdminSection, growth: null },
+        { label: "Active users", value: summary?.activeUsers, icon: "pulse" as Glyph, description: `Joined or took action · ${period} days`, section: "Workers" as AdminSection, growth: summary && previous ? { current: summary.activeUsers, previous: previous.activeUsers } : null },
+        { label: "Linked accounts", value: totals?.linkedAccounts, icon: "link" as Glyph, description: "Active and paused profiles", section: "linked-accounts" as AdminSection, growth: null },
+        { label: "Pending payouts", value: totals?.pendingPayouts, icon: "wallet" as Glyph, description: totals ? `${number(totals.pendingClaims)} claim${totals.pendingClaims === 1 ? "" : "s"} · ${number(totals.pendingWithdrawals)} withdrawal${totals.pendingWithdrawals === 1 ? "" : "s"}` : "Earnings claims and withdrawals", section: "Payouts" as AdminSection, growth: null },
+      ]).map((stat, index) => <button key={stat.label} type="button" className={`${styles.stat} ${index === 1 ? styles.featuredStat : ""}`} title={`View ${stat.label.toLowerCase()}`} aria-busy={stat.value === undefined && resource.loading || undefined} onClick={() => onNavigate(stat.section)}>
+        <span className={styles.statTop}><span className={styles.statLabel}><span className={styles.statIcon}><Glyph name={stat.icon} /></span><span>{stat.label}</span></span><Glyph name="arrow" className={styles.statArrow} /></span>
+        <span className={styles.statValue}><strong>{stat.value === undefined ? "–" : number(stat.value)}</strong>{stat.growth ? <Delta {...stat.growth} days={period} /> : null}</span>
+        <span className={styles.statDescription}>{stat.description}</span>
       </button>)}
     </div>
     <div className={styles.mainGrid}>
