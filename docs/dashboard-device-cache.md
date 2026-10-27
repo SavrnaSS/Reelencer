@@ -1,0 +1,13 @@
+# Dashboard refresh and device storage
+
+The creator dashboard restores reviewed display data from device storage after Supabase identifies the local session. Jobs, application progress, linked profiles, saved reel metrics and earnings can render before the network responds. Cookies are not used to transport dashboard collections. API authorization remains authoritative on every request.
+
+The device cache is namespaced by the current Auth user ID. Entries expire after 24 hours and become stale after 20 seconds. Reading a saved entry does not extend its lifetime. Successful reads and confirmed mutations update it; failed reads retain the last good display. Storage is bounded to eight entries, 1 MB per entry and 3 MB overall. Quota failures or unavailable storage fall back to memory. Unversioned, corrupt, expired and future-dated entries are discarded. The old unscoped application cache is removed.
+
+An explicit allowlist preserves display fields. Passwords, authentication tokens, payment addresses, identity documents and signed media links are excluded. Intro video URLs are fetched when Profile opens. Signing out, changing accounts, or receiving an authoritative session/access denial clears private cached data and fences older requests. Account changes in another tab discard only the old user's data, leaving the new user's owner marker intact.
+
+`GET /api/dashboard` reads gigs, applications, assignments and payout batches in parallel through their existing authorized handlers. All four handlers share the same request's verified actor, avoiding repeated Auth/profile/IP checks. The worker filter always comes from that actor. Partial failures name the affected sections without replacing their saved values with empty arrays. A complete response includes a user-specific ETag; an unchanged, freshly authorized read returns 304. Neither successful responses nor 304 responses are stored in a shared HTTP cache.
+
+The client coalesces overlapping dashboard reads. A confirmed mutation can queue a fresh follow-up and prevents an older response from overwriting the result. One visible-page polling loop and realtime invalidations refresh the dashboard; profile details refresh separately. Hidden tabs pause work and reconnecting requests a catch-up. The header distinguishes saved data from successfully refreshed data.
+
+The first visit on a device still needs a successful read to populate the cache. A full offline page load is not provided by a service worker; saved data protects the dashboard when its API reads are slow or unavailable after the page shell loads.

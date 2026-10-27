@@ -7,6 +7,7 @@ import type { LinkedSocialAccount } from "./socialAnalytics";
 import { supabase } from "./supabaseClient";
 import { useVisibleRefresh } from "./useVisibleRefresh";
 import { needsProfileRecovery } from "./accountProfileHealth";
+import { creatorAccountData, isCreatorCacheIdentity, readCreatorCache, writeCreatorCache, type CreatorAccountData } from "./creatorDeviceCache";
 
 type AccountData = { accounts: LinkedSocialAccount[]; accountIssues?: LinkedSocialAccount[]; statsEnabled: boolean; screenshotReader: boolean };
 export type SocialAccountsLoad = { state: "loading" } | { state: "error"; message: string; unavailable?: boolean } | ({ state: "ready"; refreshError?: string } & AccountData);
@@ -15,6 +16,7 @@ export type SocialAccountsLoad = { state: "loading" } | { state: "error"; messag
 export function useSocialAccounts(enabled: boolean, userId: string | null = null) {
   const [load, setLoad] = useState<SocialAccountsLoad>({ state: "loading" });
   const [refreshing, setRefreshing] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const running = useRef<{ promise: Promise<void>; sync: boolean; controller: AbortController } | null>(null);
   const generation = useRef(0);
 
@@ -23,7 +25,10 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
     const revision = generation;
     queueMicrotask(() => {
       if (disposed) return;
-      setLoad({ state: "loading" });
+      const cached = enabled && userId ? readCreatorCache<CreatorAccountData>(userId, "accounts") : null;
+      try { setLoad(cached ? { state: "ready", ...creatorAccountData(cached.data) } : { state: "loading" }); }
+      catch { setLoad({ state: "loading" }); }
+      setLoadedFor(userId);
       setRefreshing(false);
     });
     return () => {
@@ -35,7 +40,7 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
   }, [enabled, userId]);
 
   const refresh = useCallback(async (sync = false) => {
-    if (!enabled) return;
+    if (!enabled || !userId || !isCreatorCacheIdentity(userId)) return;
     if (running.current) {
       const previous = running.current;
       await previous.promise;
@@ -59,8 +64,11 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
             unavailable: payload?.code === "schema_outdated" || response.status === 503,
           });
         }
-        if (controller.signal.aborted || version !== generation.current) return;
-        setLoad({ state: "ready", accounts: payload.accounts.filter((account: LinkedSocialAccount) => account.status !== "unlinked"), accountIssues: Array.isArray(payload.accountIssues) ? payload.accountIssues : [], statsEnabled: payload.statsEnabled !== false, screenshotReader: payload.screenshotReader === true });
+        if (controller.signal.aborted || version !== generation.current || !isCreatorCacheIdentity(userId)) return;
+        const data = creatorAccountData(payload);
+        writeCreatorCache(userId, "accounts", data);
+        setLoadedFor(userId);
+        setLoad({ state: "ready", ...data, accounts: data.accounts.filter(account => account.status !== "unlinked") });
         window.dispatchEvent(new Event("social-accounts-refreshed"));
       } catch (error) {
         if (controller.signal.aborted || version !== generation.current) return;
@@ -137,27 +145,38 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
   const updateAccount = useCallback((account: LinkedSocialAccount) => {
     // A read started before a confirmed sync/submission must not undo that result.
     generation.current++;
-    setLoad(previous => previous.state === "ready" ? {
+    setLoad(previous => {
+      if (previous.state !== "ready") return previous;
+      const next: SocialAccountsLoad = {
       ...previous, refreshError: undefined,
       accounts: account.status === "unlinked" ? previous.accounts.filter(item => item.id !== account.id) : previous.accounts.some(item => item.id === account.id) ? previous.accounts.map(item => item.id === account.id ? account : item) : [account, ...previous.accounts],
       accountIssues: needsProfileRecovery(account) ? [account, ...(previous.accountIssues ?? []).filter(item => item.id !== account.id)] : (previous.accountIssues ?? []).filter(item => item.id !== account.id),
-    } : previous);
+      };
+      if (userId) writeCreatorCache(userId, "accounts", creatorAccountData(next));
+      return next;
+    });
     window.dispatchEvent(new Event("social-accounts-refreshed"));
-  }, []);
+  }, [userId]);
 
   const updatePost = useCallback((accountId: string, post: LinkedSocialAccount["posts"][number]) => {
     generation.current++;
-    setLoad(previous => previous.state === "ready" ? {
+    setLoad(previous => {
+      if (previous.state !== "ready") return previous;
+      const next: SocialAccountsLoad = {
       ...previous, refreshError: undefined,
       accounts: previous.accounts.map(account => account.id === accountId ? {
         ...account, posts: [post, ...account.posts.filter(item => item.id !== post.id)],
       } : account),
-    } : previous);
+      };
+      if (userId) writeCreatorCache(userId, "accounts", creatorAccountData(next));
+      return next;
+    });
     window.dispatchEvent(new Event("social-accounts-refreshed"));
-  }, []);
+  }, [userId]);
 
-  const earnings = useMemo(() => load.state === "ready" ? summarizeAccountEarnings([...load.accounts, ...(load.accountIssues ?? [])]) : null, [load]);
-  return { load, refreshing, refresh, updateAccount, updatePost, earnings };
+  const visibleLoad = useMemo<SocialAccountsLoad>(() => loadedFor === userId ? load : { state: "loading" }, [loadedFor, userId, load]);
+  const earnings = useMemo(() => visibleLoad.state === "ready" ? summarizeAccountEarnings([...visibleLoad.accounts, ...(visibleLoad.accountIssues ?? [])]) : null, [visibleLoad]);
+  return { load: visibleLoad, refreshing, refresh, updateAccount, updatePost, earnings };
 }
 
 export type SocialAccountsState = ReturnType<typeof useSocialAccounts>;

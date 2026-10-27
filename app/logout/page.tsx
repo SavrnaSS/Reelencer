@@ -3,6 +3,7 @@ import { apiFetch as fetch } from "@/lib/api/client";
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { clearCreatorDeviceCache } from "@/lib/creatorDeviceCache";
 
 const LS_KEYS = { AUTH: "igops:auth", LOGOUT_AT: "igops:logoutAt" } as const;
 
@@ -11,6 +12,7 @@ export default function LogoutPage() {
     let alive = true;
 
     const run = () => {
+      clearCreatorDeviceCache();
       try {
         window.localStorage.removeItem(LS_KEYS.AUTH);
         window.localStorage.setItem(LS_KEYS.LOGOUT_AT, JSON.stringify({ at: Date.now() }));

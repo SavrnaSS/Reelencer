@@ -46,12 +46,16 @@ export function createAdminSessionCache({
   maxEntries = 24,
   maxEntryBytes = 400_000,
   maxBytes = 2_000_000,
+  storagePrefix = ADMIN_CACHE_STORAGE_PREFIX,
+  maxAgeLimitMs = MAX_AGE,
 }: {
   storage?: AdminCacheStorage | (() => AdminCacheStorage | undefined);
   now?: () => number;
   maxEntries?: number;
   maxEntryBytes?: number;
   maxBytes?: number;
+  storagePrefix?: string;
+  maxAgeLimitMs?: number;
 } = {}) {
   const entries = new Map<string, Entry>();
   const running = new Map<string, Running>();
@@ -60,7 +64,7 @@ export function createAdminSessionCache({
   const listeners = new Set<() => void>();
   let revision = 0;
   const idFor = (scope: string, key: string) => `${scope}\0${key}`;
-  const storageKey = (scope: string, key: string) => `${ADMIN_CACHE_STORAGE_PREFIX}${encodeURIComponent(scope)}:${encodeURIComponent(key)}`;
+  const storageKey = (scope: string, key: string) => `${storagePrefix}${encodeURIComponent(scope)}:${encodeURIComponent(key)}`;
   const getStorage = () => { try { return typeof storage === "function" ? storage() : storage; } catch { return undefined; } };
   const emit = () => { revision++; listeners.forEach(listener => listener()); };
   const removeStored = (scope: string, key: string) => { try { getStorage()?.removeItem(storageKey(scope, key)); } catch { /* Storage may be unavailable in private browsing. */ } };
@@ -70,14 +74,14 @@ export function createAdminSessionCache({
       const target = getStorage();
       if (target) for (let index = 0; index < target.length; index++) {
         const key = target.key(index);
-        if (key?.startsWith(ADMIN_CACHE_STORAGE_PREFIX)) result.push(key);
+        if (key?.startsWith(storagePrefix)) result.push(key);
       }
     } catch { /* Keep the in-memory cache available. */ }
     return result;
   };
   const abort = (id: string) => { running.get(id)?.controller.abort(); running.delete(id); queued.delete(id); };
   const policyFor = (policy: AdminCachePolicy) => {
-    const maxAge = Math.min(MAX_AGE, Math.max(0, Number.isFinite(policy.maxAgeMs) ? policy.maxAgeMs! : DEFAULT_MAX_AGE));
+    const maxAge = Math.min(maxAgeLimitMs, Math.max(0, Number.isFinite(policy.maxAgeMs) ? policy.maxAgeMs! : DEFAULT_MAX_AGE));
     return { maxAge, ttl: Math.min(maxAge, Math.max(0, Number.isFinite(policy.ttlMs) ? policy.ttlMs! : DEFAULT_TTL)) };
   };
   const pruneMemory = () => {
@@ -188,7 +192,7 @@ export function createAdminSessionCache({
     for (const id of running.keys()) if (!scope || id.startsWith(`${scope}\0`)) abort(id);
     for (const id of errors.keys()) if (!scope || id.startsWith(`${scope}\0`)) errors.delete(id);
     const target = getStorage();
-    for (const key of keys()) if (!scope || key.startsWith(`${ADMIN_CACHE_STORAGE_PREFIX}${encodeURIComponent(scope)}:`)) {
+    for (const key of keys()) if (!scope || key.startsWith(`${storagePrefix}${encodeURIComponent(scope)}:`)) {
       try { target?.removeItem(key); } catch { /* The memory cache is still cleared. */ }
     }
     emit();

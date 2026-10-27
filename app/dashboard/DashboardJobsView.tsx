@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { accountPlatformFor } from "@/lib/accountSetup";
+import { formatMoney as formatAmount } from "@/lib/money";
 import { buildCreatorJobs, creatorJobCounts, CREATOR_JOB_GROUPS, CREATOR_JOB_LABELS, CREATOR_JOB_STEPS, type CreatorJob, type CreatorJobAssignment, type CreatorJobGroup } from "@/lib/creatorJobs";
 import {
   Button,
@@ -22,8 +24,9 @@ import {
   getInitials,
   safeTime,
 } from "./dashboardUi";
+import PlatformGlyph from "./PlatformGlyph";
 
-type JobsSection = "profile" | "dashboard" | "jobs" | "find" | "messages" | "wallet";
+type JobsSection = "profile" | "dashboard" | "jobs" | "find" | "messages" | "wallet" | "accounts";
 
 type JobsGig = {
   id: string;
@@ -45,6 +48,23 @@ type JobsAssignmentEntry = {
 
 type JobsApplication = { id: string; gigId: string; status: string; appliedAt: string; decidedAt?: string };
 
+/**
+ * A Content Posting job after approval: the work happens on the creator's linked account, so its progress is the
+ * account's state and the reels submitted from it, not a task submission.
+ */
+export type JobPosting = {
+  state: "checking" | "setup" | "verifying" | "changes" | "fix" | "linked";
+  handle?: string;
+  submitted: number;
+  approved: number;
+  inReview: number;
+  rejected: number;
+  earned: number;
+  paid: number;
+  inPayout: number;
+  symbol: string;
+};
+
 export type DashboardJobsViewProps = {
   loading: boolean;
   assignmentEntries: JobsAssignmentEntry[];
@@ -55,6 +75,8 @@ export type DashboardJobsViewProps = {
   earningsEstimate?: boolean;
   earningsLoading?: boolean;
   earningsUnavailable?: boolean;
+  /** Content Posting jobs the creator was approved for, keyed by gig id. */
+  postingByGigId?: Map<string, JobPosting>;
   buildDetailHref: (gig: JobsGig) => string;
   onNavigate: (section: JobsSection, options?: { gigId?: string | null; intent?: "details" | "apply" }) => void;
 };
@@ -78,11 +100,132 @@ function payoutValue(payout?: string) {
   return match ? Number(match[0]) : 0;
 }
 
+const POSTING_STEPS = ["Applied", "In review", "Approved"];
+
+function isPostingJob(row: Row) {
+  return String(row.gig?.gigType ?? "").trim().toLowerCase() === "content posting";
+}
+
+/** Approval is the last hiring step for Content Posting: from there, progress comes from the linked account. */
+function isHiredPostingJob(row: Row) {
+  return isPostingJob(row) && row.group !== "closed" && row.stage >= 2;
+}
+
+/** The status shown for a row: an approved Content Posting creator is "Approved", not waiting on a task. */
+function statusLabel(row: Row) {
+  return isHiredPostingJob(row) ? "Approved" : row.status;
+}
+
 /** Where a row sits on its journey, for the stage tracker. `closed` rows stop where they ended. */
-function stagesFor(row: Row): { steps: string[]; reached: number; closed: boolean } {
-  const steps: string[] = [...CREATOR_JOB_STEPS];
-  if (row.group === "closed") steps[row.stage] = row.status;
-  return { steps, reached: row.stage, closed: row.group === "closed" };
+function stagesFor(row: Row): { steps: string[]; reached: number; closed: boolean; complete: boolean } {
+  const closed = row.group === "closed";
+  const posting = isPostingJob(row);
+  const steps: string[] = posting ? [...POSTING_STEPS] : [...CREATOR_JOB_STEPS];
+  const reached = Math.min(row.stage, steps.length - 1);
+  if (closed) steps[reached] = row.status;
+  return { steps, reached, closed, complete: row.group === "done" || (posting && !closed && reached === steps.length - 1) };
+}
+
+const money = (amount: number, symbol: string) => formatAmount(amount, symbol || "₹");
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** One line for the account's state, and the next thing to do on it when there is one. */
+function postingSummary(posting: JobPosting | undefined, platform: string) {
+  const at = posting?.handle ? `@${posting.handle}` : `your ${platform} account`;
+  if (!posting || posting.state === "checking") return { tone: "wait" as const, text: "Checking your linked account…", next: "" };
+  if (posting.state === "setup") return { tone: "todo" as const, text: `Set up your ${platform} account`, next: "Link it to start posting" };
+  if (posting.state === "verifying") return { tone: "wait" as const, text: `${at} · verifying it's yours`, next: "Add your code to the bio" };
+  if (posting.state === "changes") return { tone: "bad" as const, text: `${at} needs changes`, next: "See the team's note" };
+  if (posting.state === "fix") return { tone: "bad" as const, text: `${at} couldn't be found`, next: "Verify the account again" };
+  if (!posting.submitted) return { tone: "todo" as const, text: `Posting on ${at}`, next: "Post and submit your first reel", short: at };
+  return { tone: "good" as const, text: `Posting on ${at}`, next: "", short: at };
+}
+
+/** The posting state in one short line, for table rows and board cards. */
+function PostingLine({ row, posting }: { row: Row; posting?: JobPosting }) {
+  const summary = postingSummary(posting, accountPlatformFor(row.gig?.platform).label);
+  const amount = posting ? posting.paid || posting.inPayout || posting.earned : 0;
+  const text = posting?.state === "linked" && posting.submitted
+    ? [plural(posting.submitted, "reel"), posting.approved ? `${posting.approved} approved` : "", amount ? money(amount, posting.symbol) : ""].filter(Boolean).join(" · ")
+    : summary.next || summary.text;
+  return (
+    <span className={cx("mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-4", summary.tone === "bad" ? "text-[#9a3b2f]" : summary.tone === "good" ? "text-[#24613a]" : "text-[#6b746e]")}>
+      <span aria-hidden="true" className={cx("h-1.5 w-1.5 shrink-0 rounded-full", summary.tone === "bad" ? "bg-[#c4554a]" : summary.tone === "good" ? "bg-[#2e7d4f]" : summary.tone === "wait" ? "bg-[#d39b2a]" : "bg-[#9aa29c]")} />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
+
+/** Linked-account progress for an approved Content Posting job: reels from the account and what they've earned. */
+function PostingStrip({ row, posting, onOpen, className }: { row: Row; posting?: JobPosting; onOpen?: () => void; className?: string }) {
+  const platform = accountPlatformFor(row.gig?.platform);
+  const summary = postingSummary(posting, platform.label);
+  const amount = posting
+    ? posting.paid
+      ? { value: money(posting.paid, posting.symbol), caption: "paid" }
+      : posting.inPayout
+        ? { value: money(posting.inPayout, posting.symbol), caption: "in payout" }
+        : posting.earned
+          ? { value: money(posting.earned, posting.symbol), caption: "earned" }
+          : null
+    : null;
+  const chips = posting && posting.submitted
+    ? [
+        { label: plural(posting.submitted, "reel"), tone: "text-[#3b443e] bg-white ring-1 ring-[#e3e7e2]" },
+        posting.approved ? { label: `${posting.approved} approved`, tone: "text-[#24613a] bg-[#e7f3ea]" } : null,
+        posting.inReview ? { label: `${posting.inReview} in review`, tone: "text-[#8a5a12] bg-[#fbf1dc]" } : null,
+        posting.rejected ? { label: `${posting.rejected} not accepted`, tone: "text-[#9a3b2f] bg-[#fbe9e6]" } : null,
+      ].filter((chip): chip is { label: string; tone: string } => !!chip)
+    : [];
+  const iconTone = summary.tone === "good" ? "bg-[#e7f3ea] text-[#24613a]" : summary.tone === "bad" ? "bg-[#fbe9e6] text-[#9a3b2f]" : summary.tone === "wait" ? "bg-[#fbf1dc] text-[#8a5a12]" : "bg-white text-[#2b5d4a] ring-1 ring-[#dfe5df]";
+  const body = (
+    <>
+      <span className={cx("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", iconTone)}>
+        <PlatformGlyph platform={platform} className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold leading-5 text-[#1a201c]">
+          {"short" in summary ? (
+            <span className="truncate">
+              <span className="hidden @min-[24rem]:inline">Posting on </span>
+              {summary.short}
+            </span>
+          ) : (
+            <span className="truncate">{summary.text}</span>
+          )}
+          {posting?.state === "linked" ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-[#2e7d4f]">
+              <span className="relative flex h-1.5 w-1.5"><span className="absolute inset-0 animate-ping rounded-full bg-[#2e7d4f]/40 motion-reduce:hidden" /><span className="h-1.5 w-1.5 rounded-full bg-[#2e7d4f]" /></span>
+              <span className="hidden @min-[24rem]:inline">Tracking</span>
+              <span className="sr-only @min-[24rem]:hidden">Tracking</span>
+            </span>
+          ) : null}
+        </span>
+        {chips.length ? (
+          <span className="mt-1 flex flex-wrap gap-1">
+            {chips.map((chip) => (
+              <span key={chip.label} className={cx("rounded-full px-2 py-px text-[10.5px] font-medium tabular-nums", chip.tone)}>{chip.label}</span>
+            ))}
+          </span>
+        ) : summary.next ? (
+          <span className="block truncate text-[11.5px] leading-4 text-[#6b746e]">Next: {summary.next}</span>
+        ) : null}
+      </span>
+      {amount ? (
+        <span className="shrink-0 text-right leading-tight">
+          <span className="block text-[14px] font-semibold tabular-nums text-[#1f5131]">{amount.value}</span>
+          <span className="block text-[10.5px] text-[#7a827c]">{amount.caption}</span>
+        </span>
+      ) : null}
+      {onOpen ? <Icon.ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#a3aaa4]" /> : null}
+    </>
+  );
+  const shell = cx("flex min-w-0 items-center gap-2.5 rounded-lg text-left", className);
+  return onOpen ? (
+    <button type="button" onClick={onOpen} className={cx(shell, "w-full transition hover:bg-white/70")}>{body}</button>
+  ) : (
+    <div className={shell}>{body}</div>
+  );
 }
 
 const GROUP_META: Record<Group, { bar: string; dot: string; hint: string }> = {
@@ -143,15 +286,25 @@ function CompanyMark({ name, size = "md" }: { name?: string; size?: "sm" | "md" 
   );
 }
 
+/** What happens after the row's current stage; empty once the journey is over. */
+function nextStepFor(row: Row): string {
+  if (row.group === "active") return "Submit your work";
+  if (row.group === "submitted") return "Work approval";
+  if (row.group === "review") return row.stage === 0 ? "Application review" : "Hiring decision";
+  if (row.group === "done" && row.stage < CREATOR_JOB_STEPS.length - 1) return "Payout";
+  return "";
+}
+
 /** Dots joined by a line: done steps filled, the current step ringed, a closed row ends in grey. */
-function StageTracker({ row, showLabels = false, className }: { row: Row; showLabels?: boolean; className?: string }) {
-  const { steps, reached, closed } = stagesFor(row);
+function StageTracker({ row, showLabels = false, posting, onOpenPosting, className }: { row: Row; showLabels?: boolean; posting?: JobPosting; onOpenPosting?: () => void; className?: string }) {
+  const { steps, reached, closed, complete } = stagesFor(row);
   const current = steps[reached];
+  if (showLabels) return <StageStepper row={row} posting={posting} onOpenPosting={onOpenPosting} className={className} />;
   return (
     <div className={cx("min-w-0", className)} aria-label={`Progress: ${current} (step ${reached + 1} of ${steps.length})`} role="img">
       <div className="flex items-center">
         {steps.map((step, index) => {
-          const done = index < reached || (index === reached && (row.group === "done" || closed));
+          const done = index < reached || (index === reached && (complete || closed));
           const isCurrent = index === reached;
           const tone = closed && isCurrent ? "bg-[#b9bfba]" : "bg-[#2e7d4f]";
           return (
@@ -170,12 +323,69 @@ function StageTracker({ row, showLabels = false, className }: { row: Row; showLa
           );
         })}
       </div>
-      {showLabels ? (
-        <div className="mt-1.5 flex items-center justify-between gap-2 text-[10.5px] font-medium text-[#8a928c]">
-          <span className="min-w-0 truncate font-semibold text-[#1a201c]">{current}</span>
-          <span className="shrink-0 tabular-nums">{reached + 1} of {steps.length}</span>
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The labelled tracker: status and what comes next on top, then the six stages. Stage names appear under the
+ * dots once the tracker has room (its own width, so it works in cards, columns and full rows alike).
+ */
+function StageStepper({ row, posting, onOpenPosting, className }: { row: Row; posting?: JobPosting; onOpenPosting?: () => void; className?: string }) {
+  const { steps, reached, closed, complete } = stagesFor(row);
+  const hired = isHiredPostingJob(row);
+  const next = hired ? "" : nextStepFor(row);
+  const finished = complete && reached === steps.length - 1;
+  return (
+    <div className={cx("@container min-w-0", className)}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex min-w-0 items-start gap-1.5 text-[12.5px] leading-5">
+          <span aria-hidden="true" className={cx("mt-1.5 h-2 w-2 shrink-0 rounded-full", GROUP_META[row.group].dot)} />
+          <span className="min-w-0">
+            <span className="font-semibold text-[#1a201c]">{statusLabel(row)}</span>
+            {next ? <span className="text-[#6b746e]"> · Next: {next}</span> : hired ? <span className="text-[#6b746e]"> · Hiring complete</span> : finished ? <span className="text-[#6b746e]"> · All done</span> : null}
+          </span>
+        </span>
+        <span className="shrink-0 self-start pt-px text-[11px] leading-5 tabular-nums text-[#8a928c]">
+          {hired ? "Hired" : finished ? "Complete" : closed ? "Closed" : `${reached + 1} of ${steps.length}`}
+        </span>
+      </div>
+      <ol className="mt-2.5 grid" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }} aria-label={`Progress: ${statusLabel(row)}, step ${reached + 1} of ${steps.length}`}>
+        {steps.map((step, index) => {
+          const done = index < reached || (index === reached && (complete || closed));
+          const isCurrent = index === reached;
+          const dot = done
+            ? closed && isCurrent ? "border-[#b9bfba] bg-[#b9bfba] text-white" : "border-[#2e7d4f] bg-[#2e7d4f] text-white"
+            : isCurrent ? "border-[#2e7d4f] bg-white" : "border-[#d3d8d3] bg-white";
+          return (
+            <li key={step} className="relative flex min-w-0 flex-col items-center" aria-current={isCurrent ? "step" : undefined}>
+              {index < steps.length - 1 ? (
+                <span aria-hidden="true" className={cx("absolute left-[calc(50%+10px)] right-[calc(-50%+10px)] top-[7px] h-[2px] rounded-full", index < reached ? (closed ? "bg-[#d6dad6]" : "bg-[#2e7d4f]/70") : "bg-[#e6e9e5]")} />
+              ) : null}
+              <span className={cx("relative flex h-4 w-4 items-center justify-center rounded-full border-2", dot)}>
+                {done ? (
+                  <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 6.2 2 2L9 4" /></svg>
+                ) : isCurrent ? (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#2e7d4f]" />
+                    <span className="absolute inset-[-5px] animate-ping rounded-full bg-[#2e7d4f]/15 motion-reduce:hidden" />
+                  </>
+                ) : null}
+              </span>
+              <span
+                className={cx(
+                  "mt-1.5 hidden w-full truncate px-0.5 text-center text-[10.5px] leading-4 @min-[19rem]:block",
+                  isCurrent ? "font-semibold text-[#1a201c]" : done ? "text-[#4b6b55]" : "text-[#9aa29c]"
+                )}
+              >
+                {step}
+              </span>
+              <span className="sr-only">{`${step}${done ? ", done" : isCurrent ? ", current" : ""}`}</span>
+            </li>
+          );
+        })}
+      </ol>
+      {hired ? <PostingStrip row={row} posting={posting} onOpen={onOpenPosting} className="mt-3 border-t border-[#e6ebe5] px-0 pt-3" /> : null}
     </div>
   );
 }
@@ -232,9 +442,12 @@ export default function DashboardJobsView({
   earningsEstimate = false,
   earningsLoading = false,
   earningsUnavailable = false,
+  postingByGigId,
   buildDetailHref,
   onNavigate,
 }: DashboardJobsViewProps) {
+  const postingFor = (row: Row) => (isHiredPostingJob(row) ? postingByGigId?.get(String(row.gigId)) : undefined);
+  const openPosting = () => onNavigate("accounts");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("newest");
@@ -295,13 +508,18 @@ export default function DashboardJobsView({
   const upNext = useMemo(() => {
     const newest = (list: Row[]) => [...list].sort((a, b) => safeTime(b.date) - safeTime(a.date))[0];
     const active = newest(sourceRows.filter((row) => row.group === "active"));
-    if (active) return { row: active, eyebrow: "Up next", title: "Continue your job", note: "Open the brief and follow the next steps for this job." };
+    if (active) {
+      if (!isHiredPostingJob(active)) return { row: active, eyebrow: "Up next", title: "Continue your job" };
+      const posting = postingByGigId?.get(String(active.gigId));
+      const title = !posting || posting.state === "checking" ? "You're approved. Start posting" : posting.state === "linked" ? (posting.submitted ? "Keep posting reels" : "Post your first reel") : posting.state === "fix" || posting.state === "changes" ? "Fix your linked account" : "Link your account to start posting";
+      return { row: active, eyebrow: "Approved · posting", title };
+    }
     const submitted = newest(sourceRows.filter((row) => row.group === "submitted"));
-    if (submitted) return { row: submitted, eyebrow: "Submitted for review", title: "Your work is being reviewed", note: "Check here for approval and payout updates." };
+    if (submitted) return { row: submitted, eyebrow: "Submitted for review", title: "Your work is being reviewed" };
     const applied = newest(sourceRows.filter((row) => row.group === "review"));
-    if (applied) return { row: applied, eyebrow: "In review", title: "Waiting on the recruiter", note: "Your decision and next steps will appear here." };
+    if (applied) return { row: applied, eyebrow: "In review", title: "Waiting on the recruiter" };
     return null;
-  }, [sourceRows]);
+  }, [sourceRows, postingByGigId]);
 
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-4 sm:space-y-5">
@@ -324,7 +542,7 @@ export default function DashboardJobsView({
       </div>
 
       {/* Up next spotlight */}
-      {!firstLoad && upNext ? <UpNextCard {...upNext} action={action(upNext.row)} /> : null}
+      {!firstLoad && upNext ? <UpNextCard {...upNext} action={action(upNext.row)} posting={postingFor(upNext.row)} onOpenPosting={openPosting} /> : null}
 
       {!firstLoad && !hasAnyWork ? (
         <Card>
@@ -529,6 +747,7 @@ export default function DashboardJobsView({
                                   </div>
                                 </div>
                                 <StageTracker row={row} className="mt-3" />
+                                {isHiredPostingJob(row) ? <PostingLine row={row} posting={postingFor(row)} /> : null}
                                 <div className="mt-3 flex items-center justify-between gap-2">
                                   <span className="min-w-0 flex-1">
                                     <JobPayout gig={row.gig} className="text-[13px] text-[#1a201c]" />
@@ -592,10 +811,12 @@ export default function DashboardJobsView({
                         </td>
                         <td className="hidden whitespace-nowrap px-3 py-3 text-[#4b544e] xl:table-cell">{row.gig?.platform ?? "—"}</td>
                         <td className="px-3 py-3">
-                          <StatusBadge status={row.status} />
+                          <StatusBadge status={statusLabel(row)} />
+                          {isHiredPostingJob(row) ? <span className="block max-w-[13rem] lg:hidden"><PostingLine row={row} posting={postingFor(row)} /></span> : null}
                         </td>
-                        <td className="hidden px-3 py-3 lg:table-cell">
+                        <td className="hidden max-w-[15rem] px-3 py-3 lg:table-cell">
                           <StageTracker row={row} />
+                          {isHiredPostingJob(row) ? <PostingLine row={row} posting={postingFor(row)} /> : null}
                         </td>
                         <td className="px-3 py-3 text-right text-[#1a201c]">
                           <JobPayout gig={row.gig} stacked />
@@ -622,9 +843,8 @@ export default function DashboardJobsView({
                         <span className="mt-0.5 block truncate text-[12px] text-[#7a827c]">
                           {row.gig?.company ?? "—"} · {row.gig?.platform ?? "—"}
                         </span>
-                        <span className="mt-2 block"><StatusBadge status={row.status} /></span>
-                        <StageTracker row={row} showLabels className="mt-2.5" />
-                        <span className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12.5px]">
+                        <StageTracker row={row} showLabels posting={postingFor(row)} className="mt-3 rounded-xl bg-[#f7f9f6] px-3 py-2.5" />
+                        <span className="mt-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12.5px]">
                           <JobPayout gig={row.gig} className="text-[#1a201c]" />
                           <span className="ml-auto flex shrink-0 items-center gap-1 text-[#7a827c]">
                             {formatRelative(row.date)}
@@ -668,7 +888,7 @@ export default function DashboardJobsView({
   );
 }
 
-function UpNextCard({ row, eyebrow, title, note, action }: { row: Row; eyebrow: string; title: string; note: string; action: ReturnType<typeof makeAction> }) {
+function UpNextCard({ row, eyebrow, title, action, posting, onOpenPosting }: { row: Row; eyebrow: string; title: string; action: ReturnType<typeof makeAction>; posting?: JobPosting; onOpenPosting: () => void }) {
   const primary: ReactNode =
     action.type === "link" ? (
       <Link href={action.href} className={buttonClassName("primary", "md", "w-full justify-center sm:w-auto")}>
@@ -681,27 +901,30 @@ function UpNextCard({ row, eyebrow, title, note, action }: { row: Row; eyebrow: 
         <Icon.ChevronRight className="h-4 w-4" />
       </Button>
     );
+  const accent = row.group === "active" ? "text-[#2e7d4f]" : row.group === "submitted" ? "text-[#3f6f91]" : "text-[#a8761a]";
   return (
     <Card aria-label={eyebrow}>
       <div className="relative overflow-hidden rounded-[inherit]">
-        <span aria-hidden="true" className={cx("absolute inset-y-0 left-0 w-1", row.group === "active" ? "bg-[#2e7d4f]" : "bg-[#d39b2a]")} />
-        {/* Phones: stacked. Tablets: details + button, tracker on its own row. Large screens: one row. */}
-        <div className="grid gap-4 p-4 pl-5 sm:p-5 sm:pl-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-x-6 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)_auto]">
-          <div className="flex min-w-0 items-start gap-3">
+        <span aria-hidden="true" className={cx("absolute inset-y-0 left-0 w-1", GROUP_META[row.group].bar)} />
+        {/* Phones: details, tracker, then a full-width button. Wider: button beside the details; from lg the tracker joins the row. */}
+        <div className="grid gap-4 p-4 pl-5 sm:p-5 sm:pl-6 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,32rem)] lg:items-center lg:gap-x-8 xl:grid-cols-[minmax(0,1fr)_minmax(28rem,38rem)]">
+          <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
             <CompanyMark name={row.gig?.company} size="lg" />
-            <div className="min-w-0">
-              <div className={cx("text-[11px] font-bold uppercase tracking-[0.14em]", row.group === "active" ? "text-[#2e7d4f]" : "text-[#a8761a]")}>{eyebrow}</div>
-              <div className="mt-0.5 text-[15px] font-semibold text-[#1a201c] sm:text-[16px]">{title}</div>
-              <div className="mt-0.5 truncate text-[13px] text-[#4b544e]">
-                <span className="font-semibold text-[#1a201c]">{row.gig?.title ?? "Gig unavailable"}</span>
-                {row.gig?.company ? ` · ${row.gig.company}` : ""}
+            <div className="min-w-0 flex-1">
+              <div className={cx("text-[10.5px] font-bold uppercase tracking-[0.14em]", accent)}>{eyebrow}</div>
+              <div className="mt-0.5 text-[15px] font-semibold leading-snug text-[#1a201c] sm:text-[16px]">{title}</div>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] text-[#616a64]">
+                <span className="line-clamp-2 min-w-0 font-medium text-[#2c342f] sm:line-clamp-1">{row.gig?.title ?? "Gig unavailable"}</span>
+                {row.gig?.company ? <span className="shrink-0">{row.gig.company}</span> : null}
+                {row.gig?.payout ? <JobPayout gig={row.gig} className="shrink-0 font-semibold text-[#2e7d4f]" /> : null}
               </div>
-              {row.gig?.payout ? <JobPayout gig={row.gig} className="mt-0.5 text-[13px] text-[#2e7d4f]" /> : null}
-              <div className="mt-1 text-[12px] text-[#7a827c]">{note}</div>
             </div>
+            <div className="hidden shrink-0 sm:block lg:hidden">{primary}</div>
           </div>
-          <StageTracker row={row} showLabels className="md:col-span-2 md:row-start-2 lg:col-span-1 lg:row-start-auto" />
-          <div className="flex md:col-start-2 md:row-start-1 md:justify-end lg:col-start-auto lg:row-start-auto">{primary}</div>
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:gap-5">
+            <StageTracker row={row} showLabels posting={posting} onOpenPosting={onOpenPosting} className="min-w-0 flex-1 rounded-xl bg-[#f7f9f6] px-3.5 py-3" />
+            <div className="sm:hidden lg:block lg:shrink-0">{primary}</div>
+          </div>
         </div>
       </div>
     </Card>

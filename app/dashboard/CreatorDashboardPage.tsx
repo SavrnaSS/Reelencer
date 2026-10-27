@@ -1,6 +1,8 @@
 "use client";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
+import { fetchCreatorDashboard } from "@/lib/creatorDashboardClient";
+import { bindCreatorCacheIdentity, clearCreatorDeviceCache, creatorCacheIdentity, creatorProfileData, creatorVideoData, CREATOR_CACHE_CLEARED, CREATOR_CACHE_OWNER, dashboardSnapshot, detachCreatorCacheIdentity, isCreatorCacheIdentity, patchCachedDashboard, readCreatorCache, writeCreatorCache, type DashboardSnapshot } from "@/lib/creatorDeviceCache";
 import { AccountRecoveryNotice } from "./LinkedAccountRecovery";
 import { postingProgress, summarizePayoutBatches } from "@/lib/creatorEarnings";
 import { formatAmount as formatINR, formatMoney } from "@/lib/money";
@@ -11,7 +13,7 @@ import { useSearchParams } from "next/navigation";
 import { findGigHref } from "@/lib/routes";
 import GigWorkPanel, { requestGigWorkStart, type WorkAssignment } from "./GigWorkPanel";
 import GigBriefAssets from "./GigBriefAssets";
-import DashboardJobsView from "./DashboardJobsView";
+import DashboardJobsView, { type JobPosting } from "./DashboardJobsView";
 import AccountSetupPanel from "./AccountSetupPanel";
 import GigSampleReel from "./GigSampleReel";
 import SocialAccountsView from "./SocialAccountsView";
@@ -946,28 +948,13 @@ function writeCachedGigFeed(items: Gig[]) {
 }
 
 function writeCachedGigApplications(items: GigApplication[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(GIG_APPLICATIONS_CACHE_KEY, JSON.stringify(items));
-  } catch {
-    // ignore persistence issues
-  }
-}
-
-function readCachedGigApplications(): GigApplication[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(GIG_APPLICATIONS_CACHE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as GigApplication[]) : [];
-  } catch {
-    return [];
-  }
+  const scope = creatorCacheIdentity();
+  if (scope) patchCachedDashboard(scope, { applications: items });
 }
 
 function clearDashboardAuthState() {
   if (typeof window === "undefined") return;
+  clearCreatorDeviceCache();
   try {
     window.localStorage.removeItem(AUTH_CACHE_KEY);
     window.localStorage.removeItem(GIG_APPLICATIONS_CACHE_KEY);
@@ -1960,12 +1947,14 @@ function LiveSyncPill({
   lastSyncedAt,
   onSync,
   loadingLabel,
+  saved = false,
 }: {
   loading: boolean;
   syncing: boolean;
   lastSyncedAt: number | null;
   onSync?: () => void;
   loadingLabel: string;
+  saved?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -1977,8 +1966,8 @@ function LiveSyncPill({
   const ago = seconds === null ? "" : seconds < 10 ? "just now" : seconds < 60 ? `${seconds}s ago` : `${Math.round(seconds / 60)}m ago`;
   const busy = loading || syncing;
   const stale = !busy && seconds !== null && seconds > 120;
-  const label = loading ? loadingLabel : syncing ? "Refreshing…" : ago ? `Updated ${ago}` : "Refresh updates";
-  const ariaLabel = loading ? loadingLabel : syncing ? "Refreshing updates" : ago ? `Updated ${ago}. Refresh updates` : "Refresh updates";
+  const label = loading ? loadingLabel : saved ? syncing ? "Saved data · updating…" : ago ? `Saved ${ago}` : "Saved data" : syncing ? "Refreshing…" : ago ? `Updated ${ago}` : "Refresh updates";
+  const ariaLabel = `${label}${busy ? "" : ". Refresh updates"}`;
 
   return (
     <button
@@ -2011,7 +2000,7 @@ function LiveSyncPill({
       <span
         className={cx(
           "absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white sm:static sm:h-2 sm:w-2 sm:border-0",
-          busy ? "animate-pulse bg-[#d99a06]" : stale ? "bg-[#d99a06]" : "dashboard-live-dot bg-[#2e7d4f]"
+          busy ? "animate-pulse bg-[#d99a06]" : stale || saved ? "bg-[#d99a06]" : "dashboard-live-dot bg-[#2e7d4f]"
         )}
         aria-hidden="true"
       />
@@ -2801,7 +2790,7 @@ function DashboardPageShell({
   onLogout: () => void | Promise<void>;
   navBadges?: Partial<Record<DashboardSection, number>>;
   walletSummary?: { credited: number; pending: number; estimated?: boolean; loading?: boolean; unavailable?: boolean };
-  liveStatus?: { syncing: boolean; lastSyncedAt: number | null; onSync: () => void };
+  liveStatus?: { syncing: boolean; lastSyncedAt: number | null; saved?: boolean; onSync: () => void };
   onGlobalSearch?: (query: string) => void;
   children: ReactNode;
 }) {
@@ -3216,6 +3205,7 @@ function DashboardPageShell({
                   lastSyncedAt={liveStatus?.lastSyncedAt ?? null}
                   onSync={liveStatus?.onSync}
                   loadingLabel={strings.shell.syncingData}
+                  saved={liveStatus?.saved}
                 />
                 {currentSection !== "find" ? (
                   <button
@@ -3513,7 +3503,7 @@ function DashboardPageShell({
                   </div>
                   <div className="mt-1.5 flex items-center justify-center gap-1.5 text-[11.5px] text-[#7a827c]">
                     <span className={cx("h-1.5 w-1.5 rounded-full", loading || liveStatus?.syncing ? "animate-pulse bg-[#d99a06]" : "bg-[#2e7d4f]")} aria-hidden="true" />
-                    {loading ? strings.shell.syncingData : liveStatus?.syncing ? "Syncing…" : profileSyncLabel}
+                    {loading ? strings.shell.syncingData : liveStatus?.saved ? "Showing saved data" : liveStatus?.syncing ? "Syncing…" : profileSyncLabel}
                     {workerId ? <span className="font-mono">· {workerId}</span> : null}
                   </div>
                 </div>
@@ -3750,250 +3740,160 @@ export default function DashboardPage() {
     }
   }, [activeLanguage]);
 
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      setLoading(true);
-      setProfileLoading(true);
-      setError(null);
-
-      const cachedGigFeed = readCachedGigFeed();
-      if (alive) {
-        if (cachedGigFeed.length > 0) {
-          setGigs(cachedGigFeed);
-          setGigsLoading(false);
-        } else {
-          setGigsLoading(true);
-        }
-      }
-      const cachedApplications = readCachedGigApplications();
-      if (alive && cachedApplications.length > 0) {
-        setApplications(cachedApplications);
-      }
-
-      const gigsPromise = fetchCollection<Gig>("/api/gigs");
-
-      const cached = readCachedSession();
-      const cachedRole = cached?.role ?? null;
-      const cachedWorkerId = String(cached?.workerId ?? "").trim() || null;
-      const cachedEmail = String(cached?.email ?? "").trim().toLowerCase();
-      const cachedName = String(cached?.name ?? "").trim();
-      const workerCodeIdentity = identityFromWorkerCode(cachedWorkerId);
-
-      if (alive) {
-        setWorkerId(cachedWorkerId);
-        setProfileRole(cachedRole === "Admin" ? "Admin" : "Creator");
-      }
-
-      const [authResult, sessionResult] = await Promise.all([
-        supabase.auth.getUser().catch(() => null),
-        supabase.auth.getSession().catch(() => null),
-      ]);
-      const user = authResult?.data?.user ?? null;
-      const session = sessionResult?.data?.session ?? null;
-      const hasLocalDevSession = isLocalDevHost() && (cachedRole === "Worker" || cachedRole === "Admin");
-      const localDevUser = hasLocalDevSession
-        ? {
-            id: cachedWorkerId ?? "dev-dashboard-user",
-            email: cachedEmail || (cachedRole === "Admin" ? "admin@example.test" : workerCodeIdentity.email),
-            user_metadata: {
-              name: cachedName || (cachedRole === "Admin" ? "Local Admin" : workerCodeIdentity.name),
-              full_name: cachedName || (cachedRole === "Admin" ? "Local Admin" : workerCodeIdentity.name),
-              dashboard_email: cachedEmail,
-              contact_email: cachedEmail,
-            },
-          }
-        : null;
-      const authenticatedUser = user ?? session?.user ?? localDevUser;
-      const accessToken = session?.access_token ?? null;
-      if (!authenticatedUser || (!accessToken && !hasLocalDevSession)) {
-        if (alive) {
-          setLoading(false);
-          setProfileLoading(false);
-        }
-        // Come back to the exact section (e.g. ?section=find&gigId=…) after signing in.
-        window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
-        return;
-      }
-
-      const nextWorkerId = String(cachedWorkerId ?? "").trim() || null;
-      const authEmail = String(authenticatedUser.email ?? "").trim();
-      const authContactEmail = userMetadataContactEmail(authenticatedUser, nextWorkerId) || usableContactEmail(authEmail, nextWorkerId);
-
-      const nextName = getDisplayName(
-        authenticatedUser
-          ? {
-              email: authEmail,
-              user_metadata: {
-                name: String(authenticatedUser.user_metadata?.name ?? ""),
-                full_name: String(authenticatedUser.user_metadata?.full_name ?? ""),
-              },
-            }
-          : null
-      );
-      if (alive) {
-        setProfileName(nextName);
-        setProfileEmail(authContactEmail || authEmail);
-        setDirectApplyAuthEmail(authContactEmail);
-        setProfileUserId(authenticatedUser.id ?? null);
-        setWorkerId(nextWorkerId);
-        setProfileRole("Creator");
-      }
-
-      const applicationLookupIds = Array.from(new Set([nextWorkerId, authenticatedUser.id, authContactEmail, authEmail].map((value) => String(value ?? "").trim()).filter(Boolean)));
-      const applicationsPromise =
-        applicationLookupIds.length > 0
-          ? Promise.all(
-              applicationLookupIds.map((lookupId) =>
-                fetchCollection<GigApplication>(`/api/gig-applications?workerId=${encodeURIComponent(lookupId)}`).catch(() => [])
-              )
-            ).then((groups) => {
-              const map = new Map<string, GigApplication>();
-              groups.flat().forEach((application) => {
-                const key = String(application.id || `${application.gigId}:${application.workerId}`);
-                if (key) map.set(key, application);
-              });
-              return Array.from(map.values());
-            })
-          : Promise.resolve<GigApplication[]>([]);
-      const assignmentsPromise = nextWorkerId
-        ? fetchCollection<GigAssignment>(`/api/gig-assignments?workerId=${encodeURIComponent(nextWorkerId)}`)
-        : Promise.resolve<GigAssignment[]>([]);
-      const payoutsPromise = nextWorkerId
-        ? fetchCollection<PayoutBatch>(`/api/payoutbatches?workerId=${encodeURIComponent(nextWorkerId)}`)
-        : Promise.resolve<PayoutBatch[]>([]);
-      const workersPromise = fetchCollection<DashboardWorkerProfile>(
-        nextWorkerId ? `/api/workers?workerId=${encodeURIComponent(nextWorkerId)}` : "/api/workers"
-      );
-      const introVideoPromise = accessToken
-        ? fetchPayload<{ ok: true; introVideo: IntroVideoMeta | null }>("/api/me/presentation-video", {
-            method: "GET",
-            headers: { Authorization: `Bearer ${accessToken}` },
-          })
-        : Promise.resolve<{ ok: true; introVideo: IntroVideoMeta | null }>({ ok: true, introVideo: null });
-
-      const [gigsResult, appsResult, assignmentsResult, payoutsResult, workersResult, introVideoResult] = await Promise.allSettled([
-        gigsPromise,
-        applicationsPromise,
-        assignmentsPromise,
-        payoutsPromise,
-        workersPromise,
-        introVideoPromise,
-      ]);
-
-      if (!alive) return;
-
-      const nextError =
-        gigsResult.status === "rejected" &&
-        appsResult.status === "rejected" &&
-        assignmentsResult.status === "rejected" &&
-        payoutsResult.status === "rejected"
-          ? "Unable to load dashboard data right now."
-          : gigsResult.status === "rejected"
-            ? "We couldn't refresh available gigs. Try refreshing again."
-            : null;
-
-      if (gigsResult.status === "fulfilled") {
-        setGigs(gigsResult.value);
-        writeCachedGigFeed(gigsResult.value);
-      } else if (cachedGigFeed.length === 0) {
-        setGigs([]);
-      }
-      setGigsLoading(false);
-      const nextApplications = appsResult.status === "fulfilled" ? appsResult.value : cachedApplications;
-      setApplications(nextApplications);
-      if (appsResult.status === "fulfilled") writeCachedGigApplications(nextApplications);
-      setAssignments(assignmentsResult.status === "fulfilled" ? assignmentsResult.value : []);
-      setPayoutBatches(payoutsResult.status === "fulfilled" ? payoutsResult.value : []);
-      if (workersResult.status === "fulfilled") {
-        const matchedWorker = findMatchingWorkerProfile(workersResult.value, {
-          workerId: nextWorkerId,
-          userId: authenticatedUser.id,
-          email: authContactEmail || authEmail,
-        });
-        setWorkerProfile(matchedWorker);
-        if (matchedWorker?.name && !isSyntheticDevWorkerProfile(matchedWorker)) {
-          setProfileName(String(matchedWorker.name).trim() || nextName);
-        }
-        if (matchedWorker?.email && !isSyntheticDevWorkerProfile(matchedWorker)) {
-          setProfileEmail(String(matchedWorker.email));
-        }
-        if (!nextWorkerId) {
-          const resolvedWorkerId = String(matchedWorker?.workerId ?? matchedWorker?.id ?? "").trim() || null;
-          if (resolvedWorkerId) setWorkerId(resolvedWorkerId);
-        }
-      } else {
-        setWorkerProfile(null);
-      }
-      if (introVideoResult.status === "fulfilled") {
-        setIntroVideo(introVideoResult.value.introVideo ?? null);
-      } else {
-        setIntroVideo(null);
-      }
-      setError(nextError);
-      setLoading(false);
-      setProfileLoading(false);
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // ---- Live sync: quiet background refresh after the first load ----
   const [liveSyncing, setLiveSyncing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
-  const liveSyncInFlightRef = useRef(false);
+  const [usingSavedData, setUsingSavedData] = useState(false);
+  const liveSyncCount = useRef(0);
 
-  const refreshLiveData = useCallback(async () => {
-    if (liveSyncInFlightRef.current) return;
-    liveSyncInFlightRef.current = true;
-    setLiveSyncing(true);
-    try {
-      const lookupIds = Array.from(
-        new Set([workerId, profileUserId, directApplyAuthEmail, profileEmail].map((value) => String(value ?? "").trim()).filter(Boolean))
-      );
-      const [gigsResult, appsResult, assignmentsResult, payoutsResult] = await Promise.allSettled([
-        fetchCollection<Gig>("/api/gigs"),
-        lookupIds.length > 0
-          ? Promise.all(
-              lookupIds.map((lookupId) =>
-                fetchCollection<GigApplication>(`/api/gig-applications?workerId=${encodeURIComponent(lookupId)}`).catch(() => [])
-              )
-            ).then((groups) => {
-              const map = new Map<string, GigApplication>();
-              groups.flat().forEach((application) => {
-                const key = String(application.id || `${application.gigId}:${application.workerId}`);
-                if (key) map.set(key, application);
-              });
-              return Array.from(map.values());
-            })
-          : Promise.resolve<GigApplication[] | null>(null),
-        workerId ? fetchCollection<GigAssignment>(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`) : Promise.resolve(null),
-        workerId ? fetchCollection<PayoutBatch>(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`) : Promise.resolve(null),
-      ]);
-      // Only replace data that actually came back, so a flaky request never blanks the screen.
-      if (gigsResult.status === "fulfilled") {
-        setGigs(gigsResult.value);
-        writeCachedGigFeed(gigsResult.value);
-      }
-      if (appsResult.status === "fulfilled" && appsResult.value) {
-        setApplications(appsResult.value);
-        writeCachedGigApplications(appsResult.value);
-      }
-      if (assignmentsResult.status === "fulfilled" && assignmentsResult.value) setAssignments(assignmentsResult.value);
-      if (payoutsResult.status === "fulfilled" && payoutsResult.value) setPayoutBatches(payoutsResult.value);
-      setLastSyncedAt(Date.now());
-    } finally {
-      liveSyncInFlightRef.current = false;
-      setLiveSyncing(false);
-    }
-  }, [directApplyAuthEmail, profileEmail, profileUserId, workerId]);
+  const applyDashboard = useCallback((result: Awaited<ReturnType<typeof fetchCreatorDashboard>>) => {
+    if (!isCreatorCacheIdentity(result.userId)) return;
+    const data = result.data;
+    if (Array.isArray(data.gigs)) { setGigs(data.gigs as Gig[]); writeCachedGigFeed(data.gigs as Gig[]); }
+    if (Array.isArray(data.applications)) setApplications(data.applications as GigApplication[]);
+    if (Array.isArray(data.assignments)) setAssignments(data.assignments as GigAssignment[]);
+    if (Array.isArray(data.payoutBatches)) setPayoutBatches(data.payoutBatches as PayoutBatch[]);
+    if (result.workerId) setWorkerId(result.workerId);
+    setUsingSavedData(result.errors.length > 0);
+    if (!result.errors.length) setLastSyncedAt(result.checkedAt);
+    setError(result.errors.length ? "Some updates are unavailable. Your last saved information is still shown." : null);
+    setLoading(false);
+    setGigsLoading(false);
+  }, []);
 
   useEffect(() => {
-    if (!loading) setLastSyncedAt((current) => current ?? Date.now());
-  }, [loading]);
+    let alive = true;
+    let unsubscribe: (() => void) | undefined;
+    const redirect = () => window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    const cleared = () => {
+      setApplications([]); setAssignments([]); setPayoutBatches([]); setWorkerProfile(null);
+      setLoading(true); setProfileLoading(true);
+      redirect();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === CREATOR_CACHE_OWNER && creatorCacheIdentity() && event.newValue !== creatorCacheIdentity()) {
+        detachCreatorCacheIdentity();
+      }
+    };
+    window.addEventListener(CREATOR_CACHE_CLEARED, cleared);
+    window.addEventListener("storage", onStorage);
+
+    (async () => {
+      const cachedGigFeed = readCachedGigFeed();
+      if (cachedGigFeed.length) { setGigs(cachedGigFeed); setGigsLoading(false); }
+      // Supabase restores the local session immediately. The authenticated API verifies access before every read.
+      const sessionResult = await supabase.auth.getSession().catch(() => null);
+      if (!alive) return;
+      const session = sessionResult?.data?.session;
+      const cachedAuth = readCachedSession();
+      const demo = isLocalDevHost() && (cachedAuth?.role === "Worker" || cachedAuth?.role === "Admin");
+      const user = session?.user ?? (demo ? { id: cachedAuth?.workerId ?? "dev-dashboard-user", email: cachedAuth?.email, user_metadata: { name: cachedAuth?.name } } : null);
+      if (!user || (!session?.access_token && !demo)) { clearCreatorDeviceCache(); redirect(); return; }
+      const scope = user.id;
+      bindCreatorCacheIdentity(scope);
+      const cached = readCreatorCache<DashboardSnapshot<Gig, GigApplication, GigAssignment, PayoutBatch>>(scope, "dashboard");
+      let snapshot: typeof cached = null;
+      try { if (cached?.data.userId === scope) snapshot = { ...cached, data: dashboardSnapshot(cached.data) as DashboardSnapshot<Gig, GigApplication, GigAssignment, PayoutBatch> }; } catch { /* Corrupt display storage is replaced by the live response. */ }
+      const nextWorkerId = snapshot?.data.workerId ?? (demo ? cachedAuth?.workerId ?? null : null);
+      const authEmail = String(user.email ?? "").trim();
+      const contactEmail = userMetadataContactEmail(user, nextWorkerId) || usableContactEmail(authEmail, nextWorkerId);
+      const name = getDisplayName({ email: authEmail, user_metadata: { name: String(user.user_metadata?.name ?? ""), full_name: String((user.user_metadata as Record<string, unknown>)?.full_name ?? "") } });
+      setProfileUserId(scope); setWorkerId(nextWorkerId); setProfileRole("Creator");
+      setProfileName(name); setProfileEmail(contactEmail || authEmail); setDirectApplyAuthEmail(contactEmail);
+      setProfileLoading(false);
+      const savedProfile = readCreatorCache<DashboardWorkerProfile>(scope, "profile");
+      if (savedProfile) {
+        try {
+          const profile = creatorProfileData(savedProfile.data) as DashboardWorkerProfile;
+          setWorkerProfile(profile);
+          if (profile.name) setProfileName(profile.name);
+        } catch { /* Live profile data replaces an unreadable saved profile. */ }
+      }
+      const savedVideo = readCreatorCache<IntroVideoMeta | null>(scope, "intro-video");
+      if (savedVideo) setIntroVideo(savedVideo.data);
+      if (snapshot) {
+        setGigs(snapshot.data.gigs); setApplications(snapshot.data.applications);
+        setAssignments(snapshot.data.assignments); setPayoutBatches(snapshot.data.payoutBatches);
+        setLastSyncedAt(snapshot.updatedAt); setUsingSavedData(true);
+        setLoading(false); setGigsLoading(false);
+      }
+      const authChange = supabase.auth.onAuthStateChange((event, nextSession) => {
+        if (event === "SIGNED_OUT" || (nextSession && nextSession.user.id !== scope)) queueMicrotask(() => {
+          if (!alive) return;
+          if (event === "SIGNED_OUT") clearCreatorDeviceCache();
+          else {
+            detachCreatorCacheIdentity(false);
+            window.location.reload();
+          }
+        });
+      });
+      unsubscribe = () => authChange.data.subscription.unsubscribe();
+      // Profile details can arrive independently; a slow profile read never holds jobs or earnings back.
+      void fetchCollection<DashboardWorkerProfile>("/api/workers").then(workers => {
+        if (!alive || !isCreatorCacheIdentity(scope)) return;
+        const matched = findMatchingWorkerProfile(workers, { workerId: nextWorkerId, userId: scope, email: contactEmail || authEmail });
+        if (!matched) return;
+        setWorkerProfile(matched);
+        writeCreatorCache(scope, "profile", creatorProfileData(matched));
+        if (!isSyntheticDevWorkerProfile(matched)) {
+          if (matched.name) setProfileName(matched.name.trim());
+          if (matched.email) setProfileEmail(matched.email);
+        }
+        const resolved = String(matched.workerId ?? matched.id ?? "").trim();
+        if (resolved) setWorkerId(resolved);
+      }).catch(() => undefined);
+      setLiveSyncing(true);
+      try {
+        const result = await fetchCreatorDashboard(scope);
+        if (alive) applyDashboard(result);
+      } catch (failure) {
+        if (!alive || !isCreatorCacheIdentity(scope) || (failure instanceof Error && failure.name === "AbortError")) return;
+        setUsingSavedData(Boolean(snapshot));
+        setError(snapshot ? "Unable to refresh right now. Your saved dashboard is still available." : "Unable to load your dashboard. Please try refreshing.");
+        setLoading(false); setGigsLoading(false);
+      } finally { if (alive) setLiveSyncing(false); }
+    })();
+    return () => {
+      alive = false;
+      unsubscribe?.();
+      window.removeEventListener(CREATOR_CACHE_CLEARED, cleared);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [applyDashboard]);
+
+  // Signed media is fetched only when its screen is opened and is never persisted on the device.
+  useEffect(() => {
+    if (currentSection !== "profile" || !profileUserId || profileLoading) return;
+    const controller = new AbortController();
+    void fetchPayload<{ introVideo: IntroVideoMeta | null }>("/api/me/presentation-video", { signal: controller.signal })
+      .then(value => {
+        if (!controller.signal.aborted && isCreatorCacheIdentity(profileUserId)) {
+          setIntroVideo(value.introVideo ?? null);
+          writeCreatorCache(profileUserId, "intro-video", creatorVideoData(value.introVideo ?? null));
+        }
+      }).catch(() => undefined);
+    return () => controller.abort();
+  }, [currentSection, profileUserId, profileLoading]);
+
+  const refreshLiveData = useCallback(async (afterCurrent = false) => {
+    if (!profileUserId || !isCreatorCacheIdentity(profileUserId) || !navigator.onLine) return;
+    liveSyncCount.current++;
+    setLiveSyncing(true);
+    try { applyDashboard(await fetchCreatorDashboard(profileUserId, afterCurrent)); }
+    catch (failure) {
+      if (isCreatorCacheIdentity(profileUserId) && !(failure instanceof Error && failure.name === "AbortError")) {
+        setUsingSavedData(true);
+        setError("Unable to refresh right now. Your last saved information is still shown.");
+      }
+    } finally {
+      liveSyncCount.current--;
+      if (!liveSyncCount.current) setLiveSyncing(false);
+    }
+  }, [profileUserId, applyDashboard]);
+
+  useEffect(() => {
+    // Detail views re-read fields intentionally excluded from device storage, such as payout notes.
+    if (profileUserId && (currentSection === "wallet" || (currentSection === "find" && selectedGigId))) void refreshLiveData(true);
+  }, [currentSection, selectedGigId, profileUserId, refreshLiveData]);
 
   useEffect(() => {
     const onClaimUpdated = () => { void refreshLiveData(); };
@@ -4038,12 +3938,17 @@ export default function DashboardPage() {
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
+    window.addEventListener("online", scheduleRefresh);
+    const onOffline = () => setUsingSavedData(true);
+    window.addEventListener("offline", onOffline);
 
     return () => {
       if (debounceTimer) window.clearTimeout(debounceTimer);
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", scheduleRefresh);
+      window.removeEventListener("offline", onOffline);
       channels.forEach((channel) => {
         void supabase.removeChannel(channel);
       });
@@ -4137,6 +4042,36 @@ export default function DashboardPage() {
   }, [normalizedAssignments]);
 
   const payoutSummary = useMemo(() => summarizePayoutBatches(payoutBatches), [payoutBatches]);
+  // Approved Content Posting jobs are tracked from their linked account: its state, the reels submitted and their pay.
+  const jobPostingByGigId = useMemo(() => {
+    const map = new Map<string, JobPosting>();
+    const ready = socialAccounts.load.state === "ready";
+    const issues = socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues ?? [] : [];
+    applications.forEach((application) => {
+      const gigId = String(application.gigId ?? "").trim();
+      const gig = gigById.get(gigId);
+      if (!gig || !isContentPostingGig(gig) || String(application.status).trim().toLowerCase() !== "accepted") return;
+      const matches = (account: (typeof linkedAccounts)[number]) => String(account.gigId) === gigId || String(account.applicationId) === String(application.id);
+      const account = linkedAccounts.find((item) => item.status !== "unlinked" && matches(item)) ?? null;
+      const issue = account ? null : issues.find(matches) ?? null;
+      const setup = application.proposal?.accountSetup;
+      const state: JobPosting["state"] = account
+        ? "linked"
+        : issue
+          ? "fix"
+          : !ready
+            ? "checking"
+            : setup?.status === "Verified"
+              ? "linked"
+              : setup?.status === "ChangesRequested"
+                ? "changes"
+                : setup
+                  ? "verifying"
+                  : "setup";
+      map.set(gigId, { state, handle: account?.handle || issue?.handle || setup?.handle || undefined, ...postingProgress(account ?? issue, payoutBatches) });
+    });
+    return map;
+  }, [applications, gigById, linkedAccounts, payoutBatches, socialAccounts.load]);
 
   const visibleWorkerProfile = useMemo(
     () => (isSyntheticDevWorkerProfile(workerProfile) ? null : workerProfile),
@@ -4195,113 +4130,9 @@ export default function DashboardPage() {
     return fromSession || fromWorkerProfile || fromUser || fromEmail || null;
   }, [profileContactEmail, profileUserId, workerId, workerProfile?.id, workerProfile?.workerId]);
 
-  const refreshDashboardData = useCallback(async (quiet = true) => {
-    if (!quiet) setGigsLoading(true);
-
-    const lookupIds = Array.from(
-      new Set(
-        [submissionWorkerId, workerId, profileUserId, profileContactEmail]
-          .map((value) => String(value ?? "").trim())
-          .filter((value) => value && value !== "No email on file")
-      )
-    );
-
-    const applicationsRequest =
-      lookupIds.length > 0
-        ? Promise.all(
-            lookupIds.map((lookupId) =>
-              fetchCollection<GigApplication>(`/api/gig-applications?workerId=${encodeURIComponent(lookupId)}`).catch(() => [])
-            )
-          ).then((groups) => {
-            const map = new Map<string, GigApplication>();
-            groups.flat().forEach((application) => {
-              const key = String(application.id || `${application.gigId}:${application.workerId}`);
-              if (key) map.set(key, application);
-            });
-            return Array.from(map.values());
-          })
-        : Promise.resolve<GigApplication[]>([]);
-
-    const resolvedWorkerId = submissionWorkerId ?? workerId;
-    const [gigsResult, applicationsResult, assignmentsResult, payoutsResult, workersResult] = await Promise.allSettled([
-      fetchCollection<Gig>("/api/gigs"),
-      applicationsRequest,
-      resolvedWorkerId
-        ? fetchCollection<GigAssignment>(`/api/gig-assignments?workerId=${encodeURIComponent(resolvedWorkerId)}`)
-        : Promise.resolve<GigAssignment[]>([]),
-      resolvedWorkerId
-        ? fetchCollection<PayoutBatch>(`/api/payoutbatches?workerId=${encodeURIComponent(resolvedWorkerId)}`)
-        : Promise.resolve<PayoutBatch[]>([]),
-      fetchCollection<DashboardWorkerProfile>(
-        resolvedWorkerId ? `/api/workers?workerId=${encodeURIComponent(resolvedWorkerId)}` : "/api/workers"
-      ),
-    ]);
-
-    if (gigsResult.status === "fulfilled") {
-      setGigs(gigsResult.value);
-      writeCachedGigFeed(gigsResult.value);
-      setGigsLoading(false);
-      setError((current) =>
-        current === "Live opportunity data could not be refreshed. Showing the shell with fallback states." ? null : current
-      );
-    } else {
-      setGigsLoading(false);
-      if (!quiet && gigs.length === 0) {
-        setError("Live opportunity data could not be refreshed. Showing the shell with fallback states.");
-      }
-    }
-
-    if (applicationsResult.status === "fulfilled") {
-      setApplications(applicationsResult.value);
-      writeCachedGigApplications(applicationsResult.value);
-    }
-    if (assignmentsResult.status === "fulfilled") {
-      setAssignments(assignmentsResult.value);
-    }
-    if (payoutsResult.status === "fulfilled") {
-      setPayoutBatches(payoutsResult.value);
-    }
-    if (workersResult.status === "fulfilled") {
-      const matchedWorker = findMatchingWorkerProfile(workersResult.value, {
-        workerId: resolvedWorkerId,
-        userId: profileUserId,
-        email: profileContactEmail,
-      });
-      if (matchedWorker) {
-        setWorkerProfile(matchedWorker);
-        if (matchedWorker.name && !isSyntheticDevWorkerProfile(matchedWorker)) setProfileName(String(matchedWorker.name).trim());
-        if (matchedWorker.email && !isSyntheticDevWorkerProfile(matchedWorker)) setProfileEmail(String(matchedWorker.email).trim());
-        const nextWorkerId = String(matchedWorker.workerId ?? matchedWorker.id ?? "").trim();
-        if (nextWorkerId) setWorkerId(nextWorkerId);
-      }
-    }
-  }, [gigs.length, profileContactEmail, profileUserId, submissionWorkerId, workerId]);
-
-  useEffect(() => {
-    if (loading || profileLoading) return;
-    let alive = true;
-
-    const refresh = () => {
-      if (!alive || (typeof document !== "undefined" && document.hidden)) return;
-      void refreshDashboardData(true);
-    };
-
-    refresh();
-    const intervalId = window.setInterval(refresh, 10_000);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-
-    return () => {
-      alive = false;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [loading, profileLoading, refreshDashboardData]);
-
   // Live account card: the server signals "changed" on this user's private account topic (migration
   // 202610110004) when their profile, worker record or account assignments change, from another tab, device or an
-  // admin. We re-read just the profile and briefly highlight what changed. The 10s dashboard refresh stays as backup.
+  // admin. We re-read just the profile and briefly highlight what changed. A minute-long profile refresh stays as backup.
   const [accountLive, setAccountLive] = useState<"connecting" | "live" | "offline">("connecting");
   const [accountSyncedAt, setAccountSyncedAt] = useState<number | null>(null);
   const [accountFlash, setAccountFlash] = useState<Set<string>>(() => new Set());
@@ -4323,7 +4154,7 @@ export default function DashboardPage() {
       try {
         const { workerId: currentWorkerId, email } = accountIdsRef.current;
         const list = await fetchCollection<DashboardWorkerProfile>(currentWorkerId ? `/api/workers?workerId=${encodeURIComponent(currentWorkerId)}` : "/api/workers");
-        if (disposed) return;
+        if (disposed || !isCreatorCacheIdentity(profileUserId)) return;
         const next = findMatchingWorkerProfile(list, { workerId: currentWorkerId, userId: profileUserId, email });
         if (!next) return;
         const prev = workerProfileRef.current;
@@ -4334,6 +4165,7 @@ export default function DashboardPage() {
           if ((prev.headline ?? "") !== (next.headline ?? "") || (prev.city ?? "") !== (next.city ?? "") || (prev.bio ?? "") !== (next.bio ?? "")) changed.add("about");
         }
         setWorkerProfile(next);
+        writeCreatorCache(profileUserId, "profile", creatorProfileData(next));
         if (next.name && !isSyntheticDevWorkerProfile(next)) setProfileName(String(next.name).trim());
         setAccountSyncedAt(Date.now());
         if (changed.size) {
@@ -4369,11 +4201,13 @@ export default function DashboardPage() {
     void connect();
     const onOffline = () => setAccountLive("offline");
     const onOnline = () => schedule();
+    const profileInterval = window.setInterval(() => { if (!document.hidden && navigator.onLine) schedule(); }, 60_000);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     return () => {
       disposed = true;
       if (timer !== null) window.clearTimeout(timer);
+      window.clearInterval(profileInterval);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
       if (channel) void supabase.removeChannel(channel);
@@ -4488,7 +4322,12 @@ export default function DashboardPage() {
   }, [applications, directApplyTargetGig?.id]);
   const selectedGigReviewStatus = useMemo(() => getProposalReviewStatus(selectedGigApplication), [selectedGigApplication]);
   const updateWorkAssignment = useCallback((next: WorkAssignment) => {
-    setAssignments(previous => [next, ...previous.filter(row => String(row.id) !== next.id && String(row.gigId ?? row.gig_id) !== next.gigId)]);
+    setAssignments(previous => {
+      const updated = [next, ...previous.filter(row => String(row.id) !== next.id && String(row.gigId ?? row.gig_id) !== next.gigId)];
+      const scope = creatorCacheIdentity();
+      if (scope) patchCachedDashboard(scope, { assignments: updated });
+      return updated;
+    });
   }, []);
 
   const openGigDetail = useCallback((gig: Gig, intent: "details" | "apply" = "details") => {
@@ -4857,6 +4696,7 @@ export default function DashboardPage() {
         } else {
           next.unshift(payload);
         }
+        writeCachedGigApplications(next);
         return next;
       });
       setProposalDeskOpen(true);
@@ -5491,6 +5331,7 @@ export default function DashboardPage() {
             earningsEstimate={Boolean(accountEarnings)}
             earningsLoading={earningsLoading}
             earningsUnavailable={socialAccounts.load.state === "error"}
+            postingByGigId={jobPostingByGigId}
             buildDetailHref={(gig) => findGigHref(String(gig.id))}
             onNavigate={navigateFromView}
           />
@@ -7621,7 +7462,7 @@ export default function DashboardPage() {
         onLogout={logout}
         navBadges={{ messages: unreadCount, accounts: socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues?.length ?? 0 : 0 }}
         walletSummary={{ credited: accountEarnings?.approved ?? payoutSummary.credited, pending: accountEarnings?.pending ?? payoutSummary.pending, estimated: Boolean(accountEarnings), loading: earningsLoading, unavailable: socialAccounts.load.state === "error" }}
-        liveStatus={{ syncing: liveSyncing || socialAccounts.refreshing, lastSyncedAt, onSync: () => { void refreshLiveData(); void socialAccounts.refresh(currentSection === "accounts"); } }}
+        liveStatus={{ syncing: liveSyncing || socialAccounts.refreshing, saved: usingSavedData, lastSyncedAt, onSync: () => { void refreshLiveData(true); void socialAccounts.refresh(currentSection === "accounts"); } }}
       >
         {error ? (
           <div className="mx-auto mb-6 w-full max-w-[1120px] rounded-[20px] border border-[#f0e1d9] bg-[#fff8f4] px-4 py-4 text-[14px] text-[#8b5a42]">

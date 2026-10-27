@@ -1,5 +1,6 @@
 "use client";
 import { supabase } from "@/lib/supabaseClient";
+import { clearCreatorDeviceCache, creatorCacheIdentity } from "@/lib/creatorDeviceCache";
 
 /** Attach the current Supabase token only to this application's API. */
 export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -12,7 +13,13 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
       const { data } = await supabase.auth.getSession();
       if (data.session?.access_token) headers.set("Authorization", `Bearer ${data.session.access_token}`);
     }
-    return fetch(input, { ...init, headers, cache: "no-store" });
+    const requestOwner = creatorCacheIdentity();
+    const response = await fetch(input, { ...init, headers, cache: "no-store" });
+    if (requestOwner && requestOwner === creatorCacheIdentity() && [401, 403].includes(response.status)) {
+      const body = await response.clone().json().catch(() => null);
+      if (["unauthorized", "account_inactive", "ip_blocked"].includes(body?.code)) clearCreatorDeviceCache();
+    }
+    return response;
   }
   return fetch(input, init);
 }
