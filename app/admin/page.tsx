@@ -21,6 +21,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
 import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 import { currentWorkerRecords, workerAccessStatus } from "@/lib/adminWorkerDirectory";
+import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
+import { ADMIN_OVERVIEW_CACHE_KEY, isAdminOverviewCounts, type AdminOverviewCounts } from "@/lib/adminOverview";
 
 const GigAdminConsole = dynamic(() => import("@/app/addgigs/GigAdminConsole"), {
   loading: () => <AdminSectionLoading />,
@@ -1054,6 +1056,23 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const today = isoToday();
+  const readOverviewCounts = useCallback(async (signal: AbortSignal) => {
+    const response = await fetch("/api/admin/overview", { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
+    const data: unknown = await response.json();
+    if (!response.ok || !isAdminOverviewCounts(data)) throw new Error("Overview totals could not be refreshed.");
+    return data;
+  }, []);
+  const overview = useAdminCachedResource<AdminOverviewCounts>({
+    scope: adminId, key: ADMIN_OVERVIEW_CACHE_KEY, load: readOverviewCounts,
+    enabled: mounted, ttlMs: 15_000, persist: true, validate: isAdminOverviewCounts,
+  });
+  const refreshOverviewCounts = overview.refresh;
+  useEffect(() => {
+    const refresh = () => { void refreshOverviewCounts({ afterCurrent: true }); };
+    const events = ["admin-overview-refresh", "admin-linked-accounts-refresh", "view-payout-claims-updated", "admin-refresh"];
+    events.forEach(event => window.addEventListener(event, refresh));
+    return () => events.forEach(event => window.removeEventListener(event, refresh));
+  }, [refreshOverviewCounts]);
 
   // global UI
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -1388,6 +1407,9 @@ function AdminConsole({ adminId }: { adminId: string }) {
   // content-free signal on the admin-only "admin:live" topic and we re-read just what changed.
   const devBypass = mounted && hasDevAdminBypassSession();
   const adminLive = useAdminLive(mounted && !devBypass, (kinds: Set<AdminLiveKind> | null) => {
+    if (!kinds || ["linked_social_accounts", "payout_batches", "view_payout_claims"].some(kind => kinds.has(kind as AdminLiveKind))) {
+      void refreshOverviewCounts({ afterCurrent: true });
+    }
     // Gig tools own their visible data; avoid loading the worker snapshot behind them.
     if (isGigSection) return;
     if (!kinds) {
@@ -1404,13 +1426,15 @@ function AdminConsole({ adminId }: { adminId: string }) {
     if (!devBypass) return;
     const intervalId = window.setInterval(() => {
       void loadSnapshot();
+      void refreshOverviewCounts({ afterCurrent: true });
       if (activeSection === "Feedback") void loadFeedback();
     }, 5_000);
     return () => window.clearInterval(intervalId);
-  }, [activeSection, devBypass, loadFeedback, loadSnapshot]);
+  }, [activeSection, devBypass, loadFeedback, loadSnapshot, refreshOverviewCounts]);
 
   const refresh = () => {
     loadSnapshot();
+    void refreshOverviewCounts({ afterCurrent: true });
   };
 
   const workEmailAdminRequest = useCallback(async (method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown) => {
@@ -2047,6 +2071,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
         items: batch.items.map((item) => ({ ...item, ...(action !== "approve" ? { status: action === "reject" ? "Failed" : "Paid" } : {}) })),
       } : batch));
       setToast({ message: action === "approve" ? "Payout approved for processing" : action === "reject" ? "Payout rejected and removed from requests" : "Payout recorded as paid", tone: "success" });
+      void refreshOverviewCounts({ afterCurrent: true });
       await loadSnapshot();
     } catch (error) {
       setToast({ message: error instanceof Error ? error.message : "Payout update failed", tone: "danger" });
@@ -2056,7 +2081,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       payoutVersion.current++;
       setBusyPayouts(new Set(payoutActionsRunning.current));
     }
-  }, [loadSnapshot]);
+  }, [loadSnapshot, refreshOverviewCounts]);
 
   const approvePayout = useCallback(async (batchId: string) => {
     const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
@@ -2337,7 +2362,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const adminSectionCounts: Partial<Record<AdminSection, number>> = {
     ...gigSectionCounts,
     Feedback: feedbackItems.filter((item) => item.status === "new").length,
-    Payouts: payoutBatchesAdmin.filter((batch) => String(batch.status).toLowerCase() !== "paid").length,
+    ...(overview.data ? { Payouts: overview.data.pendingPayouts } : {}),
   };
   const adminNavItems = ADMIN_NAV_GROUPS.flatMap((group) => group.items);
   const activeSectionLabel = adminNavItems.find((item) => item.id === activeSection)?.label ?? activeSection;
@@ -2462,24 +2487,30 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 {[
                   { label: "Workers", value: currentWorkers.length, tone: "text-[#1a201c]", section: "Workers" as AdminSection },
                   { label: "Active workers", value: assignableWorkers.length, tone: "text-[#1f5131]", section: "Workers" as AdminSection },
-                  { label: "Accounts", value: accounts.length, tone: "text-[#1a201c]", section: "Workers" as AdminSection },
-                  { label: "Pending payouts", value: payoutBatchesAdmin.filter(batch => batch.status === "Draft" || batch.status === "Processing").length, tone: "text-[#6b4a05]", section: "Payouts" as AdminSection },
+                  { label: "Linked accounts", value: overview.data?.linkedAccounts ?? null, description: overview.data ? "Active and paused social accounts" : overview.error ? "Temporarily unavailable" : "Loading linked accounts…", tone: "text-[#1a201c]", section: "linked-accounts" as AdminSection },
+                  { label: "Pending payouts", value: overview.data?.pendingPayouts ?? null, description: overview.data ? `${overview.data.pendingClaims} earnings claim${overview.data.pendingClaims === 1 ? "" : "s"} · ${overview.data.pendingWithdrawals} withdrawal${overview.data.pendingWithdrawals === 1 ? "" : "s"}` : overview.error ? "Temporarily unavailable" : "Loading pending payouts…", tone: "text-[#6b4a05]", section: "Payouts" as AdminSection },
                 ].map((tile) => (
                   <button
                     key={tile.label}
                     type="button"
+                    aria-busy={tile.value === null && !overview.error || undefined}
                     onClick={() => setActiveSection(tile.section)}
                     className="group flex min-w-0 flex-col gap-2 rounded-xl border border-[#e3e5e1] bg-white p-3.5 text-left shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:border-[#cfd5cf] hover:shadow-[0_4px_14px_-6px_rgba(26,32,28,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
                   >
                     <span className="flex items-center justify-between gap-2 text-[12.5px] font-medium text-[#616a64]">
-                      <span className="truncate">{tile.label}</span>
+                      <span className="min-w-0">{tile.label}</span>
                       <Icon name="chevRight" className="h-3.5 w-3.5 shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5" />
                     </span>
-                    <span className={cx("text-[22px] font-semibold leading-none tabular-nums", tile.tone)}>{mounted ? tile.value : "–"}</span>
+                    <span className={cx("text-[22px] font-semibold leading-none tabular-nums", tile.tone)}>{mounted && tile.value !== null ? tile.value.toLocaleString("en-IN") : "–"}</span>
+                    {tile.description ? <span className="text-[11.5px] leading-4 text-[#7a827c]">{tile.description}</span> : null}
                   </button>
                 ))}
               </div>
             )}
+            {activeSection === "Overview" && overview.error ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#f3d19e] bg-[#fff8ec] px-4 py-3 text-[12.5px] text-[#825317]">
+              <span>{overview.data ? "Showing the last available account and payout totals." : "Account and payout totals are temporarily unavailable."}</span>
+              <button type="button" onClick={() => void refreshOverviewCounts({ afterCurrent: true })} className="rounded-lg border border-current px-3 py-1.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current">Retry totals</button>
+            </div> : null}
 
             {/* Overview */}
             {activeSection === "Overview" && (

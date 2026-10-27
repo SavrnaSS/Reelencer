@@ -840,6 +840,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
 
   const selected = visible.find((a) => a.id === selectedId) ?? (isDesktop ? visible[0] : undefined);
   const update = (next: LinkedSocialAccount) => {
+    window.dispatchEvent(new Event("admin-overview-refresh"));
     adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
     updateSaved(previous => linkedAccountsData({
       accounts: (previous?.accounts ?? accounts ?? []).map(account => account.id === next.id ? next : account),
