@@ -1,6 +1,7 @@
 "use client";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
+import { AccountRecoveryNotice } from "./LinkedAccountRecovery";
 import { postingProgress, summarizePayoutBatches } from "@/lib/creatorEarnings";
 import { formatAmount as formatINR, formatMoney } from "@/lib/money";
 
@@ -5816,7 +5817,7 @@ export default function DashboardPage() {
                     const approvedOn = selectedGigApplication?.proposal?.reviewedAt;
                     const headerTitle = applicationLocked
                       ? selectedGigReviewStatus === "Accepted"
-                        ? "You're in. Welcome aboard!"
+                        ? isDirectApplicationFlow ? "Application approved" : "Proposal approved"
                         : "Your application"
                       : isDirectApplicationFlow
                         ? "Apply to this gig"
@@ -5825,7 +5826,7 @@ export default function DashboardPage() {
                           : "Send a proposal";
                     const headerDescription = applicationLocked
                       ? selectedGigReviewStatus === "Accepted"
-                        ? `${selectedGig.company} approved your ${isDirectApplicationFlow ? "application" : "proposal"} for ${selectedGig.title}${approvedOn ? ` on ${formatDetailedDate(approvedOn)}` : ""}. Your progress and everything you need are below.`
+                        ? `${selectedGig.company} approved your ${isDirectApplicationFlow ? "application" : "proposal"}${approvedOn ? ` on ${formatDetailedDate(approvedOn)}` : ""}. Review your progress and next steps below.`
                         : selectedGigReviewStatus === "Rejected"
                           ? isDirectApplicationFlow
                             ? "This application was closed by the hiring team. Review any recruiter notes below."
@@ -6003,10 +6004,13 @@ export default function DashboardPage() {
                                       .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim())
                                       .filter(Boolean);
                                     // Content Posting work happens on the linked account: post reels, submit them, get paid per approval.
-                                    const gigAccount = linkedAccounts.find((account) => account.status !== "unlinked" && (String(account.gigId) === String(selectedGig.id) || (!!selectedGigApplication && String(account.applicationId) === String(selectedGigApplication.id)))) ?? null;
-                                    const linkedHandle = (accountSetup?.status === "Verified" ? accountSetup.handle : null) ?? gigAccount?.handle ?? null;
+                                    const matchesSelectedGig = (account: (typeof linkedAccounts)[number]) => String(account.gigId) === String(selectedGig.id) || (!!selectedGigApplication && String(account.applicationId) === String(selectedGigApplication.id));
+                                    const gigAccount = linkedAccounts.find((account) => account.status !== "unlinked" && matchesSelectedGig(account)) ?? null;
+                                    const profileIssue = socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues?.find(matchesSelectedGig) ?? null : null;
+                                    const needsProfileFix = !gigAccount && !!profileIssue;
+                                    const linkedHandle = gigAccount?.handle ?? (!profileIssue && accountSetup?.status === "Verified" ? accountSetup.handle : null);
                                     const reelPay = payoutPhrase(selectedGig.payout, selectedGig.payoutType);
-                                    const posting = postingProgress(gigAccount, payoutBatches);
+                                    const posting = postingProgress(gigAccount ?? profileIssue, payoutBatches);
                                     const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
                                     const money = (amount: number) => formatMoney(amount, posting.symbol);
                                     type StepStat = { label: string; tone: "neutral" | "good" | "wait" | "bad" };
@@ -6019,13 +6023,16 @@ export default function DashboardPage() {
                                       ...(isContentPostingGig(selectedGig)
                                         ? [
                                             {
-                                              title: `${accountPlatformLabel} account linked`,
-                                              body: linkedHandle ? `@${linkedHandle}, verified` : "Your account is being linked to your profile.",
+                                              title: needsProfileFix ? `Verify your ${accountPlatformLabel} account` : `${accountPlatformLabel} account linked`,
+                                              body: needsProfileFix ? "Your profile could not be found. Check your username and verify your account to link it again." : linkedHandle ? `@${linkedHandle}, verified` : "Your account is being linked to your profile.",
                                               done: !!linkedHandle,
+                                              action: needsProfileFix ? { label: "Verify account", onClick: () => navigateFromView("accounts") } : undefined,
                                             },
                                             {
                                               title: "Post reels and submit them",
-                                              body: posting.submitted
+                                              body: needsProfileFix
+                                                ? "Your submitted reels are saved. Verify your profile to continue posting."
+                                                : posting.submitted
                                                 ? "Keep posting: every approved reel counts."
                                                 : earningsLoading
                                                   ? "Checking your submitted reels…"
@@ -7612,7 +7619,7 @@ export default function DashboardPage() {
         strings={strings}
         loading={loading}
         onLogout={logout}
-        navBadges={{ messages: unreadCount }}
+        navBadges={{ messages: unreadCount, accounts: socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues?.length ?? 0 : 0 }}
         walletSummary={{ credited: accountEarnings?.approved ?? payoutSummary.credited, pending: accountEarnings?.pending ?? payoutSummary.pending, estimated: Boolean(accountEarnings), loading: earningsLoading, unavailable: socialAccounts.load.state === "error" }}
         liveStatus={{ syncing: liveSyncing || socialAccounts.refreshing, lastSyncedAt, onSync: () => { void refreshLiveData(); void socialAccounts.refresh(currentSection === "accounts"); } }}
       >
@@ -7621,6 +7628,7 @@ export default function DashboardPage() {
             {error}
           </div>
         ) : null}
+        {currentSection !== "accounts" && socialAccounts.load.state === "ready" && socialAccounts.load.accountIssues?.length ? <AccountRecoveryNotice count={socialAccounts.load.accountIssues.length} onReview={() => navigateFromView("accounts")} /> : null}
         {renderSection()}
       </DashboardPageShell>
 

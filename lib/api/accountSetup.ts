@@ -25,6 +25,7 @@ import {
 import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
 import { decryptSecretText, deriveSecretBytes } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { ProfileNotFoundError } from "@/lib/socialSyncSchedule";
 
 export function decodePublicWorkerName(raw: unknown) {
   const decoded = decodeWorkerName(raw);
@@ -105,7 +106,7 @@ async function readOwnership(platformName: string, handle: string, code: string)
     const message = error instanceof Error ? error.message : "";
     return {
       ownership: "unreadable",
-      ownershipDetail: /not found|404/i.test(message)
+      ownershipDetail: error instanceof ProfileNotFoundError || /not found|404/i.test(message)
         ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
         : `${platform.label} didn't respond on the last check. We'll keep trying automatically.`,
       checkedAt,

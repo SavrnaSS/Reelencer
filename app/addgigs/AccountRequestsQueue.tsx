@@ -73,6 +73,7 @@ function RequestRow({
   const hours = hoursWaiting(request, now);
   const overdue = request.status === "pending" && hours >= REVIEW_TARGET_HOURS;
   const owned = request.checks.find((c) => c.id === "ownership")?.status === "pass";
+  const missing = request.checks.some(check => check.id === "profile" && check.status === "fail");
   const issues = request.checks.filter((c) => c.status === "fail" || c.status === "warn");
   const [password, setPassword] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -238,7 +239,7 @@ function RequestRow({
                 <button type="button" className={btnGhost} onClick={() => setDialog("changes")} disabled={busy !== null}>
                   Request changes
                 </button>
-                <button type="button" className={btnPrimary} onClick={() => (isReady(request) ? void decide("approve") : setDialog("approve"))} disabled={busy !== null}>
+                <button type="button" className={btnPrimary} onClick={() => (isReady(request) ? void decide("approve") : setDialog("approve"))} disabled={busy !== null || missing} title={missing ? "The creator must correct this profile before it can be linked." : undefined}>
                   {busy === "approve" ? <Spinner /> : <Icon d={ICONS.check} />}
                   Approve and link
                 </button>

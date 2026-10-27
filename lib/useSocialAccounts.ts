@@ -6,8 +6,9 @@ import { summarizeAccountEarnings } from "./creatorEarnings";
 import type { LinkedSocialAccount } from "./socialAnalytics";
 import { supabase } from "./supabaseClient";
 import { useVisibleRefresh } from "./useVisibleRefresh";
+import { needsProfileRecovery } from "./accountProfileHealth";
 
-type AccountData = { accounts: LinkedSocialAccount[]; statsEnabled: boolean; screenshotReader: boolean };
+type AccountData = { accounts: LinkedSocialAccount[]; accountIssues?: LinkedSocialAccount[]; statsEnabled: boolean; screenshotReader: boolean };
 export type SocialAccountsLoad = { state: "loading" } | { state: "error"; message: string; unavailable?: boolean } | ({ state: "ready"; refreshError?: string } & AccountData);
 
 /** One account collection drives account cards and earnings everywhere in the creator dashboard. */
@@ -59,7 +60,7 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
           });
         }
         if (controller.signal.aborted || version !== generation.current) return;
-        setLoad({ state: "ready", accounts: payload.accounts, statsEnabled: payload.statsEnabled !== false, screenshotReader: payload.screenshotReader === true });
+        setLoad({ state: "ready", accounts: payload.accounts.filter((account: LinkedSocialAccount) => account.status !== "unlinked"), accountIssues: Array.isArray(payload.accountIssues) ? payload.accountIssues : [], statsEnabled: payload.statsEnabled !== false, screenshotReader: payload.screenshotReader === true });
         window.dispatchEvent(new Event("social-accounts-refreshed"));
       } catch (error) {
         if (controller.signal.aborted || version !== generation.current) return;
@@ -138,7 +139,8 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
     generation.current++;
     setLoad(previous => previous.state === "ready" ? {
       ...previous, refreshError: undefined,
-      accounts: previous.accounts.map(item => item.id === account.id ? account : item),
+      accounts: account.status === "unlinked" ? previous.accounts.filter(item => item.id !== account.id) : previous.accounts.some(item => item.id === account.id) ? previous.accounts.map(item => item.id === account.id ? account : item) : [account, ...previous.accounts],
+      accountIssues: needsProfileRecovery(account) ? [account, ...(previous.accountIssues ?? []).filter(item => item.id !== account.id)] : (previous.accountIssues ?? []).filter(item => item.id !== account.id),
     } : previous);
     window.dispatchEvent(new Event("social-accounts-refreshed"));
   }, []);
@@ -154,7 +156,7 @@ export function useSocialAccounts(enabled: boolean, userId: string | null = null
     window.dispatchEvent(new Event("social-accounts-refreshed"));
   }, []);
 
-  const earnings = useMemo(() => load.state === "ready" ? summarizeAccountEarnings(load.accounts) : null, [load]);
+  const earnings = useMemo(() => load.state === "ready" ? summarizeAccountEarnings([...load.accounts, ...(load.accountIssues ?? [])]) : null, [load]);
   return { load, refreshing, refresh, updateAccount, updatePost, earnings };
 }
 

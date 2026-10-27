@@ -21,6 +21,7 @@ import { emailBaseUrl } from "@/lib/email/send";
 import { decryptSecretText } from "@/lib/secretCrypto";
 import { formatCompact } from "@/lib/socialAnalytics";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { ProfileNotFoundError } from "@/lib/socialSyncSchedule";
 
 // Additional account requests (see lib/accountRequests and migration 202610100001). Creators can only add accounts
 // to gigs they're already linked on; nothing links until the team approves. Ownership is proven by a code in the bio,
@@ -144,7 +145,7 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Instagram couldn't be read.";
-      checks.push({ id: "profile", label: "Public profile", status: "warn", detail: message.slice(0, 200) });
+      checks.push({ id: "profile", label: "Public profile", status: error instanceof ProfileNotFoundError ? "fail" : "warn", detail: message.slice(0, 200) });
       checks.push({ id: "ownership", label: "Ownership code", status: "pending", detail: `Couldn't read the bio. Open the profile and look for ${code}.` });
     }
   } else {
@@ -171,10 +172,11 @@ const PROVEN = JSON.stringify([{ id: "ownership", status: "pass" }]);
 async function saveChecks(sb: Sb, r: Row) {
   const { checks, risk } = await runChecks(sb, r);
   const foundNow = ownershipProven(checks) && !ownershipProven(r.checks);
+  const missing = checks.some(check => check.id === "profile" && check.status === "fail");
   let update = sb
     .from("social_account_requests")
-    .update({ checks, risk, checked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("id", String(r.id));
+    .update({ checks, risk, checked_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...(missing ? { status: "changes_requested", review_note: "The profile could not be found. Correct the username and profile link, then submit it again for verification." } : {}) })
+    .eq("id", String(r.id)).eq("handle_key", String(r.handle_key)).eq("revision", Number(r.revision ?? 1)).in("status", OPEN_REQUEST_STATUSES);
   // Only the write that turns ownership to proven may send the email, so checks racing can't send it twice.
   if (foundNow) update = update.not("checks", "cs", PROVEN);
   const { data, error } = await update.select("*").maybeSingle();
@@ -452,6 +454,7 @@ export async function reviewAccountRequest(actorId: string, id: string, decision
   let linkedAccountId: string | undefined;
 
   if (decision === "approve") {
+    if (Array.isArray(current.checks) && current.checks.some((check: RequestCheck) => check.id === "profile" && check.status === "fail")) throw new ApiError(409, "This profile could not be found. Ask the creator to correct it and run the checks again before linking it.");
     // Re-run the duplicate check right before linking: another approval may have landed since the queue loaded.
     const { data: linked, error: linkedError } = await sb.from("linked_social_accounts").select("id,platform,status").ilike("handle", ilikeExact(String(current.handle))).limit(20);
     databaseError(linkedError);

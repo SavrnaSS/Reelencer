@@ -65,6 +65,45 @@ test('public profiles refresh every five minutes and failed reads back off for t
   assert.equal(accountSyncDue({ ...account, platform: 'YouTube' }, now + 60_000, 3 * 3_600_000), false);
 });
 
+test('a single missing profile is rechecked; a repeated explicit absence unlinks it without deleting saved data', async () => {
+  globalThis.fetch = async () => new Response('Profile missing', { status: 404 });
+  for (const confirmed of [false, true]) {
+    const health = confirmed ? { status: 'suspected', missingChecks: 1, firstMissingAt: new Date(Date.now() - 360_000).toISOString() } : {};
+    const account = { id: `profile-missing-${confirmed}`, status: 'active', platform: 'Instagram', handle: 'creator', profile_health: health, last_synced_at: '2026-10-20T00:00:00Z' };
+    const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+    const result = await syncAccount(sb, account, cfg({}));
+    assert.equal(result.errorCode, 'not_found');
+    const update = writes.find(write => write.table === 'linked_social_accounts')!;
+    assert.equal((update.payload.profile_health as Row).status, confirmed ? 'missing' : 'suspected');
+    assert.equal(update.payload.status, confirmed ? 'unlinked' : undefined);
+    assert.equal(update.payload.last_synced_at, undefined);
+    assert.equal(writes.filter(write => write.table !== 'linked_social_accounts').length, 0);
+  }
+});
+
+test('login walls, access failures and missing Meta eligibility never remove an account', async () => {
+  for (const status of [302, 401, 403, 429, 503]) {
+    globalThis.fetch = async () => new Response('Blocked', { status });
+    const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+    await syncAccount(sb, { id: `profile-blocked-${status}`, status: 'active', platform: 'Instagram', handle: 'creator', profile_health: { status: 'suspected', missingChecks: 1, firstMissingAt: '2026-10-01T00:00:00Z' } }, cfg({}));
+    assert.ok(writes.every(write => write.payload.status !== 'unlinked'));
+    assert.ok(writes.every(write => write.payload.profile_health === undefined));
+  }
+  globalThis.fetch = async input => String(input).includes('graph.facebook.com') ? new Response('{}', { headers: { 'content-type': 'application/json' } }) : new Response('Login', { status: 302 });
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+  await syncAccount(sb, { id: 'ineligible-profile', status: 'active', platform: 'Instagram', handle: 'creator', profile_health: {} }, cfg({ metaAccessToken: 'test-token', metaIgBusinessId: '123' }));
+  assert.ok(writes.every(write => write.payload.status !== 'unlinked'));
+});
+
+test('a successful profile read clears an earlier missing-profile observation', async () => {
+  globalThis.fetch = async () => new Response('<meta name="description" content="12 Followers, 2 Following, 0 Posts (@creator)">', { headers: { 'content-type': 'text/html' } });
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
+  await syncAccount(sb, { id: 'profile-returned', status: 'active', platform: 'Instagram', handle: 'creator', profile_health: { status: 'suspected', missingChecks: 1, firstMissingAt: '2026-10-01T00:00:00Z' } }, cfg({}));
+  const health = writes.find(write => write.table === 'linked_social_accounts')?.payload.profile_health as Row;
+  assert.equal(health.status, 'healthy');
+  assert.equal(health.missingChecks, 0);
+});
+
 test('overlapping account sync requests share one read and one snapshot', async () => {
   const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [] });
   let reads = 0;

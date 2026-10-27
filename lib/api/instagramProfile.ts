@@ -1,6 +1,6 @@
 import "server-only";
 import { canonicalInstagramReelUrl } from "@/lib/socialAnalytics";
-import { SocialSyncError } from "@/lib/socialSyncSchedule";
+import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
 
 type Row = Record<string, unknown>;
 export type ProfilePost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number };
@@ -128,6 +128,7 @@ async function readPage(path: string, signal: AbortSignal): Promise<string> {
     throw new SocialSyncError("Instagram has temporarily limited profile reads. Automatic sync will retry later; use screenshots meanwhile.", "rate_limited", delay || 0);
   }
   if (response.status >= 300 && response.status < 400) throw new SocialSyncError("Instagram redirected this profile read to a page that may require login. Connect the Instagram API in Auto-sync for eligible professional accounts, or add insight screenshots.", "login_required");
+  if ((response.status === 404 || response.status === 410) && /^\/[a-zA-Z0-9._]+\/$/.test(path)) throw new ProfileNotFoundError("Instagram could not find this profile. Check whether its username changed.");
   if (!response.ok) throw new Error(`Instagram profile is unavailable (${response.status}). Check the handle or update from screenshots.`);
   if (!response.headers.get("content-type")?.includes("text/html")) throw new Error("Instagram returned an unreadable profile page.");
   // Bound untrusted response size without first buffering an unlimited body.
@@ -246,7 +247,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
     profile = extractInstagramProfile(html, handle);
   } catch (error) {
     // One public embed fallback can survive a profile login wall. Rate limits are always respected.
-    if (signal.aborted || (error instanceof SocialSyncError && error.code === "rate_limited") || /\(404\)/.test(error instanceof Error ? error.message : "")) throw error;
+    if (signal.aborted || error instanceof ProfileNotFoundError || (error instanceof SocialSyncError && error.code === "rate_limited") || /\(404\)/.test(error instanceof Error ? error.message : "")) throw error;
     try {
       html = await readPage(`/${handle}/embed/`, AbortSignal.any([signal, AbortSignal.timeout(2500)]));
       profile = extractInstagramProfile(html, handle);

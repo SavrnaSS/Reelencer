@@ -6,7 +6,8 @@ import { ApiError, databaseError } from "@/lib/api/errors";
 import { externalPostId, type SyncState } from "@/lib/socialAnalytics";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveSyncConfig, type SyncConfig } from "@/lib/api/integrations";
-import { classifySyncError, retryDelayMs, SocialSyncError, storedSyncState, syncInterval } from "@/lib/socialSyncSchedule";
+import { classifySyncError, ProfileNotFoundError, retryDelayMs, SocialSyncError, storedSyncState, syncInterval } from "@/lib/socialSyncSchedule";
+import { PROFILE_MISSING_CONFIRM_MS, recordMissingProfile } from "@/lib/accountProfileHealth";
 
 // Official API readers share the same durable queue as Instagram's public profile fallback.
 
@@ -48,7 +49,8 @@ async function fetchYouTube(handle: string, config: SyncConfig): Promise<Fetched
   const base = "https://www.googleapis.com/youtube/v3";
   const channels = await getJson(`${base}/channels?part=statistics,contentDetails&forHandle=${encodeURIComponent(`@${handle}`)}&key=${key}`, signal);
   const channel = (channels.items as Row[] | undefined)?.[0];
-  if (!channel) throw new SyncError(`No YouTube channel found for @${handle}. Check the handle on the account.`);
+  if (!channel && Array.isArray(channels.items)) throw new ProfileNotFoundError(`No YouTube channel found for @${handle}. Check the handle on the account.`);
+  if (!channel) throw new SyncError("YouTube returned an unreadable channel response. The next check is scheduled automatically.");
   const stats = (channel.statistics ?? {}) as Row;
   const uploads = String(((channel.contentDetails as Row)?.relatedPlaylists as Row | undefined)?.uploads ?? "");
   let media: ExternalPost[] = [];
@@ -298,6 +300,7 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     const values = { sync_status: "ok", last_synced_at: new Date(finished).toISOString(), sync_error: "", sync_error_code: "", sync_failures: 0,
       next_sync_at: new Date(finished + syncInterval(String(account.platform))).toISOString(),
       sync_provider: fetched.provider ?? "youtube", sync_locked_until: null, sync_lock_token: null,
+      ...("profile_health" in account ? { profile_health: { status: "healthy", checkedAt: new Date(finished).toISOString(), missingChecks: 0 } } : {}),
       ...(fetched.externalId ? { external_id: fetched.externalId } : {}) };
     await updateAccount(sb, id, values, String(account.sync_lock_token));
     return storedSyncState({ ...account, ...values });
@@ -307,9 +310,15 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     message = message.slice(0, 300);
     const code = classifySyncError(error);
     const failures = Math.max(0, Number(account.sync_failures) || 0) + 1;
+    const health = error instanceof ProfileNotFoundError && "profile_health" in account ? recordMissingProfile(account.profile_health) : null;
     const values = { sync_status: "error", sync_error: message, sync_error_code: code, sync_failures: failures,
       next_sync_at: new Date(Date.now() + retryDelayMs(code, failures, id, error instanceof SocialSyncError ? error.retryAfterMs : 0)).toISOString(),
       sync_locked_until: null, sync_lock_token: null };
+    if (health) Object.assign(values, {
+      profile_health: health,
+      ...(health.status === "missing" ? { status: "unlinked", next_sync_at: null, updated_at: new Date().toISOString() }
+        : { next_sync_at: new Date(Date.now() + PROFILE_MISSING_CONFIRM_MS).toISOString() }),
+    });
     // A failed attempt never advances last_synced_at or discards saved measurements.
     await updateAccount(sb, id, values, String(account.sync_lock_token));
     return storedSyncState({ ...account, ...values });

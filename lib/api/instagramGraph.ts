@@ -35,7 +35,7 @@ export async function fetchInstagramBusinessProfile(input: string, config: Pick<
     throw new SocialSyncError("Instagram's API could not read this handle. Business Discovery requires an eligible public professional account.", "unavailable");
   }
   const profile = row(body.business_discovery);
-  if (String(profile.username ?? "").toLowerCase() !== handle) throw new SocialSyncError("Instagram's API did not return the requested account. Check the handle and professional account access.", "not_found");
+  if (String(profile.username ?? "").toLowerCase() !== handle) throw new SocialSyncError("Instagram's API did not return the requested account. Check the handle and professional account access.", "unavailable");
   const result: InstagramProfile = {
     externalId: profile.id ? String(profile.id) : undefined,
     followers: count(profile.followers_count), following: count(profile.follows_count), posts: count(profile.media_count),

@@ -10,6 +10,8 @@ import { readAdminFilter, saveAdminFilter } from "@/lib/adminPreferences";
 import { LINKED_ACCOUNTS_CACHE_KEY, LINKED_ACCOUNTS_FRESH_MS, LINKED_SYNC_CACHE_KEY, LINKED_SYNC_ATTEMPT_KEY, isLinkedAccountsData, isLinkedSyncAttempt, linkedAccountsData, linkedSyncDue, type LinkedAccountsData } from "@/lib/linkedAccountCache";
 import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
 import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
+import LinkedAccountRecovery from "@/app/dashboard/LinkedAccountRecovery";
+import { needsProfileRecovery } from "@/lib/accountProfileHealth";
 import { syncPresentation } from "@/lib/socialSyncSchedule";
 import type { AdminLiveKind } from "@/lib/useAdminLive";
 import { accountPlatformFor } from "@/lib/accountSetup";
@@ -34,14 +36,15 @@ import MetricChart from "../dashboard/MetricChart";
 import AutoSyncCard from "./AutoSyncCard";
 import AccountRequestsQueue from "./AccountRequestsQueue";
 import PlatformGlyph from "../dashboard/PlatformGlyph";
-import { Banner, EmptyState, ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, cardClass, fieldClass, formatDate, formatDateTime, formatRelative } from "./adminUi";
+import { Banner, ConfirmDialog, EmptyState, ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, cardClass, fieldClass, formatDate, formatDateTime, formatRelative } from "./adminUi";
 
 // Admin: every account linked after Content Posting screening. The team logs in, reads the platform's insights and
 // records them here as check-ins; creators see the result in Dashboard → Accounts.
 
-type Filter = "all" | "due" | "reels" | "active" | "paused" | "unlinked";
+type Filter = "all" | "attention" | "due" | "reels" | "active" | "paused" | "unlinked";
 const FILTERS: { id: Filter; label: string }[] = [
   { id: "all", label: "All" },
+  { id: "attention", label: "Profile verification" },
   { id: "due", label: "Check-in due" },
   { id: "reels", label: "Reels to review" },
   { id: "active", label: "Active" },
@@ -372,6 +375,7 @@ function AccountDetail({
   const [chartMetric, setChartMetric] = useState<SnapshotMetric>("followers");
   const [postEditor, setPostEditor] = useState<{ post: SocialPost | null } | null>(null);
   const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
+  const [reportMissing, setReportMissing] = useState(false);
   const review = async (post: SocialPost, status: "approved" | "rejected", note?: string) => {
     setBusy(post.id);
     setError(null);
@@ -401,12 +405,12 @@ function AccountDetail({
   const due = isDue(account, now);
   const days = daysSinceSnapshot(account.snapshots, now);
 
-  const run = async (key: string, body: Record<string, unknown>, apply: () => void) => {
+  const run = async <T,>(key: string, body: Record<string, unknown>, apply: (payload: T) => void) => {
     setBusy(key);
     setError(null);
     try {
-      await adminPost(body);
-      apply();
+      const payload = await adminPost<T>(body);
+      apply(payload);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The change couldn't be saved.");
     } finally {
@@ -437,6 +441,7 @@ function AccountDetail({
           </p>
           <p className="mt-0.5 text-[11.5px] text-[#8a928c]">Linked {formatDate(account.linkedAt)}</p>
           <div className="mt-2"><SocialSyncStatus account={account} now={now} /></div>
+          {account.status !== "unlinked" ? <button type="button" onClick={() => setReportMissing(true)} className="mt-1 inline-flex min-h-9 items-center rounded-md text-[11.5px] font-medium text-[#8a6a36] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[#8a6a36]">Profile not found?</button> : null}
         </div>
         <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           {account.sync.available ? (
@@ -471,7 +476,7 @@ function AccountDetail({
           <select
             id={`status-${account.id}`}
             value={account.status}
-            disabled={busy === "status"}
+            disabled={busy === "status" || needsProfileRecovery(account)}
             onChange={(e) => {
               const status = e.target.value as SocialAccountStatus;
               void run("status", { action: "status", accountId: account.id, status }, () => onChange({ ...account, status }));
@@ -487,6 +492,7 @@ function AccountDetail({
 
       <div className="space-y-5 p-4 sm:p-5">
         {error ? <Banner tone="danger" onDismiss={() => setError(null)}>{error}</Banner> : null}
+        {needsProfileRecovery(account) ? <LinkedAccountRecovery key={account.profileHealth?.recovery?.submittedAt ?? account.id} account={account} admin onChange={next => onChange(next)} /> : null}
         {due ? (
           <div className="flex items-start gap-2 rounded-[12px] border border-[#ecd8a8] bg-[#fff8e8] px-3.5 py-2.5 text-[12.5px] text-[#6b4a05]">
             <Icon d={ICONS.clock} className="mt-0.5 h-4 w-4 shrink-0" />
@@ -721,6 +727,7 @@ function AccountDetail({
           </section>
         ) : null}
       </div>
+      {reportMissing ? <ConfirmDialog title={`Mark @${account.handle} as missing?`} body="Confirm that you opened the profile and it could not be found. This removes it from Linked and asks the creator to verify or correct it. Saved reels and earnings are retained." confirmLabel="I checked — profile not found" icon={ICONS.alert} busy={busy === "missing"} onCancel={() => setReportMissing(false)} onConfirm={() => { void run<{ account: LinkedSocialAccount }>("missing", { action: "report_missing_profile", accountId: account.id, notFoundConfirmed: true }, payload => { onChange(payload.account); setReportMissing(false); }); }} /> : null}
     </article>
   );
 }
@@ -803,6 +810,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
     const list = accounts ?? [];
     return {
       all: list.length,
+      attention: list.filter(needsProfileRecovery).length,
       due: list.filter((a) => isDue(a, now)).length,
       reels: list.filter((a) => a.posts.some((p) => p.status === "submitted")).length,
       active: list.filter((a) => a.status === "active").length,
@@ -817,6 +825,8 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
       .filter((a) =>
         filter === "all"
           ? a.status !== "unlinked"
+          : filter === "attention"
+            ? needsProfileRecovery(a)
           : filter === "due"
             ? isDue(a, now)
             : filter === "reels"

@@ -18,6 +18,8 @@ export function databaseError(error: { code?: string; message?: string } | null)
       not_found: [404, "Record not found."],
       forbidden: [403, "Access denied."],
       invalid_transition: [409, "The record has changed or this action is no longer available."],
+      profile_already_linked: [409, "This profile is already linked to another account. Ask the team to review it."],
+      profile_account_limit: [409, "An account slot is needed before this profile can be linked again. Ask the team to review your linked accounts."],
       active_batch: [409, "A payout request is already in progress."],
       kyc_required: [400, "Approved identity verification is required."],
       upi_required: [400, "A verified UPI account is required."],

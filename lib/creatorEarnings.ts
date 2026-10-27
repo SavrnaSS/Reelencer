@@ -1,4 +1,5 @@
 import { reelEarnings, type LinkedSocialAccount } from "./socialAnalytics";
+import { needsProfileRecovery } from "./accountProfileHealth";
 
 export type AccountEarnings = {
   accountId: string;
@@ -15,7 +16,7 @@ export type AccountEarnings = {
 export function summarizeAccountEarnings(accounts: LinkedSocialAccount[]) {
   const breakdown: AccountEarnings[] = [];
   for (const account of new Map(accounts.map(account => [account.id, account])).values()) {
-    if (account.status === "unlinked") continue;
+    if (account.status === "unlinked" && !needsProfileRecovery(account)) continue;
     const earnings = reelEarnings(account);
     // INR dashboard totals cannot combine currencies or convert a foreign payout rate.
     if (!earnings || !["", "₹", "INR"].includes(earnings.symbol)) continue;

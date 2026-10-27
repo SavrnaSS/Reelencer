@@ -10,6 +10,11 @@ export class SocialSyncError extends Error {
   constructor(message: string, public code: SyncErrorCode = "unavailable", public retryAfterMs = 0) { super(message); }
 }
 
+/** Explicit absence of the requested profile, never an individual post or a permission error. */
+export class ProfileNotFoundError extends SocialSyncError {
+  constructor(message: string) { super(message, "not_found"); }
+}
+
 export function syncInterval(platform: string) {
   return accountPlatformFor(platform).id === "instagram" ? PROFILE_SYNC_INTERVAL_MS : API_SYNC_INTERVAL_MS;
 }
@@ -51,8 +56,10 @@ export function storedSyncState(row: Record<string, unknown>, available = true):
 }
 
 /** Shared, honest status for both dashboards: a failed attempt never looks like a successful refresh. */
-export function syncPresentation(account: Pick<LinkedSocialAccount, "status" | "platform" | "sync">, now = Date.now()) {
+export function syncPresentation(account: Pick<LinkedSocialAccount, "status" | "platform" | "sync" | "profileHealth">, now = Date.now()) {
   const { sync } = account;
+  if (account.profileHealth?.status === "missing") return { label: "Profile verification needed", tone: "warning" as const };
+  if (account.profileHealth?.status === "suspected") return { label: "Rechecking profile", tone: "warning" as const };
   if (account.status !== "active") return { label: account.status === "paused" ? "Paused" : "Unlinked", tone: "neutral" as const };
   if (!sync.available) return { label: sync.status === "not_configured" ? "Connection needed" : "Manual updates", tone: "neutral" as const };
   if (sync.inProgress && (!sync.lastAttemptAt || now - Date.parse(sync.lastAttemptAt) < SYNC_LEASE_MS)) return { label: "Syncing", tone: "progress" as const };

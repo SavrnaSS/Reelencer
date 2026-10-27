@@ -1,5 +1,5 @@
 export const ADMIN_PREFERENCES_COOKIE = "reelencer_admin_view";
-export const LINKED_ACCOUNT_FILTERS = ["all", "due", "reels", "active", "paused", "unlinked"] as const;
+export const LINKED_ACCOUNT_FILTERS = ["all", "attention", "due", "reels", "active", "paused", "unlinked"] as const;
 export type LinkedAccountFilter = typeof LINKED_ACCOUNT_FILTERS[number];
 
 /** Only a small, non-sensitive UI preference belongs in this cookie. */

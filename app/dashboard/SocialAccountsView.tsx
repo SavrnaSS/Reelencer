@@ -37,6 +37,7 @@ import PlatformGlyph from "./PlatformGlyph";
 import ScreenshotImport from "./ScreenshotImport";
 import ReelEarningsSummary from "./ReelEarningsSummary";
 import AddAccountsPanel, { AccountsRail, AddAccountSheet, useAccountRequests, type SheetMode } from "./AddAccountsPanel";
+import LinkedAccountRecovery from "./LinkedAccountRecovery";
 
 // "Accounts": the social accounts linked to the creator after Content Posting screening, with their reach, growth
 // and per-reel results. Numbers come from the team's insight check-ins (see lib/socialAnalytics).
@@ -1226,6 +1227,7 @@ export default function SocialAccountsView({ onFindGigs, state }: { onFindGigs: 
   const { load, refreshing, refresh: refreshAccounts, updateAccount, updatePost, earnings } = state;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetMode | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const requests = useAccountRequests(load.state === "ready" ? load.accounts : null);
   const refresh = useCallback(() => refreshAccounts(true), [refreshAccounts]);
   // Check deadlines frequently; the server still limits Instagram reads to once per five minutes.
@@ -1258,7 +1260,10 @@ export default function SocialAccountsView({ onFindGigs, state }: { onFindGigs: 
   }
 
   const accounts = load.accounts;
+  const issues = load.accountIssues ?? [];
+  const recoveryCards = issues.length ? <div role="group" className="space-y-3" aria-label="Profiles needing verification">{issues.map(account => <LinkedAccountRecovery key={account.id} account={account} onChange={(next, message) => { updateAccount(next); if (next.status === "active") setRecoveryNotice(message); }} />)}</div> : null;
   if (!accounts.length) {
+    if (issues.length) return <div className="space-y-4">{recoveryCards}{earnings?.accountCount ? <ReelEarningsSummary summary={earnings} /> : null}<p className="text-center text-[12px] leading-5 text-[#7a827c]">Verified profiles will appear in Linked again. Saved reels and earnings are retained.</p></div>;
     return (
       <section className="rounded-2xl border border-[#ebedea] bg-white px-5 py-10 text-center sm:py-14">
         <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#eef1ed] text-[#2b5d4a]">
@@ -1278,6 +1283,8 @@ export default function SocialAccountsView({ onFindGigs, state }: { onFindGigs: 
   const selected = accounts.find((a) => a.id === selectedId) ?? accounts[0];
   return (
     <div className="space-y-4">
+      {recoveryNotice ? <p role="status" className="rounded-xl bg-[#edf6e7] px-4 py-3 text-[12.5px] text-[#35633e]">{recoveryNotice}</p> : null}
+      {recoveryCards}
       {load.refreshError ? <p role="status" className="rounded-xl border border-[#ecd8a8] bg-[#fff8e8] px-4 py-3 text-[12.5px] text-[#6b4a05]">Showing your last saved account stats. {load.refreshError}</p> : null}
       {accounts.length > 1 ? <ReelEarningsSummary summary={earnings} /> : null}
       <AccountsRail accounts={accounts} selectedId={selected.id} onSelect={setSelectedId} controller={requests} onOpenSheet={setSheet} earnings={earnings} />

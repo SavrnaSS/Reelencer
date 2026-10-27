@@ -126,6 +126,7 @@ export type LinkedSocialAccount = {
   handle: string;
   profileUrl: string;
   status: SocialAccountStatus;
+  profileHealth?: import("./accountProfileHealth").AccountProfileHealth;
   linkedAt: string;
   /** The gig's listed payout ("₹2,800") and how it's paid ("Per post"), for the earnings estimate. */
   payout?: string;

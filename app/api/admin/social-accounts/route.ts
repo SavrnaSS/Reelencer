@@ -4,12 +4,15 @@ import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
-import { deletePost, deleteSnapshot, recordSnapshot, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { deletePost, deleteSnapshot, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { reportMissingAccountProfile, restoreAccountProfile } from "@/lib/api/accountProfileRecovery";
 
 // Admin writes for linked accounts: insight check-ins, per-reel results, pause/unlink.
 
 const count = z.number().int().min(0).max(2_000_000_000).optional();
 const actions = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("report_missing_profile"), accountId: z.uuid(), notFoundConfirmed: z.literal(true) }),
+  z.object({ action: z.literal("restore_profile"), accountId: z.uuid(), ownershipConfirmed: z.literal(true), handle: z.string().min(1).max(120), submittedAt: z.string().min(1).max(40) }),
   z.object({
     action: z.literal("snapshot"),
     accountId: z.uuid(),
@@ -52,6 +55,10 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
   if (!parsed.success) throw new ApiError(400, parsed.error.issues[0]?.message ?? "Invalid request.", "invalid_input");
   const body = parsed.data;
   switch (body.action) {
+    case "report_missing_profile":
+      return NextResponse.json({ account: await recoveredAccountView(await reportMissingAccountProfile(actor.user.id, body.accountId, body.notFoundConfirmed)) }, { headers: NO_STORE_HEADERS });
+    case "restore_profile":
+      return NextResponse.json({ account: await recoveredAccountView(await restoreAccountProfile(actor.user.id, body.accountId, body.ownershipConfirmed, body)) }, { headers: NO_STORE_HEADERS });
     case "snapshot": {
       const { action: _action, ...input } = body;
       void _action;

@@ -11,6 +11,8 @@ import { openRequestCount } from "@/lib/api/accountRequests";
 import { fetchInstagramReel, type ProfilePost } from "@/lib/api/instagramProfile";
 import { canonicalInstagramReelUrl, externalPostId, STALE_AFTER_DAYS, SYNC_COOLDOWN_MINUTES, SYNC_STALE_HOURS, type LinkedSocialAccount, type SyncState, type SocialAccountStatus, type SocialPost, type SocialPostStatus, type SocialSnapshot } from "@/lib/socialAnalytics";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { readProfileHealth } from "@/lib/accountProfileHealth";
+import { profileRecoveryCode } from "./accountProfileRecovery";
 
 type Row = Record<string, unknown>;
 type Sb = ReturnType<typeof supabaseAdmin>;
@@ -107,6 +109,7 @@ async function hydrate(sb: Sb, rows: Row[]): Promise<LinkedSocialAccount[]> {
   const config = await resolveSyncConfig();
   return rows.map((r) => {
     const gig = gigById.get(String(r.gig_id));
+    const profileHealth = readProfileHealth(r.profile_health);
     return {
       id: String(r.id),
       applicationId: String(r.application_id),
@@ -118,6 +121,7 @@ async function hydrate(sb: Sb, rows: Row[]): Promise<LinkedSocialAccount[]> {
       handle: String(r.handle),
       profileUrl: String(r.profile_url ?? ""),
       status: (["active", "paused", "unlinked"].includes(String(r.status)) ? r.status : "active") as SocialAccountStatus,
+      ...(profileHealth ? { profileHealth: { ...profileHealth, ...(profileHealth.status === "missing" ? { verifyCode: profileRecoveryCode(r) } : {}) } } : {}),
       linkedAt: String(r.linked_at),
       payout: str(gig?.payout),
       payoutType: str(gig?.payout_type),
@@ -129,22 +133,23 @@ async function hydrate(sb: Sb, rows: Row[]): Promise<LinkedSocialAccount[]> {
 }
 
 /** A creator's linked accounts (unlinked ones are hidden from them). */
-export async function listCreatorAccounts(aliases: string[], sync = false): Promise<{ accounts: LinkedSocialAccount[]; statsEnabled: boolean; screenshotReader: boolean }> {
+export async function listCreatorAccounts(aliases: string[], sync = false): Promise<{ accounts: LinkedSocialAccount[]; accountIssues?: LinkedSocialAccount[]; statsEnabled: boolean; screenshotReader: boolean }> {
   const sb = supabaseAdmin();
   const screenshotReader = !!(await resolveSyncConfig()).anthropicApiKey;
   try {
     await linkMissing(sb, aliases);
     const load = async () => {
-      const { data, error } = await sb.from("linked_social_accounts").select("*").in("worker_code", aliases.length ? aliases : ["__none__"]).neq("status", "unlinked").order("linked_at", { ascending: false });
+      const { data, error } = await sb.from("linked_social_accounts").select("*").in("worker_code", aliases.length ? aliases : ["__none__"]).order("linked_at", { ascending: false });
       databaseError(error);
-      return (data ?? []) as Row[];
+      return ((data ?? []) as Row[]).filter(row => row.status !== "unlinked" || readProfileHealth(row.profile_health)?.status === "missing");
     };
     let rows = await load();
     if (sync) {
       const result = await syncStale(sb, rows, SYNC_STALE_HOURS * 3_600_000, 9_000);
       if (result.due) rows = await load();
     }
-    return { accounts: await hydrate(sb, rows), statsEnabled: true, screenshotReader };
+    const hydrated = await hydrate(sb, rows);
+    return { accounts: hydrated.filter(account => account.status !== "unlinked"), accountIssues: hydrated.filter(account => account.status === "unlinked"), statsEnabled: true, screenshotReader };
   } catch (error) {
     // Linked-account tables not migrated yet: still show every verified account (without stats) instead of an error.
     if (error instanceof ApiError && error.code === "schema_outdated") return { accounts: await verifiedAccountsFromApplications(sb, aliases), statsEnabled: false, screenshotReader: false };
@@ -317,7 +322,10 @@ export async function deletePost(id: string) {
 
 export async function setAccountStatus(accountId: string, status: SocialAccountStatus) {
   const sb = supabaseAdmin();
-  await requireAccount(sb, accountId);
+  const { data: account, error: readError } = await sb.from("linked_social_accounts").select("*").eq("id", accountId).maybeSingle();
+  databaseError(readError);
+  if (!account) throw new ApiError(404, "Account not found.");
+  if (status !== "unlinked" && readProfileHealth(account.profile_health)?.status === "missing") throw new ApiError(409, "Verify the recovery code before linking this profile again.");
   const { error } = await sb.from("linked_social_accounts").update({ status, updated_at: new Date().toISOString(), ...(status === "active" ? { next_sync_at: new Date().toISOString() } : {}) }).eq("id", accountId);
   databaseError(error);
 }
@@ -514,4 +522,8 @@ export async function syncAccountNow(accountId: string, actor: { aliases: string
 /** Shared by external cron and the optional long-running local scheduler. */
 export async function syncAllAccounts() {
   return runScheduledSocialSync();
+}
+
+export async function recoveredAccountView(row: Row) {
+  return (await hydrate(supabaseAdmin(), [row]))[0];
 }
