@@ -139,7 +139,7 @@ export type AccountPlatform = {
   steps: string[];
 };
 
-const NO_POSTING = "Don't post anything yet. Once the team verifies the account, you'll post the gig's reels on it and get paid for them.";
+const NO_POSTING = "Hold off on the gig's reels until the account is verified. After that, every approved reel you post on it earns.";
 
 const PLATFORMS: AccountPlatform[] = [
   {
@@ -150,9 +150,9 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "Up to 30 letters, numbers, dots or underscores.",
     profileUrl: (handle) => `https://www.instagram.com/${handle}/`,
     steps: [
-      "Sign up for a brand-new Instagram account with an email address you control. Don't reuse your personal account.",
+      "New account: sign up with an email address you control. Existing account: make sure it's public and you can log in.",
       "Set the username, name, profile photo and bio described in the brief.",
-      "Switch it to a Professional (Creator) account in Settings.",
+      "Switch it to a Professional (Creator) account in Settings, if it isn't one already.",
       NO_POSTING,
     ],
   },
@@ -164,7 +164,7 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "3 to 30 letters, numbers, dots, dashes or underscores.",
     profileUrl: (handle) => `https://www.youtube.com/@${handle}`,
     steps: [
-      "Create a new Google account with an email address you control. Don't reuse your personal account.",
+      "New channel: create it on a Google account you control. Existing channel: make sure you can sign in to it.",
       "Create a YouTube channel on it and claim the @handle described in the brief.",
       "Verify the channel with your phone number so Shorts, links and custom thumbnails are unlocked.",
       NO_POSTING,
@@ -178,7 +178,7 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "2 to 24 letters, numbers, dots or underscores.",
     profileUrl: (handle) => `https://www.tiktok.com/@${handle}`,
     steps: [
-      "Sign up for a brand-new TikTok account with an email address you control.",
+      "New account: sign up with an email address you control. Existing account: make sure it's public and you can log in.",
       "Set the username, name, photo and bio described in the brief.",
       "Switch it to a Business or Creator account in Settings.",
       NO_POSTING,
@@ -192,7 +192,7 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "4 to 15 letters, numbers or underscores.",
     profileUrl: (handle) => `https://x.com/${handle}`,
     steps: [
-      "Sign up for a brand-new X account with an email address you control.",
+      "New account: sign up with an email address you control. Existing account: make sure it's public and you can log in.",
       "Set the @handle, display name, photo and bio described in the brief.",
       "Confirm the email and add a phone number so the account isn't limited.",
       NO_POSTING,
@@ -206,7 +206,7 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "Your public profile URL name: 3 to 100 letters, numbers or dashes.",
     profileUrl: (handle) => `https://www.linkedin.com/in/${handle}/`,
     steps: [
-      "Create a new LinkedIn profile with an email address you control.",
+      "Use a LinkedIn profile you can sign in to, or create one with an email address you control.",
       "Fill in the name, headline, photo and custom public URL described in the brief.",
       NO_POSTING,
     ],
@@ -219,7 +219,7 @@ const PLATFORMS: AccountPlatform[] = [
     handleHint: "At least 5 letters, numbers or dots.",
     profileUrl: (handle) => `https://www.facebook.com/${handle}`,
     steps: [
-      "Create a new Facebook profile or Page with an email address you control.",
+      "Use a Facebook profile or Page you manage, or create one with an email address you control.",
       "Set the name, username, photo and description described in the brief.",
       NO_POSTING,
     ],
@@ -234,7 +234,7 @@ const OTHER = (label: string): AccountPlatform => ({
   handleHint: "Letters, numbers, dots, dashes or underscores.",
   profileUrl: () => "",
   steps: [
-    `Create a brand-new ${label || "account"} with an email address you control.`,
+    `Use a ${label || "account"} you can sign in to, or create one with an email address you control.`,
     "Set the name, username and profile details described in the brief.",
     NO_POSTING,
   ],
@@ -292,7 +292,7 @@ export const ACCOUNT_LIMITS = { password: 256, phone: 30, notes: 600, email: 254
 export function validateAccountSetup(input: AccountSetupInput, platform: AccountPlatform, options: { passwordOptional?: boolean; loginOptional?: boolean } = {}) {
   const errors: Partial<Record<keyof AccountSetupInput, string>> = {};
   const handle = normalizeHandle(input.handle, platform);
-  if (!handle) errors.handle = `Enter the ${platform.label} username you created.`;
+  if (!handle) errors.handle = `Enter the username of the ${platform.label} account you'll post from.`;
   else if (!platform.handleRule.test(handle)) errors.handle = platform.handleHint;
 
   const profileUrl = input.profileUrl.trim();

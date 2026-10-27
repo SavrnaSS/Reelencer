@@ -21,7 +21,7 @@ import { formatCompact } from "@/lib/socialAnalytics";
 import { Button, Icon as UiIcon, Skeleton, buttonClassName, cx, formatRelative } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
 
-// Content Posting gigs: after applying, the creator makes a fresh account on the gig's platform and proves it's
+// Content Posting gigs: after applying, the creator creates or brings an account on the gig's platform and proves it's
 // theirs by putting the application's code in the bio. No password is asked for: Instagram bios are read
 // automatically (and re-read in the background until the code shows up); other platforms are checked by the team.
 
@@ -692,9 +692,9 @@ export default function AccountSetupPanel({
   const handleOk = !!values.handle && !errors.handle;
   const steps: { title: string; hint?: string; done?: boolean; body: ReactNode }[] = [
     {
-      title: `Create a new ${platform.label} account`,
+      title: `Create or choose your ${platform.label} account`,
       done: accountFound,
-      hint: platform.id === "instagram" ? "Not your personal one. Switch it to a Creator account." : "Not your personal one.",
+      hint: platform.id === "instagram" ? "Start a new one or use one you already run. It needs to be public and set to Creator." : "Start a new one or use one you already run. It needs to be public.",
       body: (
         <div className="space-y-2">
           {adminSteps.length ? (
@@ -710,7 +710,7 @@ export default function AccountSetupPanel({
           ) : null}
           <details className="group text-[12.5px]">
             <summary className="inline-flex cursor-pointer list-none items-center gap-1 font-semibold text-[#2b5d4a] hover:underline [&::-webkit-details-marker]:hidden">
-              Setup checklist
+              How to get it ready
               <UiIcon.ChevronDown className="h-3.5 w-3.5 transition group-open:rotate-180" />
             </summary>
             <ul className="mt-2 space-y-1.5">
@@ -728,7 +728,7 @@ export default function AccountSetupPanel({
     {
       title: "Add this code to the bio",
       done: codeLive,
-      hint: readable ? "Paste it anywhere in the bio and save. We'll find it." : "Paste it anywhere in the bio and save.",
+      hint: readable ? "Paste it anywhere in the bio and save. We'll spot it on our own." : "Paste it anywhere in the bio and save.",
       body: (
         <div className="flex flex-wrap items-center gap-2">
           <CodeSlot code={code} error={codeError} onRetry={retryCode} size="lg" />
@@ -742,7 +742,7 @@ export default function AccountSetupPanel({
       ),
     },
     {
-      title: "Enter the username",
+      title: "Enter its username",
       done: handleOk && !errors.profileUrl,
       body: (
         <div className="space-y-3">
@@ -759,7 +759,7 @@ export default function AccountSetupPanel({
                 value={values.handle}
                 onChange={(event) => set("handle", event.target.value)}
                 onBlur={() => blur("handle")}
-                placeholder="new.username"
+                placeholder="your.username"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -792,7 +792,7 @@ export default function AccountSetupPanel({
                   set("profileUrl", event.target.value);
                 }}
                 onBlur={() => blur("profileUrl")}
-                placeholder={platform.profileUrl("new.username") || "https://"}
+                placeholder={platform.profileUrl("your.username") || "https://"}
                 autoCapitalize="none"
                 spellCheck={false}
                 aria-invalid={!!visibleError("profileUrl")}
@@ -827,7 +827,7 @@ export default function AccountSetupPanel({
             </Field>
           ) : (
             <button type="button" onClick={() => setNoteOpen(true)} className="text-[12px] font-semibold text-[#616a64] underline-offset-2 hover:text-[#1a201c] hover:underline">
-              + Add a note for the reviewer
+              + Add a note for the team
             </button>
           )}
         </div>
@@ -849,10 +849,10 @@ export default function AccountSetupPanel({
           <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
             {pay ? (
               <>
-                Earn <span className="font-semibold text-[#1f5131]">{pay}</span> posting {gig.company}&apos;s reels.
+                Earn <span className="font-semibold text-[#1f5131]">{pay}</span> posting {gig.company}&apos;s reels from a new or existing account.
               </>
             ) : (
-              `Post ${gig.company}'s reels and get paid for approved posts.`
+              `Post ${gig.company}'s reels from a new or existing account and get paid for approved posts.`
             )}{" "}
             Takes about 5 minutes.
           </p>
@@ -912,7 +912,7 @@ export default function AccountSetupPanel({
               onChange={(event) => setConfirmed(event.target.checked)}
               className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#c5cbc6] accent-[#1f2b24]"
             />
-            This is a new account made for this gig. I won&apos;t post on it until it&apos;s verified.
+            I own this account and will post the gig&apos;s reels on it once it&apos;s verified.
           </label>
 
           {serverError ? (
@@ -949,7 +949,7 @@ export default function AccountSetupPanel({
           </div>
           {!ready && Object.values(touched).some(Boolean) && !submitting ? (
             <p className="text-center text-[11.5px] text-[#7a827c] @md:text-right">
-              {Object.keys(errors).length ? "Check the username to continue." : !code ? "Loading your code…" : "Tick the box to continue."}
+              {Object.keys(errors).length ? "Check the username to continue." : !code ? "Loading your code…" : "Confirm you own the account to continue."}
             </p>
           ) : null}
         </div>
