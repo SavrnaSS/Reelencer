@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import AdminNavigationDrawer from "./AdminNavigationDrawer";
 import WorkerAccessPanel from "./WorkerAccessPanel";
+import AdminOverview from "./AdminOverview";
 import WorkerDirectory from "./WorkerDirectory";
 import WorkerWorkspace, { WorkerDetailTabs, WorkerGlyph, WorkerProfileHeader } from "./WorkerWorkspace";
 import workerWorkspaceStyles from "./WorkerWorkspace.module.css";
@@ -1041,15 +1042,6 @@ function AddAssignmentPanel({
 
 
 /** ===================== Page (UI) ===================== */
-/** Enter/Space for rows rendered as role="button" (they contain their own buttons, so they can't be <button>). */
-const activateOnKey = (event: React.KeyboardEvent<HTMLElement>, action: () => void) => {
-  if (event.target !== event.currentTarget) return;
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    action();
-  }
-};
-
 function AdminConsole({ adminId }: { adminId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1350,9 +1342,9 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   // initial load
   useEffect(() => {
-    if (!mounted || isGigSection) return;
+    if (!mounted || isGigSection || activeSection === "Overview") return;
     loadSnapshot();
-  }, [mounted, loadSnapshot, today, isGigSection]);
+  }, [mounted, loadSnapshot, today, isGigSection, activeSection]);
 
   const loadFeedback = useCallback(async () => {
     setFeedbackLoading(true);
@@ -1411,7 +1403,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       void refreshOverviewCounts({ afterCurrent: true });
     }
     // Gig tools own their visible data; avoid loading the worker snapshot behind them.
-    if (isGigSection) return;
+    if (isGigSection || activeSection === "Overview") return;
     if (!kinds) {
       void loadSnapshot();
       if (activeSection === "Feedback") void loadFeedback();
@@ -1433,6 +1425,10 @@ function AdminConsole({ adminId }: { adminId: string }) {
   }, [activeSection, devBypass, loadFeedback, loadSnapshot, refreshOverviewCounts]);
 
   const refresh = () => {
+    if (activeSection === "Overview") {
+      window.dispatchEvent(new Event("admin-overview-refresh"));
+      return;
+    }
     loadSnapshot();
     void refreshOverviewCounts({ afterCurrent: true });
   };
@@ -2438,11 +2434,11 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 >
                   <Icon name="refresh" className="h-[18px] w-[18px]" />
                 </button>
-                {!isGigSection && !isWorkerSection && <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
+                {!isGigSection && !isWorkerSection && activeSection !== "Overview" && <Button variant="secondary" onClick={openCreateWorker} title="Create worker" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Worker</span>
                 </Button>}
-                {!isGigSection && !isWorkerSection && <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
+                {!isGigSection && !isWorkerSection && activeSection !== "Overview" && <Button variant="primary" onClick={openCreateAccount} title="Create account" className="px-2.5 sm:px-3.5">
                   <Icon name="plus" className="h-4 w-4" />
                   <span className="hidden sm:inline">Account</span>
                 </Button>}
@@ -2473,216 +2469,28 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 <GigAdminConsole view={gigView} adminId={adminId} authorized active={isGigSection} onCountsChange={setGigSectionCounts} searchKey={searchParams?.toString() ?? ""} />
               </div>
             )}
-            {!isGigSection && !snapshotLoaded && <AdminSectionLoading label="Loading admin records" />}
-            {!isGigSection && snapshotError && (
+            {activeSection === "Overview" && <AdminOverview
+              adminId={adminId}
+              counts={overview.data}
+              countsUpdatedAt={overview.updatedAt}
+              onCounts={overview.update}
+              onRefreshCounts={() => void refreshOverviewCounts({ afterCurrent: true })}
+              onNavigate={(section, workerCode) => {
+                if (workerCode) { setSelectedWorkerId(workerCode); setWorkerDetailOpen(true); }
+                setActiveSection(section);
+              }}
+            />}
+            {!isGigSection && activeSection !== "Overview" && !snapshotLoaded && <AdminSectionLoading label="Loading admin records" />}
+            {!isGigSection && activeSection !== "Overview" && snapshotError && (
               <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#f3d19e] bg-[#fff8ec] px-4 py-3 text-[13px] text-[#825317]">
                 <span>{snapshotError}</span>
                 <button type="button" onClick={refresh} className="rounded-lg border border-current px-3 py-1.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current">Retry</button>
               </div>
             )}
-            <div hidden={isGigSection || !snapshotLoaded} className="space-y-5">
-            {/* KPI tiles */}
-            {activeSection === "Overview" && (
-              <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-                {[
-                  { label: "Workers", value: currentWorkers.length, tone: "text-[#1a201c]", section: "Workers" as AdminSection },
-                  { label: "Active workers", value: assignableWorkers.length, tone: "text-[#1f5131]", section: "Workers" as AdminSection },
-                  { label: "Linked accounts", value: overview.data?.linkedAccounts ?? null, description: overview.data ? "Active and paused social accounts" : overview.error ? "Temporarily unavailable" : "Loading linked accounts…", tone: "text-[#1a201c]", section: "linked-accounts" as AdminSection },
-                  { label: "Pending payouts", value: overview.data?.pendingPayouts ?? null, description: overview.data ? `${overview.data.pendingClaims} earnings claim${overview.data.pendingClaims === 1 ? "" : "s"} · ${overview.data.pendingWithdrawals} withdrawal${overview.data.pendingWithdrawals === 1 ? "" : "s"}` : overview.error ? "Temporarily unavailable" : "Loading pending payouts…", tone: "text-[#6b4a05]", section: "Payouts" as AdminSection },
-                ].map((tile) => (
-                  <button
-                    key={tile.label}
-                    type="button"
-                    aria-busy={tile.value === null && !overview.error || undefined}
-                    onClick={() => setActiveSection(tile.section)}
-                    className="group flex min-w-0 flex-col gap-2 rounded-xl border border-[#e3e5e1] bg-white p-3.5 text-left shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:border-[#cfd5cf] hover:shadow-[0_4px_14px_-6px_rgba(26,32,28,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
-                  >
-                    <span className="flex items-center justify-between gap-2 text-[12.5px] font-medium text-[#616a64]">
-                      <span className="min-w-0">{tile.label}</span>
-                      <Icon name="chevRight" className="h-3.5 w-3.5 shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5" />
-                    </span>
-                    <span className={cx("text-[22px] font-semibold leading-none tabular-nums", tile.tone)}>{mounted && tile.value !== null ? tile.value.toLocaleString("en-IN") : "–"}</span>
-                    {tile.description ? <span className="text-[11.5px] leading-4 text-[#7a827c]">{tile.description}</span> : null}
-                  </button>
-                ))}
-              </div>
-            )}
-            {activeSection === "Overview" && overview.error ? <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#f3d19e] bg-[#fff8ec] px-4 py-3 text-[12.5px] text-[#825317]">
-              <span>{overview.data ? "Showing the last available account and payout totals." : "Account and payout totals are temporarily unavailable."}</span>
-              <button type="button" onClick={() => void refreshOverviewCounts({ afterCurrent: true })} className="rounded-lg border border-current px-3 py-1.5 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current">Retry totals</button>
-            </div> : null}
-
-            {/* Overview */}
-            {activeSection === "Overview" && (
-              <div className="space-y-6">
-                <div className="min-w-0">
-                <Card
-                  title="Workers snapshot"
-                  subtitle="Assignments + workload at a glance"
-                  right={
-                    <div className="flex gap-2">
-                      <Button variant="secondary" onClick={openCreateWorker}>
-                        <Icon name="plus" />
-                        Add worker
-                      </Button>
-                      <Button variant="secondary" onClick={openCreateAccount}>
-                        <Icon name="plus" />
-                        Add account
-                      </Button>
-                    </div>
-                  }
-                >
-                  <div className="space-y-3">
-                    {currentWorkers.slice(0, 6).map((w) => {
-                      const assignedCount = accountsForWorker(w.id).length;
-                      const pending = workItems.filter((it) => isWorkerMatch(w, it) && isCountedSubmission(it)).length;
-                      const resubmits = workItems.filter((it) => isWorkerMatch(w, it) && isResubmission(it)).length;
-                      const inProg = workItems.filter((it) => isWorkerMatch(w, it) && it.status === "In progress").length;
-                      const earningsApproved = getWorkerApprovedEarnings(w);
-                      const upi = getWorkerUpi(w);
-                      return (
-                        <div
-                          key={w.id}
-                          role="button"
-                          tabIndex={0}
-                          className="w-full cursor-pointer text-left rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
-                          onClick={() => {
-                            setSelectedWorkerId(w.id);
-                            setWorkerDetailOpen(true);
-                            setActiveSection("Workers");
-                          }}
-                          onKeyDown={(event) =>
-                            activateOnKey(event, () => {
-                              setSelectedWorkerId(w.id);
-                              setWorkerDetailOpen(true);
-                              setActiveSection("Workers");
-                            })
-                          }
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="text-sm font-extrabold text-slate-900 truncate">{w.name}</div>
-                              <div className="text-xs text-slate-600 truncate">
-                                {w.id}
-                                {w.email ? ` • ${w.email}` : ""}
-                              </div>
-                              {upi?.upiId && (
-                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                  <span className="truncate">UPI: {upi.upiId}</span>
-                                  <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
-                                  {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
-                                </div>
-                              )}
-                            </div>
-                            <Chip tone={w.active ? "success" : "danger"}>{w.moderationStatus === "deleted" ? "Deleted" : w.active ? "Active" : "Suspended"}</Chip>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Chip tone="info">{assignedCount} accounts</Chip>
-                            <Chip tone="warn">{pending} submitted</Chip>
-                            <Chip tone="neutral">{resubmits} resubmits</Chip>
-                            <Chip tone="neutral">{inProg} in progress</Chip>
-                            <Chip tone="success">{formatINR(earningsApproved)} approved</Chip>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {currentWorkers.length === 0 && <div className="text-sm text-slate-600">No current workers. Create a worker to get started.</div>}
-                    {currentWorkers.length > 6 && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveSection("Workers")}
-                        className="flex w-full items-center justify-center gap-1 rounded-lg py-2 text-[13px] font-semibold text-[#2b5d4a] transition hover:bg-[#f3f4f1]"
-                      >
-                        View all {currentWorkers.length} workers
-                        <Icon name="chevRight" className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </Card>
-                </div>
-
-                <Card title="Scheduling defaults" subtitle="Daily reel slots and deadline (IST)">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div>
-                      <div className="text-xs font-extrabold text-slate-600">Times (HH:MM)</div>
-                      <input
-                        value={scheduleTimesCsv}
-                        onChange={(e) => setScheduleTimesCsv(e.target.value)}
-                        placeholder="08:00, 18:00"
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-xs font-extrabold text-slate-600">Timezone</div>
-                      <select
-                        value={scheduleTimezone}
-                        onChange={(e) => setScheduleTimezone(e.target.value)}
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                      >
-                        {TIMEZONE_OPTIONS.map((tz) => (
-                          <option key={tz} value={tz}>
-                            {tz}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <div className="text-xs font-extrabold text-slate-600">Deadline (min)</div>
-                      <input
-                        type="number"
-                        min={60}
-                        max={720}
-                        value={scheduleDeadlineMin}
-                        onChange={(e) => setScheduleDeadlineMin(Number(e.target.value))}
-                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, idx) => (
-                      <label key={label} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-extrabold text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={scheduleDays.includes(idx)}
-                          onChange={(e) => {
-                            setScheduleDays((prev) =>
-                              e.target.checked ? Array.from(new Set([...prev, idx])) : prev.filter((d) => d !== idx)
-                            );
-                          }}
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-600">Applies to new assignments and daily scheduling. Schedule updates use POST only.</div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          writeLS(LS_KEYS.SCHEDULE, scheduleConfig);
-                          await fetchWithAuth<{ ok: boolean }>(`/api/admin/schedule-work`, {
-                            method: "POST",
-                            body: JSON.stringify({ schedule: scheduleConfig, reschedule: true, applyToAssignments: true }),
-                          });
-                          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-                          setToast({ message: "Schedule applied", tone: "success" });
-                          toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
-                        }}
-                      >
-                        Apply schedule
-                      </Button>
-                      <Button variant="secondary" onClick={backfillAccounts}>
-                        Normalize accounts
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            )}
-
+            <div hidden={isGigSection || activeSection === "Overview" || !snapshotLoaded} className="space-y-5">
             {/* Workers */}
             {activeSection === "Workers" && (
+              <>
               <WorkerWorkspace
                 workers={workerDirectoryRows}
                 selectedWorker={selectedDirectoryWorker}
@@ -2982,6 +2790,87 @@ function AdminConsole({ adminId }: { adminId: string }) {
                   </>
                 )}
               </WorkerWorkspace>
+              <details className="mt-5 overflow-hidden rounded-2xl border border-[#e3e5e1] bg-white">
+                <summary className="cursor-pointer px-5 py-4 text-[13px] font-semibold text-[#47644d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]">Scheduling defaults</summary>
+                <Card title="Scheduling defaults" subtitle="Daily reel slots and deadline (IST)">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <div className="text-xs font-extrabold text-slate-600">Times (HH:MM)</div>
+                      <input
+                        value={scheduleTimesCsv}
+                        onChange={(e) => setScheduleTimesCsv(e.target.value)}
+                        placeholder="08:00, 18:00"
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-xs font-extrabold text-slate-600">Timezone</div>
+                      <select
+                        value={scheduleTimezone}
+                        onChange={(e) => setScheduleTimezone(e.target.value)}
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      >
+                        {TIMEZONE_OPTIONS.map((tz) => (
+                          <option key={tz} value={tz}>
+                            {tz}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="text-xs font-extrabold text-slate-600">Deadline (min)</div>
+                      <input
+                        type="number"
+                        min={60}
+                        max={720}
+                        value={scheduleDeadlineMin}
+                        onChange={(e) => setScheduleDeadlineMin(Number(e.target.value))}
+                        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, idx) => (
+                      <label key={label} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-extrabold text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={scheduleDays.includes(idx)}
+                          onChange={(e) => {
+                            setScheduleDays((prev) =>
+                              e.target.checked ? Array.from(new Set([...prev, idx])) : prev.filter((d) => d !== idx)
+                            );
+                          }}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="text-xs text-slate-600">Applies to new assignments and daily scheduling. Schedule updates use POST only.</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={async () => {
+                          writeLS(LS_KEYS.SCHEDULE, scheduleConfig);
+                          await fetchWithAuth<{ ok: boolean }>(`/api/admin/schedule-work`, {
+                            method: "POST",
+                            body: JSON.stringify({ schedule: scheduleConfig, reschedule: true, applyToAssignments: true }),
+                          });
+                          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+                          setToast({ message: "Schedule applied", tone: "success" });
+                          toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
+                        }}
+                      >
+                        Apply schedule
+                      </Button>
+                      <Button variant="secondary" onClick={backfillAccounts}>
+                        Normalize accounts
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              </details>
+              </>
             )}
 
             {/* Payouts */}
