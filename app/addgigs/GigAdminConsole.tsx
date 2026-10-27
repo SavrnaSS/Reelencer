@@ -34,7 +34,7 @@ import { AutomationDrawer, MessageDrawer, SmartSelectMenu, useApplicationAutomat
 import { getMyRole } from "@/lib/role";
 import { supabase } from "@/lib/supabaseClient";
 import { MAX_ASSET_NOTE, splitBriefMediaLines, withAssetNote, withReelExample } from "@/lib/gigBriefMedia";
-import { parseReelKit, withReelKit } from "@/lib/reelKit";
+import { isReelKitGig, parseGigReelKit, reelKitRequirementsForGig, withReelKit } from "@/lib/reelKit";
 import ReelKitEditor from "./ReelKitEditor";
 import {
   type GigApplicationMode,
@@ -454,10 +454,17 @@ export default function GigAdminConsole({
   const [appDrawer, setAppDrawer] = useState<"message" | "automation" | null>(null);
   const [bulkApplicationActionId, setBulkApplicationActionId] = useState<string | null>(null);
   const [applicationBulkProgress, setApplicationBulkProgress] = useState<BulkProgress>(null);
-  const [editingGig, setEditingGig] = useState<Gig | null>(null);
+  const [editingGig, setEditingGigState] = useState<Gig | null>(null);
+  const editContext = useRef<{ id: string | null }>({ id: null });
   const [formError, setFormError] = useState<string | null>(null);
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
+  const setEditingGig = useCallback((gig: Gig | null) => {
+    editContext.current = { id: gig?.id ?? null };
+    setEditingGigState(gig);
+    setMediaUploading(false);
+    setMediaUploadError(null);
+  }, []);
   /** Reference URL whose in-reel example is uploading; it shares mediaUploading so publishing waits for it. */
   const [reelExampleUploadingFor, setReelExampleUploadingFor] = useState<string | null>(null);
   const [samplesUploading, setSamplesUploading] = useState(false);
@@ -960,21 +967,25 @@ export default function GigAdminConsole({
   /** Uploads the reel kit's example reel; the URL is stored on the kit line, not as a reference picture. */
   const uploadKitExample = useCallback(
     async (file: File) => {
+      if (!isReelKitGig(editingGig?.id)) return null;
+      const context = editContext.current;
       setMediaUploadError(null);
       setMediaUploading(true);
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
         if (!token) throw new Error("Admin session missing. Please login again.");
-        return (await uploadBriefFile(file, token)) || null;
+        if (editContext.current !== context) return null;
+        const url = await uploadBriefFile(file, token);
+        return editContext.current === context ? url || null : null;
       } catch (error: unknown) {
-        setMediaUploadError(error instanceof Error ? error.message : "Example reel upload failed.");
+        if (editContext.current === context) setMediaUploadError(error instanceof Error ? error.message : "Example reel upload failed.");
         return null;
       } finally {
-        setMediaUploading(false);
+        if (editContext.current === context) setMediaUploading(false);
       }
     },
-    [uploadBriefFile]
+    [editingGig?.id, uploadBriefFile]
   );
 
   const uploadReelExample = useCallback(
@@ -1019,8 +1030,9 @@ export default function GigAdminConsole({
             ? "Content Posting"
           : normalizeGigType(form.gigType);
 
+    const newGigId = makeId();
     const payload: Gig = {
-      id: makeId(),
+      id: newGigId,
       title: form.title,
       company: form.company,
       verified: true,
@@ -1030,7 +1042,7 @@ export default function GigAdminConsole({
       payout: form.payout,
       payoutType: form.payoutType,
       gigType: resolvedGigType,
-      requirements: buildRequirementsPayload(form),
+      requirements: reelKitRequirementsForGig(newGigId, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
       postedAt: nowLabel(),
@@ -1102,14 +1114,15 @@ export default function GigAdminConsole({
 
   // Listings page links here with ?edit=<id>: open that gig in the form once gigs have loaded.
   const editParamHandledRef = useRef<string | null>(null);
-  const startEdit = (gig: Gig) => {
+  const startEdit = useCallback((gig: Gig) => {
     setEditingGig(gig);
     const normalizedType = normalizeGigType(gig.gigType);
     const isProject = isProjectStyleGig(normalizedType);
     const isCustom = /^(custom|category):/i.test(normalizedType);
     const customLabel = isCustom ? normalizedType.replace(/^(custom|category):\s*/i, "").trim() : "";
-    const customFields = readCustomFieldsFromRequirements(gig.requirements);
-    const projectFields = readProjectFieldsFromRequirements(gig.requirements);
+    const scopedRequirements = reelKitRequirementsForGig(gig.id, gig.requirements);
+    const customFields = readCustomFieldsFromRequirements(scopedRequirements);
+    const projectFields = readProjectFieldsFromRequirements(scopedRequirements);
     setForm({
       title: gig.title,
       company: gig.company,
@@ -1137,7 +1150,7 @@ export default function GigAdminConsole({
     });
     setFormError(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+  }, [setEditingGig]);
 
   useEffect(() => {
     if (view !== "create-new-gig") return;
@@ -1156,7 +1169,7 @@ export default function GigAdminConsole({
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
     queueMicrotask(() => startEdit(gig));
     // The handled ID prevents repeated form resets while retaining support for a later edit link.
-  }, [view, gigs, searchKey]);
+  }, [view, gigs, searchKey, startEdit]);
 
   const updateGig = async () => {
     if (!editingGig) return;
@@ -1188,7 +1201,7 @@ export default function GigAdminConsole({
       payout: form.payout,
       payoutType: form.payoutType,
       gigType: resolvedGigType,
-      requirements: buildRequirementsPayload(form),
+      requirements: reelKitRequirementsForGig(editingGig.id, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
     };
@@ -1341,7 +1354,7 @@ export default function GigAdminConsole({
     const isCustomGigType = /^(custom|category):/i.test(String(normalizedType ?? ""));
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
     const projectFields = readProjectFieldsFromRequirements(gig.requirements);
-    const nextRequirements = buildRequirementsPayload({
+    const nextRequirements = reelKitRequirementsForGig(gig.id, buildRequirementsPayload({
       gigType: isCustomGigType ? "Custom" : normalizedType,
       requirements: projectFields.requirementsText,
       customBrief: customFields.customBrief,
@@ -1356,7 +1369,7 @@ export default function GigAdminConsole({
       applicationMode,
       onboardingRequired: projectFields.onboardingRequired,
       kycRequired: isCustomGigType || isProjectStyleGig(normalizedType) ? customFields.kycRequired : projectFields.kycRequired,
-    });
+    }));
 
     reads.abort("gigs");
 
@@ -1833,7 +1846,7 @@ export default function GigAdminConsole({
     <div className="min-w-0 space-y-5 text-slate-900">
         {loadFeedback}
         {view === "create-new-gig" && (
-            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.85fr)] xl:items-start">
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.85fr)] xl:items-start">
           <div className="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-sm">
             {/* Header + section navigator (sticks under the admin header while scrolling the form) */}
             {/* Sticks below the shared admin header; on phones it scrolls away to save space. */}
@@ -2194,10 +2207,15 @@ export default function GigAdminConsole({
                       </div>
                     );
                   })()}
-                  {form.gigType === "Content Posting" ? (
+                  {form.gigType === "Content Posting" && editingGig && isReelKitGig(editingGig.id) ? (
                     <ReelKitEditor
-                      kit={parseReelKit(parseCustomRequirementsText(form.customMedia))}
-                      onChange={(kit) => setForm((prev) => ({ ...prev, customMedia: withReelKit(parseCustomRequirementsText(prev.customMedia), kit).join("\n") }))}
+                      key={editingGig.id}
+                      gigId={editingGig.id}
+                      kit={parseGigReelKit(editingGig.id, parseCustomRequirementsText(form.customMedia))}
+                      onChange={(kit) => {
+                        if (editContext.current.id !== editingGig.id) return;
+                        setForm((prev) => ({ ...prev, customMedia: withReelKit(parseCustomRequirementsText(prev.customMedia), kit).join("\n") }));
+                      }}
                       onUploadExample={uploadKitExample}
                       uploading={mediaUploading}
                     />

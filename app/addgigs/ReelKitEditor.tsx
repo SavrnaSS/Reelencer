@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { DEFAULT_REEL_KIT, MAX_KIT_CAPTION, MAX_KIT_STEPS, demoWalletHref, sanitizeReelKit, type ReelKit } from "@/lib/reelKit";
+import { useEffect, useRef, useState } from "react";
+import { DEFAULT_REEL_KIT, MAX_KIT_CAPTION, MAX_KIT_STEPS, demoWalletHref, isReelKitGig, sanitizeReelKit, type ReelKit } from "@/lib/reelKit";
 
 type Draft = Record<"approved" | "approvedReels" | "pending" | "pendingReels" | "paidOut" | "pendingWithdrawal" | "hook" | "caption" | "steps", string>;
 
@@ -30,7 +30,11 @@ const isVideoUrl = (url: string) => /\.(mp4|m4v|mov|webm|ogv)(?:[?#]|$)/i.test(u
  * Admin settings for the creator reel kit. Inputs keep their own text (so "12." can be typed) and publish a
  * sanitised kit on every change; a kit replaced from outside (another gig loaded, form reset) resets the inputs.
  */
-export default function ReelKitEditor({ kit, onChange, onUploadExample, uploading }: { kit: ReelKit | null; onChange: (kit: ReelKit | null) => void; onUploadExample: (file: File) => Promise<string | null>; uploading: boolean }) {
+export default function ReelKitEditor({ gigId, kit, onChange, onUploadExample, uploading }: { gigId: string; kit: ReelKit | null; onChange: (kit: ReelKit | null) => void; onUploadExample: (file: File) => Promise<string | null>; uploading: boolean }) {
+  const mounted = useRef(false);
+  const latestKit = useRef(kit);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { latestKit.current = kit; }, [kit]);
   const incoming = kit ? JSON.stringify(kit) : "";
   const [seen, setSeen] = useState(incoming);
   const [emitted, setEmitted] = useState(incoming);
@@ -41,6 +45,8 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
   }
 
   const publish = (next: ReelKit | null) => {
+    if (!mounted.current || !isReelKitGig(gigId)) return;
+    latestKit.current = next;
     setEmitted(next ? JSON.stringify(next) : "");
     onChange(next);
   };
@@ -50,14 +56,15 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
     publish(sanitizeReelKit({ ...nextDraft, screen: "wallet", steps: nextDraft.steps.split(/\r?\n/), example: kit?.example }));
   };
   const setExample = (example: string | undefined) => {
-    if (!kit) return;
-    const { example: _previous, ...rest } = kit;
+    if (!mounted.current || !latestKit.current) return;
+    const { example: _previous, ...rest } = latestKit.current;
     void _previous;
     publish(sanitizeReelKit(example ? { ...rest, example } : rest));
   };
 
+  if (!isReelKitGig(gigId)) return null;
   return (
-    <div className="mt-4 min-w-0 rounded-xl border border-[#cfe3d4] bg-[#f6fbf5] p-3 sm:p-4">
+    <div role="group" aria-label="Demo wallet reel kit" className="mt-4 min-w-0 rounded-xl border border-[#cfe3d4] bg-[#f6fbf5] p-3 sm:p-4">
       <label className="flex cursor-pointer items-start gap-3">
         <input
           type="checkbox"
@@ -72,7 +79,7 @@ export default function ReelKitEditor({ kit, onChange, onUploadExample, uploadin
         <span className="min-w-0">
           <span className="block text-xs font-semibold text-slate-800">Reel kit · demo wallet screen</span>
           <span className="mt-0.5 block text-[11px] leading-4 text-slate-500">
-            Approved creators get a shot list modelled on the sample reel (a selfie hook, quick clips of the site, then a ready-to-film demo wallet with these figures), caption ideas and your example reel.
+            Available only for this gig. Its approved creators get the shot list, demo wallet figures, caption ideas and example reel configured here.
           </span>
         </span>
       </label>

@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { briefAssetDownloadUrl, describeAssetShape, parseGigBriefAssets, type GigBriefAsset, type ReelExample } from "@/lib/gigBriefMedia";
-import { parseReelKit } from "@/lib/reelKit";
+import { parseGigReelKit } from "@/lib/reelKit";
 import { buttonClassName, cx, Icon } from "./dashboardUi";
 import BriefUsageGuide from "./BriefUsageGuide";
 import ReelKitPanel from "./ReelKitPanel";
@@ -351,7 +351,7 @@ function AssetViewer({ assets, index, sizes, forReels, company, initialMode, onI
 /** Approved-only brief assets, distinct from the public sample reels. The caller controls approval access. */
 export default function GigBriefAssets({ requirements, company, creatorName, gigId, forReels = false, embedded = false }: { requirements: string[]; company?: string; creatorName?: string; gigId?: string; forReels?: boolean; embedded?: boolean }) {
   const assets = useMemo(() => parseGigBriefAssets(requirements), [requirements]);
-  const kit = useMemo(() => (forReels ? parseReelKit(requirements) : null), [forReels, requirements]);
+  const kit = useMemo(() => (forReels ? parseGigReelKit(gigId, requirements) : null), [forReels, gigId, requirements]);
   const previewable = useMemo(() => assets.filter(asset => asset.kind !== "file"), [assets]);
   const [openUrl, setOpenUrl] = useState<string | null>(null);
   const hasExamples = forReels && assets.some(asset => asset.reelExample);
@@ -403,7 +403,7 @@ export default function GigBriefAssets({ requirements, company, creatorName, gig
 
   return (
     <section aria-labelledby={kit && !assets.length ? undefined : headingId} aria-label={kit && !assets.length ? "Reel kit" : undefined} className={cx("min-w-0 bg-white p-4 sm:p-5", embedded ? "border-b border-[#e3efe0]" : "gig-detail-card")}>
-      {kit ? <ReelKitPanel kit={kit} example={kitExample} company={team} creatorName={creatorName} storageId={gigId ?? kit.caption} /> : null}
+      {kit && gigId ? <ReelKitPanel kit={kit} example={kitExample} company={team} creatorName={creatorName} storageId={gigId} /> : null}
       {assets.length ? <div className={kit ? "mt-6" : undefined}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="min-w-0 flex-[1_1_18rem]">

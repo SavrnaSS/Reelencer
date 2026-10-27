@@ -14,6 +14,8 @@ const gigInput = z.object({
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveGigApplicationMode } from "@/lib/gigApplicationMode";
+import { reelKitRequirementsForGig } from "@/lib/reelKit";
+import { ApiError } from "@/lib/api/errors";
 import {
   createDevDashboardGig,
   deleteDevDashboardGig,
@@ -29,7 +31,7 @@ const NO_STORE_HEADERS = {
 };
 
 function normalizeGigRow(g: Record<string, unknown>) {
-  const requirements = Array.isArray(g.requirements) ? g.requirements.filter((item): item is string => typeof item === "string") : [];
+  const requirements = reelKitRequirementsForGig(g.id, Array.isArray(g.requirements) ? g.requirements.filter((item): item is string => typeof item === "string") : []);
   const rawApplicationMode =
     typeof g.application_mode === "string"
       ? g.application_mode
@@ -64,7 +66,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 async function handleGET() {
   if (isDashboardDevMode()) {
-    return NextResponse.json(getDevDashboardGigs(), { headers: NO_STORE_HEADERS });
+    return NextResponse.json(getDevDashboardGigs().map(gig => ({ ...gig, requirements: reelKitRequirementsForGig(gig.id, gig.requirements) })), { headers: NO_STORE_HEADERS });
   }
 
   const sb = supabaseAdmin();
@@ -82,11 +84,18 @@ function validateViewRate(payout: unknown, payoutType: unknown) {
   }
 }
 
+function validateReelKitScope(gigId: unknown, requirements?: string[]) {
+  if (requirements && reelKitRequirementsForGig(gigId, requirements).length !== requirements.length) {
+    throw new ApiError(400, "The demo wallet reel kit is only available for its original reaction-video gig.", "reel_kit_scope");
+  }
+}
+
 async function handlePOST(req: Request) {
   try {
     const parsed = gigInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "Invalid gig fields." }, { status: 400 });
     const body = parsed.data;
+    validateReelKitScope(body.id, body.requirements);
     validateViewRate(body.payout, body.payoutType);
     if (!body?.title || !body?.company || !body?.workload || !body?.payout) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400, headers: NO_STORE_HEADERS });
@@ -126,6 +135,7 @@ async function handlePOST(req: Request) {
       { headers: NO_STORE_HEADERS }
     );
   } catch (error: unknown) {
+    if (error instanceof ApiError) throw error;
     return NextResponse.json({ error: errorMessage(error, "Invalid payload") }, { status: 400, headers: NO_STORE_HEADERS });
   }
 }
@@ -139,6 +149,7 @@ async function handlePATCH(req: Request) {
     const parsed = gigInput.omit({ id: true }).partial().safeParse(body.updates);
     if (!parsed.success || !Object.keys(parsed.data).length) return NextResponse.json({ error: "Invalid gig updates." }, { status: 400 });
     const updates = parsed.data;
+    validateReelKitScope(body.id, updates.requirements);
     if (isDashboardDevMode()) {
       const current = getDevDashboardGigs().find((gig) => gig.id === String(body.id));
       validateViewRate(updates.payout ?? current?.payout, updates.payoutType ?? current?.payoutType);
@@ -184,6 +195,7 @@ async function handlePATCH(req: Request) {
       { headers: NO_STORE_HEADERS }
     );
   } catch (error: unknown) {
+    if (error instanceof ApiError) throw error;
     return NextResponse.json({ error: errorMessage(error, "Invalid payload") }, { status: 400, headers: NO_STORE_HEADERS });
   }
 }
