@@ -18,7 +18,6 @@ import { buildFeedbackSubject, feedbackCategoryLabel } from "@/lib/feedback";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, type WorkTiming } from "@/lib/workDates";
 import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
 import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 import { currentWorkerRecords, workerAccessStatus } from "@/lib/adminWorkerDirectory";
@@ -363,10 +362,6 @@ function timeNowHHMM() {
 function nowStamp() {
   return `${isoToday()} ${timeNowHHMM()}`;
 }
-function nowISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
 function isoToLocalInput(iso?: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -380,11 +375,7 @@ function formatINR(n: number) {
     return `₹${n}`;
   }
 }
-function clampText(s: string, max = 72) {
-  const t = s.trim();
-  if (t.length <= max) return t;
-  return t.slice(0, max - 1) + "…";
-}
+
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -403,10 +394,7 @@ function feedbackStatusTone(status: AdminFeedbackStatus): "warn" | "info" | "suc
   if (status === "resolved") return "success";
   return "neutral";
 }
-function isMobileWidth() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(max-width: 1023px)").matches;
-}
+
 function splitCsvToList(s: string) {
   return s
     .split(",")
@@ -676,38 +664,9 @@ function Card({
   );
 }
 
-function PriorityPill({ p }: { p: Priority }) {
-  const tone = p === "P0" ? "danger" : p === "P1" ? "warn" : "neutral";
-  return <Chip tone={tone}>{p}</Chip>;
-}
 function AccountHealthPill({ h }: { h: AccountHealth }) {
   const tone = h === "Healthy" ? "success" : h === "Watch" ? "warn" : "danger";
   return <Chip tone={tone}>{h}</Chip>;
-}
-function WorkStatusBadge({ s }: { s: Status }) {
-  const tone =
-    s === "Approved"
-      ? "success"
-      : s === "Submitted"
-      ? "warn"
-      : s === "Needs fix"
-      ? "danger"
-      : s === "Hard rejected"
-      ? "danger"
-      : s === "Cancelled"
-      ? "neutral"
-      : s === "In progress"
-      ? "info"
-      : "neutral";
-  return <Chip tone={tone}>{s}</Chip>;
-}
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-[13px] text-[#616a64]">{label}</span>
-      <span className="min-w-0 truncate text-right text-[13px] font-semibold text-[#1a201c]">{value}</span>
-    </div>
-  );
 }
 
 function Modal({
@@ -804,159 +763,6 @@ function AdminEmpty({ icon = "check", title, body }: { icon?: string; title: str
   );
 }
 
-/** ===================== Work Table & Review List ===================== */
-function AdminWorkTable({
-  items,
-  workerById,
-  accountById,
-  metaOf,
-  onOpen,
-  onReview,
-}: {
-  items: WorkItem[];
-  workerById: (id: string) => Worker | undefined;
-  accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => WorkTiming | undefined;
-  onOpen: (id: string) => void;
-  onReview: (id: string) => void;
-}) {
-  return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className="min-w-[980px] w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
-            <tr>
-              <th className="px-4 py-3">Work</th>
-              <th className="px-4 py-3">Worker</th>
-              <th className="px-4 py-3">Account</th>
-              <th className="px-4 py-3">Due</th>
-              <th className="px-4 py-3">Priority</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {items.map((x) => {
-              const wk = workerById(x.workerId);
-              const acc = accountById(x.accountId);
-              const meta = metaOf(x.id);
-              const overdue = !!meta?.overdue;
-              return (
-                <tr key={x.id} className={cx("cursor-pointer hover:bg-slate-50", overdue && "bg-rose-50/30")} onClick={() => onOpen(x.id)}>
-                  <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{x.id}</div>
-                    <div className="text-slate-700 max-w-[520px] truncate">{x.title}</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {x.type} • Reward {formatINR(x.rewardINR)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{wk?.name ?? x.workerId}</div>
-                    <div className="text-xs text-slate-500">{wk?.email ? wk.email : "—"}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{acc?.handle ?? x.accountId}</div>
-                    <div className="text-xs text-slate-500">
-                      {acc?.ownerTeam ?? "—"} • {acc?.policyTier ?? "—"}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="font-extrabold text-slate-900">{formatWorkDeadline(x.dueAt)}</div>
-                    {typeof meta?.dueInMin === "number" && <div className="text-xs text-slate-600">{overdue ? "Overdue" : "On schedule"}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <PriorityPill p={x.priority} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <WorkStatusBadge s={x.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                      <Button variant="secondary" onClick={() => onOpen(x.id)}>
-                        Open
-                      </Button>
-                      {x.status === "Submitted" && (
-                        <Button variant="primary" onClick={() => onReview(x.id)}>
-                          Review
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={7}>
-                  <AdminEmpty icon="list" title="No work items" body="Create work for this worker to see it tracked here." />
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function AdminReviewList({
-  items,
-  workerById,
-  accountById,
-  metaOf,
-  onOpen,
-  onReview,
-}: {
-  items: WorkItem[];
-  workerById: (id: string) => Worker | undefined;
-  accountById: (id: string) => AssignedAccount | undefined;
-  metaOf: (id: string) => WorkTiming | undefined;
-  onOpen: (id: string) => void;
-  onReview: (id: string) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      {items.map((x) => {
-        const wk = workerById(x.workerId);
-        const acc = accountById(x.accountId);
-        const meta = metaOf(x.id);
-        const overdue = !!meta?.overdue;
-        return (
-          <div key={x.id} className={cx("rounded-lg border p-3", overdue ? "border-rose-200 bg-rose-50/20" : "border-slate-200 bg-white")}>
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-sm font-extrabold text-slate-900 truncate">
-                  {x.id} • {wk?.name ?? x.workerId}
-                </div>
-                <div className="mt-1 text-sm text-slate-700 line-clamp-2">{x.title}</div>
-                <div className="mt-2 text-xs text-slate-500 truncate">
-                  {acc?.handle ?? x.accountId} • {formatWorkDeadline(x.dueAt)}
-                </div>
-              </div>
-              <div className="shrink-0 flex flex-col items-end gap-2">
-                <WorkStatusBadge s={x.status} />
-                <PriorityPill p={x.priority} />
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {typeof meta?.dueInMin !== "number" ? <Chip tone="neutral">No deadline</Chip> : overdue ? <Chip tone="danger">Overdue</Chip> : <Chip tone="neutral">On schedule</Chip>}
-              <Chip tone="info">Reward {formatINR(x.rewardINR)}</Chip>
-              <Chip tone="neutral">{x.type}</Chip>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => onOpen(x.id)}>
-                Open
-              </Button>
-              <Button variant="primary" onClick={() => onReview(x.id)} disabled={x.status !== "Submitted"}>
-                Review
-              </Button>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 /** ===================== Sidebar ===================== */
 function AdminSidebar({
@@ -1049,7 +855,7 @@ function AdminSidebar({
       <div className="shrink-0 border-t border-[#ebedea] p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
         <div className="mb-2 flex items-start gap-2 rounded-lg bg-[#fafbf9] px-3 py-2.5 text-[12px] leading-5 text-[#616a64] ring-1 ring-inset ring-[#ebedea]">
           <Icon name="shield" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
-          Only admins can approve, reject or hard-reject work.
+          Manage gigs, creators and payouts securely.
         </div>
         <button
           type="button"
@@ -1231,225 +1037,6 @@ function AddAssignmentPanel({
   );
 }
 
-function AssignmentsMatrix({
-  workers,
-  accounts,
-  assignments,
-  onAssign,
-  onRemove,
-}: {
-  workers: Worker[];
-  accounts: AssignedAccount[];
-  assignments: Assignment[];
-  onAssign: (workerId: string, accountId: string) => void;
-  onRemove: (workerId: string, accountId: string) => void;
-}) {
-  const assignedMap = useMemo(() => {
-    const s = new Set(assignments.map((a) => `${a.workerId}::${a.accountId}`));
-    return (w: string, a: string) => s.has(`${w}::${a}`);
-  }, [assignments]);
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className="min-w-[900px] w-full text-left text-sm">
-          <thead className="bg-slate-50 text-xs font-extrabold text-slate-600">
-            <tr>
-              <th className="px-4 py-3">Worker</th>
-              {accounts.map((a) => (
-                <th key={a.id} className="px-4 py-3">
-                  {a.handle}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {workers.map((w) => (
-              <tr key={w.id} className="hover:bg-slate-50">
-                <td className="px-4 py-3">
-                  <div className="font-extrabold text-slate-900">{w.name}</div>
-                  <div className="text-xs text-slate-600">{w.id}</div>
-                </td>
-                {accounts.map((a) => {
-                  const ok = assignedMap(w.id, a.id);
-                  return (
-                    <td key={a.id} className="px-4 py-3">
-                      {ok ? (
-                        <div className="flex items-center gap-2">
-                          <Chip tone="success">Assigned</Chip>
-                          <Button variant="ghost" title="Remove assignment" onClick={() => onRemove(w.id, a.id)}>
-                            <Icon name="x" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <Chip tone="neutral">—</Chip>
-                          <Button variant="secondary" onClick={() => onAssign(w.id, a.id)} disabled={workerAccessStatus(w) !== "active"} title="Assign this account to worker">
-                            <Icon name="plus" />
-                            Assign
-                          </Button>
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-            {workers.length === 0 && (
-              <tr>
-                <td className="px-4 py-10 text-center text-sm text-slate-600" colSpan={1 + accounts.length}>
-                  No workers found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-/** ===================== Work Details ===================== */
-function AdminWorkDetails({
-  item,
-  worker,
-  account,
-  meta,
-  onClose,
-  onReview,
-}: {
-  item: WorkItem | null;
-  worker?: Worker;
-  account?: AssignedAccount;
-  meta?: WorkTiming;
-  onClose: () => void;
-  onReview: () => void;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-2 border-b border-slate-200 px-4 py-3">
-        <div className="min-w-0">
-          <div className="text-sm font-extrabold text-slate-900">Work details</div>
-          <div className="mt-0.5 text-sm text-slate-600 truncate">{item ? `${item.id} • ${item.type}` : "Select a work item"}</div>
-        </div>
-        <Button variant="ghost" onClick={onClose} title="Close">
-          <Icon name="x" />
-        </Button>
-      </div>
-      <div className="px-4 py-3 space-y-4">
-        {!item ? (
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">Select a work item to see full details.</div>
-        ) : (
-          <>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-extrabold text-slate-900">{clampText(item.title, 72)}</div>
-                <div className="flex items-center gap-2">
-                  <PriorityPill p={item.priority} />
-                  <WorkStatusBadge s={item.status} />
-                </div>
-              </div>
-              <div className="mt-3 grid gap-2 text-sm text-slate-700">
-                <Row label="Worker" value={<span>{worker?.name ?? item.workerId}</span>} />
-                <Row label="Account" value={<span>{account?.handle ?? item.accountId}</span>} />
-                <Row label="Due" value={<span>{formatWorkDeadline(item.dueAt)}</span>} />
-                <Row label="Reward" value={<span>{formatINR(item.rewardINR)}</span>} />
-                <Row label="SLA" value={<span>{item.slaMinutes} min</span>} />
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {typeof meta?.dueInMin !== "number" ? (
-                  <Chip tone="neutral">No deadline</Chip>
-                ) : meta.overdue ? (
-                  <Chip tone="danger">Overdue {Math.abs(meta.dueInMin)}m</Chip>
-                ) : (
-                  <Chip tone={meta.dueInMin <= 60 ? "warn" : "neutral"}>
-                    Due {Math.max(0, meta.dueInMin)}m
-                  </Chip>
-                )}
-                {typeof meta?.slaRemaining === "number" ? (
-                  <Chip tone={meta.slaBreached ? "danger" : meta.slaRemaining <= 5 ? "warn" : "info"}>
-                    {meta.slaBreached ? "SLA breached" : `${meta.slaRemaining}m SLA left`}
-                  </Chip>
-                ) : (
-                  <Chip tone="neutral">SLA: not started</Chip>
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={onReview} disabled={item.status !== "Submitted"}>
-                  Review (Approve / Reject)
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="text-xs font-extrabold text-slate-600">Submission</div>
-              {item.submission ? (
-                <div className="mt-2 space-y-2 text-sm text-slate-700">
-                  <div className="break-all">
-                    <b>Reel:</b> {item.submission.reelUrl || "—"}
-                  </div>
-                  <div className="break-all">
-                    <b>Screenshot:</b> {item.submission.screenshotUrl || "—"}
-                  </div>
-                  <div className="text-xs text-slate-500">Submitted: {item.submission.submittedAt || "—"}</div>
-                </div>
-              ) : (
-                <div className="mt-2 text-sm text-slate-700">No submission available.</div>
-              )}
-              {item.review?.rejectReason && (
-                <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-3">
-                  <div className="text-sm font-extrabold text-rose-900">{item.review.decision}</div>
-                  <div className="mt-1 text-sm text-rose-800">{item.review.rejectReason}</div>
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="text-xs font-extrabold text-slate-600">Account policy</div>
-              {account ? (
-                <div className="mt-2 space-y-2 text-sm text-slate-700">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Chip>{account.ownerTeam}</Chip>
-                    <Chip tone={account.policyTier === "Strict" ? "warn" : "neutral"}>{account.policyTier}</Chip>
-                    <AccountHealthPill h={account.health} />
-                  </div>
-                  <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-extrabold text-slate-600">Rules</div>
-                    <ul className="mt-2 list-disc pl-5 space-y-1">
-                      {account.rules.slice(0, 6).map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 text-sm text-slate-700">—</div>
-              )}
-            </div>
-
-            <div className="rounded-md border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-extrabold text-slate-600">Audit trail</div>
-                <Chip tone="neutral">{item.audit[0]?.at ?? "—"}</Chip>
-              </div>
-              <div className="mt-3 space-y-2">
-                {item.audit.slice(0, 8).map((a, i) => (
-                  <div key={i} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-extrabold text-slate-700 truncate">{a.by}</div>
-                      <div className="text-xs text-slate-500">{a.at}</div>
-                    </div>
-                    <div className="mt-1 text-sm text-slate-700">{a.text}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </section>
-  );
-}
 
 /** ===================== Page (UI) ===================== */
 /** Enter/Space for rows rendered as role="button" (they contain their own buttons, so they can't be <button>). */
@@ -1496,10 +1083,13 @@ function AdminConsole({ adminId }: { adminId: string }) {
     setActiveSectionState(section);
     if (isGigAdminSection(section)) setGigView(section);
     if (changed) setMobileNavOpen(false);
+    const requestedSection = searchParams?.get("section");
+    if (section === "Overview" && requestedSection && requestedSection.trim().toLowerCase() !== "overview") {
+      const href = adminSectionHref("Overview", searchParams?.toString() ?? "");
+      window.history.replaceState(window.history.state, "", href);
+    }
   }, [searchParams]);
-  const [q, setQ] = useState("");
-  const [tick, setTick] = useState(0);
-  const [showCancelled, setShowCancelled] = useState(false);
+
   const [toast, setToast] = useState<{ message: string; tone: "success" | "danger" } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -1578,8 +1168,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   // selection / drawers
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
-  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null);
-  const [detailsOpenMobile, setDetailsOpenMobile] = useState(false);
+
   const [workerTimezoneDraft, setWorkerTimezoneDraft] = useState<string>("Asia/Kolkata");
 
   // modals
@@ -1594,8 +1183,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
   const [createWorkSla, setCreateWorkSla] = useState<number>(30);
   const [createWorkDueHHMM, setCreateWorkDueHHMM] = useState<string>("18:00");
 
-  const [reviewModalOpen, setReviewModalOpen] = useState(false);
-  const [reviewReason, setReviewReason] = useState("");
 
   const [editScheduleOpen, setEditScheduleOpen] = useState(false);
   const [editScheduleWorkerId, setEditScheduleWorkerId] = useState<string>("");
@@ -1631,7 +1218,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
     }
     void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
     setMobileNavOpen(false);
-    setDetailsOpenMobile(false);
     router.replace("/login");
   }, [router]);
 
@@ -1749,13 +1335,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
     loadSnapshot();
   }, [mounted, loadSnapshot, today, isGigSection]);
 
-  // tick for SLA / due meta
-  useEffect(() => {
-    if (!mounted) return;
-    const id = window.setInterval(() => setTick((t) => t + 1), 30_000);
-    return () => window.clearInterval(id);
-  }, [mounted]);
-
   const loadFeedback = useCallback(async () => {
     setFeedbackLoading(true);
     const res = await fetchWithAuth<{ ok: boolean; feedbacks?: AdminFeedbackItem[]; missingSchema?: boolean }>("/api/admin/feedback", {
@@ -1831,7 +1410,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
   }, [activeSection, devBypass, loadFeedback, loadSnapshot]);
 
   const refresh = () => {
-    setTick((t) => t + 1);
     loadSnapshot();
   };
 
@@ -2017,7 +1595,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
     },
     [loadWorkEmailCodes, workEmailAdminRequest]
   );
-
 
   useEffect(() => {
     if (activeSection === "Email Access") {
@@ -2265,29 +1842,12 @@ function AdminConsole({ adminId }: { adminId: string }) {
   }, [workers, accountsForWorker]);
 
   const selectedWorker = useMemo(() => (selectedWorkerId ? workerById(selectedWorkerId) : null), [selectedWorkerId, workerById]);
-  const operationalWorker = useMemo(() => currentWorkers.find(worker => worker.id === selectedWorkerId) ?? currentWorkers[0] ?? null, [currentWorkers, selectedWorkerId]);
 
   useEffect(() => {
     if (!selectedWorker) return;
     setWorkerTimezoneDraft(selectedWorker.timezone ?? scheduleConfig.timezone ?? "Asia/Kolkata");
   }, [selectedWorker, scheduleConfig.timezone]);
 
-  const selectedWork = useMemo(
-    () => (selectedWorkId ? workItems.find((w) => w.id === selectedWorkId) ?? null : null),
-    [workItems, selectedWorkId]
-  );
-
-  const dueMeta = useMemo<(id: string) => WorkTiming | undefined>(() => {
-    if (!mounted) {
-      return () => undefined;
-    }
-    const now = new Date();
-    const map = new Map<string, WorkTiming>();
-    workItems.forEach((x) => {
-      map.set(x.id, getWorkTiming(x, now));
-    });
-    return (id: string) => map.get(id);
-  }, [workItems, tick, mounted]);
 
   const isCountedSubmission = useCallback(
     (item: WorkItem) =>
@@ -2344,30 +1904,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
     return decision === "Needs fix" || decision === "Hard rejected";
   }, []);
 
-  const kpis = useMemo(() => {
-    if (!mounted) {
-      return { submitted: 0, needsFix: 0, approved: 0, hardRejected: 0, open: 0, inProg: 0, breaches: 0 };
-    }
-    const scoped = showCancelled ? workItems : workItems.filter((w) => w.status !== "Cancelled");
-    const submitted = scoped.filter((w) => isCountedSubmission(w)).length;
-    const needsFix = scoped.filter((w) => w.status === "Needs fix").length;
-    const approved = scoped.filter((w) => w.status === "Approved").length;
-    const hardRejected = scoped.filter((w) => w.status === "Hard rejected").length;
-    const open = scoped.filter((w) => w.status === "Open").length;
-    const inProg = scoped.filter((w) => w.status === "In progress").length;
-    const breaches = scoped.filter((w) => !!dueMeta(w.id)?.overdue || !!dueMeta(w.id)?.slaBreached).length;
-    return { submitted, needsFix, approved, hardRejected, open, inProg, breaches };
-  }, [workItems, dueMeta, mounted, showCancelled, isCountedSubmission]);
-
   /** ---------- Admin actions ---------- */
-  const logAudit = (id: string, by: string, text: string) => {
-    setWorkItems((prev) => prev.map((x) => (x.id === id ? { ...x, audit: [{ at: nowStamp(), by, text }, ...x.audit] } : x)));
-  };
 
-  const openWorkDetails = (id: string) => {
-    setSelectedWorkId(id);
-    if (isMobileWidth()) setDetailsOpenMobile(true);
-  };
 
   const assignAccount = async (workerId: string, accountId: string, scheduleOverride?: AssignmentSchedule) => {
     const workerUuid = workerById(workerId)?.userId;
@@ -2676,55 +2214,9 @@ function AdminConsole({ adminId }: { adminId: string }) {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
   };
 
-  const setWorkStatus = async (id: string, status: Status, review?: WorkItem["review"]) => {
-    const completedAt = status === "Approved" || status === "Hard rejected" ? nowISO() : null;
-    const prev = workItems;
-    setWorkItems((prev) =>
-      prev.map((x) =>
-        x.id !== id
-          ? x
-          : {
-              ...x,
-              status,
-              review: review ?? x.review,
-              completedAt: completedAt ?? x.completedAt,
-            }
-      )
-    );
-    const res = await fetchWithAuth<{ ok: boolean; error?: string }>(`/api/admin/review`, {
-      method: "POST",
-      body: JSON.stringify({ id, status, review }),
-    });
-    if (!res?.ok) {
-      setWorkItems(prev);
-    }
-  };
 
-  const approve = async (id: string) => {
-    await setWorkStatus(id, "Approved", { reviewedAt: nowStamp(), reviewer: "Admin", decision: "Approved" });
-    logAudit(id, "Admin", "Approved submission.");
-    setReviewModalOpen(false);
-  };
 
-  const needsFix = async (id: string, reason: string) => {
-    const r = reason.trim() || "Needs fix (no reason)";
-    await setWorkStatus(id, "Needs fix", { reviewedAt: nowStamp(), reviewer: "Admin", decision: "Needs fix", rejectReason: r });
-    logAudit(id, "Admin", `Needs fix: ${r}`);
-    setReviewModalOpen(false);
-  };
 
-  const hardReject = async (id: string, reason: string) => {
-    const r = reason.trim() || "Hard rejected (no reason)";
-    await setWorkStatus(id, "Hard rejected", { reviewedAt: nowStamp(), reviewer: "Admin", decision: "Hard rejected", rejectReason: r });
-    logAudit(id, "Admin", `Hard rejected: ${r}`);
-    setReviewModalOpen(false);
-  };
-
-  const openReviewModal = (id: string) => {
-    setSelectedWorkId(id);
-    setReviewReason("");
-    setReviewModalOpen(true);
-  };
 
   // Create worker (Supabase Auth + profile)
   const openCreateWorker = () => {
@@ -2774,7 +2266,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
   };
 
   /** ---------- Filters ---------- */
-  const ql = q.trim().toLowerCase();
+
   const workerDirectoryRows = useMemo(() => workers.map(worker => {
     const upi = getWorkerUpi(worker);
     return {
@@ -2788,28 +2280,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
     };
   }), [workers, getWorkerUpi, accountsForWorker, workItems, isWorkerMatch, isCountedSubmission, isResubmission, getWorkerApprovedEarnings]);
   const selectedDirectoryWorker = workerDirectoryRows.find(worker => worker.id === selectedWorkerId);
-
-  const workForSelectedWorker = useMemo(() => {
-    if (!operationalWorker) return [];
-    let arr = workItems.filter((w) => w.workerId === operationalWorker.id || w.workerId === operationalWorker.userId);
-    if (!showCancelled) arr = arr.filter((w) => w.status !== "Cancelled");
-    if (ql) {
-      arr = arr.filter((w) => {
-        const acc = accountById(w.accountId);
-        return (
-          w.id.toLowerCase().includes(ql) ||
-          w.title.toLowerCase().includes(ql) ||
-          w.type.toLowerCase().includes(ql) ||
-          w.status.toLowerCase().includes(ql) ||
-          (acc?.handle ?? "").toLowerCase().includes(ql)
-        );
-      });
-    }
-    return arr.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority < b.priority ? -1 : 1;
-      return compareWorkDeadlines(a.dueAt, b.dueAt);
-    });
-  }, [workItems, operationalWorker, ql, accountById, showCancelled]);
 
   const scheduleRowsForSelected = useMemo(() => {
     if (!selectedWorkerId) return [];
@@ -2863,28 +2333,9 @@ function AdminConsole({ adminId }: { adminId: string }) {
     return Array.from(rows.values()).sort((a, b) => (a.time < b.time ? -1 : 1));
   }, [selectedWorkerId, assignments, scheduleConfig, accountById]);
 
-  const reviewQueue = useMemo(() => {
-    let arr = workItems.filter((w) => w.status === "Submitted");
-    if (!showCancelled) arr = arr.filter((w) => w.status !== "Cancelled");
-    if (ql) {
-      arr = arr.filter((w) => {
-        const wk = workerById(w.workerId);
-        const acc = accountById(w.accountId);
-        return (
-          w.id.toLowerCase().includes(ql) ||
-          w.title.toLowerCase().includes(ql) ||
-          (wk?.name ?? "").toLowerCase().includes(ql) ||
-          (acc?.handle ?? "").toLowerCase().includes(ql)
-        );
-      });
-    }
-    return arr.sort((a, b) => compareWorkDeadlines(a.dueAt, b.dueAt));
-  }, [workItems, ql, workerById, accountById, showCancelled]);
-
   /** ---------- Render (UI unchanged) ---------- */
   const adminSectionCounts: Partial<Record<AdminSection, number>> = {
     ...gigSectionCounts,
-    Reviews: reviewQueue.length,
     Feedback: feedbackItems.filter((item) => item.status === "new").length,
     Payouts: payoutBatchesAdmin.filter((batch) => String(batch.status).toLowerCase() !== "paid").length,
   };
@@ -2906,23 +2357,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
               onLogout={logout}
             />
         </AdminNavigationDrawer>
-      )}
-
-      {/* Mobile details drawer */}
-      {detailsOpenMobile && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-slate-900/30" onClick={() => setDetailsOpenMobile(false)} />
-          <div className="absolute right-0 top-0 h-full w-[92vw] max-w-[560px] bg-white shadow-xl">
-            <AdminWorkDetails
-              item={selectedWork}
-              worker={selectedWork ? workerById(selectedWork.workerId) : undefined}
-              account={selectedWork ? accountById(selectedWork.accountId) : undefined}
-              meta={selectedWork ? dueMeta(selectedWork.id) : undefined}
-              onClose={() => setDetailsOpenMobile(false)}
-              onReview={() => selectedWork && openReviewModal(selectedWork.id)}
-            />
-          </div>
-        </div>
       )}
 
       <div className="flex min-h-screen" inert={mobileNavOpen || undefined}>
@@ -2950,19 +2384,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 <h1 className="truncate text-[16px] font-semibold text-[#1a201c] lg:text-[18px]">{activeSectionLabel}</h1>
               </div>
 
-              {!isGigSection && !isWorkerSection && <label className="relative hidden min-w-0 flex-1 justify-center px-2 md:flex">
-                <span className="sr-only">Search workers, accounts, work IDs and handles</span>
-                <span className="relative w-full max-w-[460px]">
-                  <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
-                  <input
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    placeholder="Search workers, accounts, work IDs, handles…"
-                    className="h-9 w-full rounded-lg border border-[#e3e5e1] bg-[#f3f4f1] pl-9 pr-3 text-[13.5px] text-[#1a201c] outline-none transition placeholder:text-[#7a827c] focus:bg-white"
-                  />
-                </span>
-              </label>}
-
               <div className="ml-auto flex shrink-0 items-center gap-1.5">
                 {!devBypass ? (
                   <span
@@ -2979,11 +2400,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                     {adminLive === "live" ? "Live" : adminLive === "offline" ? "Auto-refresh" : "Connecting"}
                   </span>
                 ) : null}
-                {!isGigSection && !isWorkerSection && <label className="hidden h-9 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-[12.5px] font-medium text-[#4b544e] transition hover:bg-[#f1f3f0] md:flex">
-                  <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
-                  <span className="xl:hidden">Cancelled</span>
-                  <span className="hidden xl:inline">Show cancelled</span>
-                </label>}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -3013,23 +2430,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
               </div>
             </div>
 
-            {/* Phones/tablets: search + section switcher */}
-            {!isGigSection && !isWorkerSection && <div className="flex items-center gap-2 px-3.5 pb-2.5 sm:px-5 md:hidden">
-              <label className="relative block min-w-0 flex-1">
-                <span className="sr-only">Search</span>
-                <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a827c]" />
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search workers, work IDs, handles…"
-                  className="h-10 w-full rounded-lg border border-[#e3e5e1] bg-[#f3f4f1] pl-9 pr-3 text-[16px] text-[#1a201c] outline-none placeholder:text-[#7a827c] focus:bg-white"
-                />
-              </label>
-              <label className="flex h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-[#e3e5e1] bg-white px-2.5 text-[12.5px] font-medium text-[#4b544e]">
-                <input type="checkbox" className="h-4 w-4 rounded" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
-                Cancelled
-              </label>
-            </div>}
           </header>
 
       {toast && (
@@ -3058,14 +2458,12 @@ function AdminConsole({ adminId }: { adminId: string }) {
             <div hidden={isGigSection || !snapshotLoaded} className="space-y-5">
             {/* KPI tiles */}
             {activeSection === "Overview" && (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+              <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
                 {[
-                  { label: "Awaiting review", value: kpis.submitted, tone: "text-[#6b4a05]", section: "Reviews" as AdminSection },
-                  { label: "SLA breaches", value: kpis.breaches, tone: kpis.breaches ? "text-[#b42318]" : "text-[#1a201c]", section: "Work" as AdminSection },
-                  { label: "In progress", value: kpis.inProg, tone: "text-[#1a201c]", section: "Work" as AdminSection },
-                  { label: "Open", value: kpis.open, tone: "text-[#1a201c]", section: "Work" as AdminSection },
-                  { label: "Approved", value: kpis.approved, tone: "text-[#1f5131]", section: "Work" as AdminSection },
-                  { label: "Hard rejected", value: kpis.hardRejected, tone: kpis.hardRejected ? "text-[#b42318]" : "text-[#1a201c]", section: "Work" as AdminSection },
+                  { label: "Workers", value: currentWorkers.length, tone: "text-[#1a201c]", section: "Workers" as AdminSection },
+                  { label: "Active workers", value: assignableWorkers.length, tone: "text-[#1f5131]", section: "Workers" as AdminSection },
+                  { label: "Accounts", value: accounts.length, tone: "text-[#1a201c]", section: "Workers" as AdminSection },
+                  { label: "Pending payouts", value: payoutBatchesAdmin.filter(batch => batch.status === "Draft" || batch.status === "Processing").length, tone: "text-[#6b4a05]", section: "Payouts" as AdminSection },
                 ].map((tile) => (
                   <button
                     key={tile.label}
@@ -3086,19 +2484,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
             {/* Overview */}
             {activeSection === "Overview" && (
               <div className="space-y-6">
-                <div className="grid items-start gap-5 lg:grid-cols-2">
-                <Card title="Review queue" subtitle="Submitted items awaiting admin decision" right={<Chip tone="warn">{reviewQueue.length}</Chip>}>
-                  <AdminReviewList
-                    items={reviewQueue.slice(0, 8)}
-                    workerById={workerById}
-                    accountById={accountById}
-                    metaOf={dueMeta}
-                    onOpen={openWorkDetails}
-                    onReview={openReviewModal}
-                  />
-                  {reviewQueue.length === 0 && <AdminEmpty icon="check" title="Review queue is clear" body="Submitted work appears here for approval." />}
-                </Card>
-
+                <div className="min-w-0">
                 <Card
                   title="Workers snapshot"
                   subtitle="Assignments + workload at a glance"
@@ -3565,66 +2951,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
                   </>
                 )}
               </WorkerWorkspace>
-            )}
-
-            {/* Assignments */}
-            {activeSection === "Assignments" && (
-              <Card title="Assignments matrix" subtitle="Admin-owned mapping between workers and accounts.">
-                <AssignmentsMatrix workers={currentWorkers} accounts={accounts} assignments={assignments} onAssign={assignAccount} onRemove={removeAssignment} />
-              </Card>
-            )}
-
-            {/* Work */}
-            {activeSection === "Work" && (
-              <div className="grid grid-cols-12 gap-6">
-                <div className="col-span-12 lg:col-span-8 space-y-6">
-                  <Card
-                    title="Work items"
-                    subtitle="Admin can create, track and open any work item."
-                    right={
-                      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-                        <select
-                          value={operationalWorker?.id ?? ""}
-                          onChange={(e) => setSelectedWorkerId(e.target.value || null)}
-                          aria-label="Worker"
-                          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-medium text-slate-900 outline-none sm:w-56 sm:flex-none"
-                        >
-                          {!operationalWorker && <option value="">No current workers</option>}
-                          {currentWorkers.map((w) => (
-                            <option key={w.id} value={w.id}>
-                              {w.name} ({w.id})
-                            </option>
-                          ))}
-                        </select>
-                        <Button variant="primary" onClick={() => openCreateWork(operationalWorker?.id)} disabled={!operationalWorker || workerAccessStatus(operationalWorker) !== "active"}>
-                          <Icon name="plus" />
-                          Create work
-                        </Button>
-                      </div>
-                    }
-                  >
-                    <AdminWorkTable
-                      items={workForSelectedWorker}
-                      workerById={workerById}
-                      accountById={accountById}
-                      metaOf={dueMeta}
-                      onOpen={openWorkDetails}
-                      onReview={openReviewModal}
-                    />
-                  </Card>
-                </div>
-
-                <div className="col-span-12 lg:col-span-4 space-y-6">
-                  <AdminWorkDetails
-                    item={selectedWork}
-                    worker={selectedWork ? workerById(selectedWork.workerId) : undefined}
-                    account={selectedWork ? accountById(selectedWork.accountId) : undefined}
-                    meta={selectedWork ? dueMeta(selectedWork.id) : undefined}
-                    onClose={() => setSelectedWorkId(null)}
-                    onReview={() => selectedWork && openReviewModal(selectedWork.id)}
-                  />
-                </div>
-              </div>
             )}
 
             {/* Payouts */}
@@ -4411,20 +3737,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
               </div>
             )}
 
-            {/* Reviews */}
-            {activeSection === "Reviews" && (
-              <Card title="Reviews & enforcement" subtitle="Approve, Needs fix, or Hard reject submitted work.">
-                <AdminReviewList
-                  items={reviewQueue}
-                  workerById={workerById}
-                  accountById={accountById}
-                  metaOf={dueMeta}
-                  onOpen={openWorkDetails}
-                  onReview={openReviewModal}
-                />
-                {reviewQueue.length === 0 && <AdminEmpty icon="check" title="Nothing to review" body="When workers submit work, it lands here for approve, needs fix or hard reject." />}
-              </Card>
-            )}
             </div>
           </main>
           </div>
@@ -4825,58 +4137,6 @@ function AdminConsole({ adminId }: { adminId: string }) {
                 />
               </div>
             </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Review modal */}
-      {reviewModalOpen && selectedWork && (
-        <Modal
-          title="Review submitted work"
-          subtitle={`${selectedWork.id} • ${clampText(selectedWork.title, 64)}`}
-          onClose={() => setReviewModalOpen(false)}
-          actions={
-            <>
-              <Button variant="secondary" onClick={() => setReviewModalOpen(false)}>
-                Close
-              </Button>
-              <Button variant="primary" onClick={() => approve(selectedWork.id)} disabled={selectedWork.status !== "Submitted"}>
-                <Icon name="check" />
-                Approve
-              </Button>
-              <Button variant="danger" onClick={() => needsFix(selectedWork.id, reviewReason)} disabled={selectedWork.status !== "Submitted"}>
-                Needs fix
-              </Button>
-              <Button variant="danger" onClick={() => hardReject(selectedWork.id, reviewReason)} disabled={selectedWork.status !== "Submitted"}>
-                Hard reject
-              </Button>
-            </>
-          }
-        >
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-extrabold">Submission</div>
-              <WorkStatusBadge s={selectedWork.status} />
-            </div>
-            <div className="mt-2 space-y-1">
-              <div className="break-all">
-                <b>Reel:</b> {selectedWork.submission?.reelUrl || "—"}
-              </div>
-              <div className="break-all">
-                <b>Screenshot:</b> {selectedWork.submission?.screenshotUrl || "—"}
-              </div>
-              <div className="text-xs text-slate-500">Submitted: {selectedWork.submission?.submittedAt || "—"}</div>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="text-sm font-extrabold text-slate-800">Reason (required for Needs fix / Hard reject)</div>
-            <textarea
-              value={reviewReason}
-              onChange={(e) => setReviewReason(e.target.value)}
-              placeholder="Example: Screenshot missing, audio not approved, caption violates policy…"
-              className="mt-2 w-full min-h-[120px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-[#0078d4]/20"
-            />
           </div>
         </Modal>
       )}

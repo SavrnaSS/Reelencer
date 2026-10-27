@@ -26,7 +26,7 @@ test("every admin destination has a unique URL and all gig pages belong to Opera
 });
 
 test("section parsing retains previous labels and falls back safely for unknown sections", () => {
-  const oldSections: AdminSection[] = ["Overview", "Reviews", "Work", "Assignments", "Workers", "Payouts", "Feedback", "Email Access"];
+  const oldSections: AdminSection[] = ["Overview", "Workers", "Payouts", "Feedback", "Email Access"];
   for (const section of oldSections) assert.equal(parseAdminSection(new URLSearchParams({ section })), section);
   assert.equal(parseAdminSection("?section=Gigs"), "gig-listings");
   assert.equal(parseAdminSection("?section=%20APPLICATIONS%20"), "applications");
@@ -65,12 +65,21 @@ test("navigation preserves caller parameters without mutating inputs", () => {
   assert.equal(target.searchParams.get("gig"), "GIG-123");
   assert.equal(params.toString(), "section=overview&gig=GIG-123");
   assert.equal(adminSectionHref("Email Access"), "/admin?section=email-access");
-  assert.equal(adminSectionHref("Work", "?section=overview&edit=GIG-1"), "/admin?section=work&edit=GIG-1");
+  assert.equal(adminSectionHref("Workers", "?section=overview&edit=GIG-1"), "/admin?section=workers&edit=GIG-1");
 });
 
 test("only the six gig views use the embedded gig console", () => {
   for (const view of gigViews) assert.equal(isGigAdminSection(view), true);
-  for (const section of ["Overview", "Work", "Workers", "Email Access"] as AdminSection[]) {
+  for (const section of ["Overview", "Workers", "Email Access"] as AdminSection[]) {
     assert.equal(isGigAdminSection(section), false);
+  }
+});
+
+test("retired admin sections are absent from navigation and their bookmarked URLs open Overview", () => {
+  const destinations = new Set(ADMIN_NAV_GROUPS.flatMap(group => group.items.map(item => item.id)));
+  for (const section of ["Reviews", "Work", "Assignments", "Work items"]) {
+    assert.equal(destinations.has(section as AdminSection), false);
+    assert.equal(parseAdminSection(new URLSearchParams({ section })), "Overview");
+    assert.equal(parseAdminSection(new URLSearchParams({ section: section.toLowerCase() })), "Overview");
   }
 });

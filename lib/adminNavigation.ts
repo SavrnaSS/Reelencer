@@ -9,9 +9,6 @@ export type GigAdminView =
 
 export type AdminSection =
   | "Overview"
-  | "Reviews"
-  | "Work"
-  | "Assignments"
   | "Workers"
   | "Payouts"
   | "Feedback"
@@ -32,9 +29,6 @@ export const ADMIN_NAV_GROUPS: Array<{ label: string; items: AdminNavItem[] }> =
     label: "Operations",
     items: [
       { id: "Overview", label: "Overview", icon: "grid" },
-      { id: "Reviews", label: "Reviews", icon: "shield" },
-      { id: "Work", label: "Work items", icon: "list" },
-      { id: "Assignments", label: "Assignments", icon: "clip" },
       { id: "create-new-gig", label: "Create gig", icon: "plus" },
       { id: "gig-listings", label: "Gig listings", icon: "briefcase" },
       { id: "applications", label: "Applications", icon: "users", attention: "awaiting review" },
@@ -61,9 +55,6 @@ export const ADMIN_NAV_GROUPS: Array<{ label: string; items: AdminNavItem[] }> =
 
 const SECTION_SLUGS: Record<AdminSection, string> = {
   Overview: "overview",
-  Reviews: "reviews",
-  Work: "work",
-  Assignments: "assignments",
   Workers: "workers",
   Payouts: "payouts",
   Feedback: "feedback",
@@ -91,7 +82,7 @@ export function isGigAdminSection(section: AdminSection): section is GigAdminVie
   return GIG_SECTIONS.has(section);
 }
 
-/** Unknown or missing sections open the overview; former Gigs links open listings. */
+/** Removed, unknown or missing sections open the overview; former Gigs links open listings. */
 export function parseAdminSection(search?: string | Pick<URLSearchParams, "get"> | null): AdminSection {
   const params = typeof search === "string" ? new URLSearchParams(search) : search;
   const value = params?.get("section")?.trim().toLowerCase();
