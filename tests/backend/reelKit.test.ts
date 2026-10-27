@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_REEL_KIT, REEL_KIT_GIG_ID, TAKE_TIMELINE, demoPayoutBatches, demoWalletHref, encodeReelKit, isReelKitGig, parseDemoWallet, parseGigReelKit, parseReelKit, reelKitRequirementsForGig, reelShots, sanitizeReelKit, withReelKit } from "../../lib/reelKit";
+import { DEFAULT_REEL_KIT, REEL_KIT_COMPANY, TAKE_TIMELINE, demoPayoutBatches, demoWalletHref, encodeReelKit, isReelKitCompany, parseDemoWallet, parseCompanyReelKit, parseReelKit, reelKitRequirementsForCompany, reelShots, sanitizeReelKit, withReelKit } from "../../lib/reelKit";
 import { parseGigBriefAssets, splitBriefMediaLines, withReelExample } from "../../lib/gigBriefMedia";
 import { summarizePayoutBatches } from "../../lib/creatorEarnings";
 
@@ -17,23 +17,26 @@ test("reel kit round-trips through the private media list and stays out of refer
   assert.deepEqual(withReelKit(lines, null), [picture]);
 });
 
-test("only the saved wallet campaign can render a reel kit, even when another gig copies its settings", () => {
+test("only an exact Reelencer company name can render a reel kit, ignoring case and surrounding spaces", () => {
   const configured = { ...DEFAULT_REEL_KIT, approved: 50898.47, paidOut: 29310.2 };
   const requirements = [`Media::${encodeReelKit(configured)}`];
-  assert.equal(isReelKitGig(REEL_KIT_GIG_ID), true);
-  assert.deepEqual(parseGigReelKit(REEL_KIT_GIG_ID, requirements), configured);
-  for (const id of [undefined, null, "", "other-gig", `${REEL_KIT_GIG_ID}-copy`]) {
-    assert.equal(isReelKitGig(id), false);
-    assert.equal(parseGigReelKit(id, requirements), null);
+  for (const company of [REEL_KIT_COMPANY, "reelencer", " REELENCER ", "\tReelencer\n"]) {
+    assert.equal(isReelKitCompany(company), true);
+    assert.deepEqual(parseCompanyReelKit(company, requirements), configured);
+  }
+  for (const company of [undefined, null, "", 17, {}, "Another brand", "Reelencer Studio", "My Reelencer", "Reel encer", "Reelencer.com", "GIG-MGMPU"]) {
+    assert.equal(isReelKitCompany(company), false);
+    assert.equal(parseCompanyReelKit(company, requirements), null);
   }
 });
 
-test("removing another gig's copied kit preserves references, examples, notes and their order", () => {
+test("removing a non-Reelencer company's kit preserves references, examples, notes and their order", () => {
   const normal = ["Brief::Make a reel", "Media::https://media.example.test/reference.png", 'Media::Note::{"for":"https://media.example.test/reference.png","text":"Show this"}', "Sample::https://media.example.test/sample.mp4"];
   const copied = [normal[0], `Media::${encodeReelKit(DEFAULT_REEL_KIT)}`, ...normal.slice(1), `  mEdIa::  kIt::${JSON.stringify(DEFAULT_REEL_KIT)}`, encodeReelKit(DEFAULT_REEL_KIT)];
-  assert.deepEqual(reelKitRequirementsForGig("other-gig", copied), normal);
-  assert.deepEqual(reelKitRequirementsForGig(REEL_KIT_GIG_ID, copied), copied);
-  assert.deepEqual(reelKitRequirementsForGig("other-gig", []), []);
+  assert.deepEqual(reelKitRequirementsForCompany("Another brand", copied), normal);
+  assert.deepEqual(reelKitRequirementsForCompany(" reelencer ", copied), copied);
+  assert.deepEqual(reelKitRequirementsForCompany(undefined, copied), normal);
+  assert.deepEqual(reelKitRequirementsForCompany("Another brand", []), []);
 });
 
 test("untrusted kits are clamped and cleaned instead of breaking the creator view", () => {

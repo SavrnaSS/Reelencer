@@ -26,13 +26,13 @@ For Content Posting gigs, creators see under a single picture (or in a collapsib
 
 The guide lays out by its own width (three columns when there is room, stacked on phones).
 
-## Reel kit (reaction-video campaign only)
+## Reel kit (Reelencer company only)
 
-**Reel kit · demo wallet screen** belongs only to the saved **Record an indoor Reaction Video using Our Services** campaign (`GIG-MGMPU`). Its editor appears while editing that record; new gigs and other Content Posting gigs do not offer it. Eligibility uses the stable ID, so renaming this campaign preserves its kit and copying its title does not transfer the feature.
+**Reel kit · demo wallet screen** is available for Content Posting gigs whose **Company** field is exactly **Reelencer**, ignoring capitalization and surrounding whitespace. It appears in both the create and edit forms as the company field changes. Gig IDs and titles do not affect eligibility; each eligible gig stores its own wallet figures, captions, notes and example reel.
 
 Set the sample figures (approved and pending earnings with their reel counts, paid out, pending withdrawal), a **hook caption idea** (for the opening selfie) and a **closing caption idea** (for the wallet clip) – creators write their own captions; these are shown as ideas, optional notes for creators (one per line) and an optional example reel (the sample creators should copy). **Preview demo wallet** opens what creators will film. The kit is saved as a private `Media::Kit::{json}` line; figures are clamped and text trimmed when read.
 
-The gig API rejects copied kit requirements on other records and omits old out-of-scope kit metadata when reading listings. The creator view applies the same ID check, including to saved device data. Ordinary reference files, notes and public samples remain available on other gigs. Form resets and switching gigs invalidate pending kit-example uploads; completed uploads use the latest figures rather than overwriting edits made while the upload was running. No database migration is required.
+The gig API rejects kit requirements for other companies and omits old out-of-scope kit metadata when reading listings. Partial updates use the stored company when it is omitted. Changing a gig to another company removes its saved kit even if only the company field was sent. The creator view applies the same company check, including to saved device data. Ordinary reference files, notes and public samples remain available on all gigs. Form resets, switching gigs and eligibility changes invalidate pending kit-example uploads; completed uploads use the latest figures rather than overwriting edits made while the upload was running. No database migration is required.
 
 Approved creators see a compact **Record your reel** panel above the reference pictures. It sits flat inside the gig card (no border of its own); only its header has a soft tinted background.
 

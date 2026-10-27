@@ -5,9 +5,9 @@
 
 import { isSafeMediaUrl } from "./gigSamples";
 
-// This wallet campaign is identified by its saved record, so renames never transfer the feature to another gig.
-export const REEL_KIT_GIG_ID = "GIG-MGMPU";
-export const isReelKitGig = (gigId: unknown) => gigId === REEL_KIT_GIG_ID;
+// Company matching is exact after trimming and case folding; similar brand names do not qualify.
+export const REEL_KIT_COMPANY = "Reelencer";
+export const isReelKitCompany = (company: unknown) => typeof company === "string" && company.trim().toLowerCase() === REEL_KIT_COMPANY.toLowerCase();
 
 export type ReelKit = {
   screen: "wallet";
@@ -107,14 +107,14 @@ export function parseReelKit(lines: unknown): ReelKit | null {
   return kit;
 }
 
-/** A copied requirement or cached listing cannot grant the campaign's wallet kit to another gig. */
-export function parseGigReelKit(gigId: unknown, lines: unknown): ReelKit | null {
-  return isReelKitGig(gigId) ? parseReelKit(lines) : null;
+/** Apply the same company rule to live gigs and saved device data. */
+export function parseCompanyReelKit(company: unknown, lines: unknown): ReelKit | null {
+  return isReelKitCompany(company) ? parseReelKit(lines) : null;
 }
 
 /** Keep ordinary references, sample reels and notes intact when stripping an out-of-scope kit. */
-export function reelKitRequirementsForGig(gigId: unknown, lines: string[]): string[] {
-  return isReelKitGig(gigId) ? lines : lines.filter(line => !isReelKitLine(line.trim().replace(/^media::/i, "")));
+export function reelKitRequirementsForCompany(company: unknown, lines: string[]): string[] {
+  return isReelKitCompany(company) ? lines : lines.filter(line => !isReelKitLine(line.trim().replace(/^media::/i, "")));
 }
 
 /** Replaces (or with null, removes) the kit line in the admin's media list, keeping every other line in order. */

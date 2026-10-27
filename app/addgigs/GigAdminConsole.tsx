@@ -34,7 +34,7 @@ import { AutomationDrawer, MessageDrawer, SmartSelectMenu, useApplicationAutomat
 import { getMyRole } from "@/lib/role";
 import { supabase } from "@/lib/supabaseClient";
 import { MAX_ASSET_NOTE, splitBriefMediaLines, withAssetNote, withReelExample } from "@/lib/gigBriefMedia";
-import { isReelKitGig, parseGigReelKit, reelKitRequirementsForGig, withReelKit } from "@/lib/reelKit";
+import { isReelKitCompany, parseCompanyReelKit, reelKitRequirementsForCompany, withReelKit } from "@/lib/reelKit";
 import ReelKitEditor from "./ReelKitEditor";
 import {
   type GigApplicationMode,
@@ -456,11 +456,13 @@ export default function GigAdminConsole({
   const [applicationBulkProgress, setApplicationBulkProgress] = useState<BulkProgress>(null);
   const [editingGig, setEditingGigState] = useState<Gig | null>(null);
   const editContext = useRef<{ id: string | null }>({ id: null });
+  const kitUploadContext = useRef<object | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaUploadError, setMediaUploadError] = useState<string | null>(null);
   const setEditingGig = useCallback((gig: Gig | null) => {
     editContext.current = { id: gig?.id ?? null };
+    kitUploadContext.current = null;
     setEditingGigState(gig);
     setMediaUploading(false);
     setMediaUploadError(null);
@@ -967,8 +969,9 @@ export default function GigAdminConsole({
   /** Uploads the reel kit's example reel; the URL is stored on the kit line, not as a reference picture. */
   const uploadKitExample = useCallback(
     async (file: File) => {
-      if (!isReelKitGig(editingGig?.id)) return null;
+      if (form.gigType !== "Content Posting" || !isReelKitCompany(form.company)) return null;
       const context = editContext.current;
+      kitUploadContext.current = context;
       setMediaUploadError(null);
       setMediaUploading(true);
       try {
@@ -982,10 +985,13 @@ export default function GigAdminConsole({
         if (editContext.current === context) setMediaUploadError(error instanceof Error ? error.message : "Example reel upload failed.");
         return null;
       } finally {
-        if (editContext.current === context) setMediaUploading(false);
+        if (editContext.current === context) {
+          kitUploadContext.current = null;
+          setMediaUploading(false);
+        }
       }
     },
-    [editingGig?.id, uploadBriefFile]
+    [form.company, form.gigType, uploadBriefFile]
   );
 
   const uploadReelExample = useCallback(
@@ -1042,7 +1048,7 @@ export default function GigAdminConsole({
       payout: form.payout,
       payoutType: form.payoutType,
       gigType: resolvedGigType,
-      requirements: reelKitRequirementsForGig(newGigId, buildRequirementsPayload(form)),
+      requirements: reelKitRequirementsForCompany(form.company, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
       postedAt: nowLabel(),
@@ -1120,7 +1126,7 @@ export default function GigAdminConsole({
     const isProject = isProjectStyleGig(normalizedType);
     const isCustom = /^(custom|category):/i.test(normalizedType);
     const customLabel = isCustom ? normalizedType.replace(/^(custom|category):\s*/i, "").trim() : "";
-    const scopedRequirements = reelKitRequirementsForGig(gig.id, gig.requirements);
+    const scopedRequirements = reelKitRequirementsForCompany(gig.company, gig.requirements);
     const customFields = readCustomFieldsFromRequirements(scopedRequirements);
     const projectFields = readProjectFieldsFromRequirements(scopedRequirements);
     setForm({
@@ -1201,7 +1207,7 @@ export default function GigAdminConsole({
       payout: form.payout,
       payoutType: form.payoutType,
       gigType: resolvedGigType,
-      requirements: reelKitRequirementsForGig(editingGig.id, buildRequirementsPayload(form)),
+      requirements: reelKitRequirementsForCompany(form.company, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
     };
@@ -1354,7 +1360,7 @@ export default function GigAdminConsole({
     const isCustomGigType = /^(custom|category):/i.test(String(normalizedType ?? ""));
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
     const projectFields = readProjectFieldsFromRequirements(gig.requirements);
-    const nextRequirements = reelKitRequirementsForGig(gig.id, buildRequirementsPayload({
+    const nextRequirements = reelKitRequirementsForCompany(gig.company, buildRequirementsPayload({
       gigType: isCustomGigType ? "Custom" : normalizedType,
       requirements: projectFields.requirementsText,
       customBrief: customFields.customBrief,
@@ -1916,7 +1922,19 @@ export default function GigAdminConsole({
                   <input className={inputCls} value={form.title} onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="e.g., Reel Creator — Skincare" />
                 </Field>
                 <Field label="Company" required>
-                  <input className={inputCls} value={form.company} onChange={(e) => setForm((prev) => ({ ...prev, company: e.target.value }))} placeholder="Business name" />
+                  <input className={inputCls} value={form.company} onChange={(e) => {
+                    const company = e.target.value;
+                    if (isReelKitCompany(company) !== isReelKitCompany(form.company)) {
+                      // A late kit upload must not follow a company change into another editing session.
+                      editContext.current = { id: editingGig?.id ?? null };
+                      if (kitUploadContext.current) {
+                        kitUploadContext.current = null;
+                        setMediaUploading(false);
+                        setMediaUploadError(null);
+                      }
+                    }
+                    setForm((prev) => ({ ...prev, company }));
+                  }} placeholder="Business name" />
                 </Field>
                 <Field label="Location" hint="Most gigs are remote. Use a city for on-site work.">
                   <input className={inputCls} value={form.location} onChange={(e) => setForm((prev) => ({ ...prev, location: e.target.value }))} placeholder="Remote / Hybrid / City" list="gig-location-options" />
@@ -2207,14 +2225,14 @@ export default function GigAdminConsole({
                       </div>
                     );
                   })()}
-                  {form.gigType === "Content Posting" && editingGig && isReelKitGig(editingGig.id) ? (
+                  {form.gigType === "Content Posting" && isReelKitCompany(form.company) ? (
                     <ReelKitEditor
-                      key={editingGig.id}
-                      gigId={editingGig.id}
-                      kit={parseGigReelKit(editingGig.id, parseCustomRequirementsText(form.customMedia))}
+                      key={editingGig?.id ?? "new-gig"}
+                      company={form.company}
+                      kit={parseCompanyReelKit(form.company, parseCustomRequirementsText(form.customMedia))}
                       onChange={(kit) => {
-                        if (editContext.current.id !== editingGig.id) return;
-                        setForm((prev) => ({ ...prev, customMedia: withReelKit(parseCustomRequirementsText(prev.customMedia), kit).join("\n") }));
+                        if (editContext.current.id !== (editingGig?.id ?? null)) return;
+                        setForm((prev) => isReelKitCompany(prev.company) ? { ...prev, customMedia: withReelKit(parseCustomRequirementsText(prev.customMedia), kit).join("\n") } : prev);
                       }}
                       onUploadExample={uploadKitExample}
                       uploading={mediaUploading}

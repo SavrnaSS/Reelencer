@@ -14,7 +14,7 @@ const gigInput = z.object({
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveGigApplicationMode } from "@/lib/gigApplicationMode";
-import { reelKitRequirementsForGig } from "@/lib/reelKit";
+import { isReelKitCompany, reelKitRequirementsForCompany } from "@/lib/reelKit";
 import { ApiError } from "@/lib/api/errors";
 import {
   createDevDashboardGig,
@@ -31,7 +31,7 @@ const NO_STORE_HEADERS = {
 };
 
 function normalizeGigRow(g: Record<string, unknown>) {
-  const requirements = reelKitRequirementsForGig(g.id, Array.isArray(g.requirements) ? g.requirements.filter((item): item is string => typeof item === "string") : []);
+  const requirements = reelKitRequirementsForCompany(g.company, Array.isArray(g.requirements) ? g.requirements.filter((item): item is string => typeof item === "string") : []);
   const rawApplicationMode =
     typeof g.application_mode === "string"
       ? g.application_mode
@@ -66,7 +66,7 @@ function errorMessage(error: unknown, fallback: string) {
 
 async function handleGET() {
   if (isDashboardDevMode()) {
-    return NextResponse.json(getDevDashboardGigs().map(gig => ({ ...gig, requirements: reelKitRequirementsForGig(gig.id, gig.requirements) })), { headers: NO_STORE_HEADERS });
+    return NextResponse.json(getDevDashboardGigs().map(gig => ({ ...gig, requirements: reelKitRequirementsForCompany(gig.company, gig.requirements) })), { headers: NO_STORE_HEADERS });
   }
 
   const sb = supabaseAdmin();
@@ -84,10 +84,19 @@ function validateViewRate(payout: unknown, payoutType: unknown) {
   }
 }
 
-function validateReelKitScope(gigId: unknown, requirements?: string[]) {
-  if (requirements && reelKitRequirementsForGig(gigId, requirements).length !== requirements.length) {
-    throw new ApiError(400, "The demo wallet reel kit is only available for its original reaction-video gig.", "reel_kit_scope");
+function validateReelKitScope(company: unknown, requirements?: string[]) {
+  if (requirements && reelKitRequirementsForCompany(company, requirements).length !== requirements.length) {
+    throw new ApiError(400, "The demo wallet reel kit is only available when the company name is Reelencer.", "reel_kit_scope");
   }
+}
+
+/** Company-only changes must remove an existing kit when the gig stops belonging to Reelencer. */
+function reelKitRequirementsUpdate(company: unknown, requirements: string[] | undefined, previous: unknown) {
+  validateReelKitScope(company, requirements);
+  if (requirements !== undefined || isReelKitCompany(company)) return requirements;
+  const existing = Array.isArray(previous) ? previous.filter((line): line is string => typeof line === "string") : [];
+  const scoped = reelKitRequirementsForCompany(company, existing);
+  return scoped.length !== existing.length ? scoped : undefined;
 }
 
 async function handlePOST(req: Request) {
@@ -95,7 +104,7 @@ async function handlePOST(req: Request) {
     const parsed = gigInput.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ error: "Invalid gig fields." }, { status: 400 });
     const body = parsed.data;
-    validateReelKitScope(body.id, body.requirements);
+    validateReelKitScope(body.company, body.requirements);
     validateViewRate(body.payout, body.payoutType);
     if (!body?.title || !body?.company || !body?.workload || !body?.payout) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400, headers: NO_STORE_HEADERS });
@@ -149,9 +158,11 @@ async function handlePATCH(req: Request) {
     const parsed = gigInput.omit({ id: true }).partial().safeParse(body.updates);
     if (!parsed.success || !Object.keys(parsed.data).length) return NextResponse.json({ error: "Invalid gig updates." }, { status: 400 });
     const updates = parsed.data;
-    validateReelKitScope(body.id, updates.requirements);
     if (isDashboardDevMode()) {
       const current = getDevDashboardGigs().find((gig) => gig.id === String(body.id));
+      if (!current) return NextResponse.json({ error: "Gig not found." }, { status: 404, headers: NO_STORE_HEADERS });
+      const requirements = reelKitRequirementsUpdate(updates.company ?? current.company, updates.requirements, current.requirements);
+      if (requirements !== undefined) updates.requirements = requirements;
       validateViewRate(updates.payout ?? current?.payout, updates.payoutType ?? current?.payoutType);
       const updated = updateDevDashboardGig(String(body.id), updates);
       return updated.ok
@@ -159,10 +170,12 @@ async function handlePATCH(req: Request) {
         : NextResponse.json({ error: updated.error }, { status: 404, headers: NO_STORE_HEADERS });
     }
     const sb = supabaseAdmin();
+    const { data: current, error: readError } = await sb.from("gigs").select("company,requirements,payout,payout_type").eq("id", body.id).maybeSingle();
+    if (readError) throw new Error("Could not validate the gig settings.");
+    if (!current) return NextResponse.json({ error: "Gig not found." }, { status: 404, headers: NO_STORE_HEADERS });
+    const requirements = reelKitRequirementsUpdate(updates.company ?? current.company, updates.requirements, current.requirements);
+    if (requirements !== undefined) updates.requirements = requirements;
     if (updates.payout !== undefined || updates.payoutType !== undefined) {
-      const { data: current, error: readError } = await sb.from("gigs").select("payout,payout_type").eq("id", body.id).maybeSingle();
-      if (readError) throw new Error("Could not validate the payout rate.");
-      if (!current) return NextResponse.json({ error: "Gig not found." }, { status: 404, headers: NO_STORE_HEADERS });
       validateViewRate(updates.payout ?? current.payout, updates.payoutType ?? current.payout_type);
     }
     const { data, error } = await sb

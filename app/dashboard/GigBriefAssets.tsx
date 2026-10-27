@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { briefAssetDownloadUrl, describeAssetShape, parseGigBriefAssets, type GigBriefAsset, type ReelExample } from "@/lib/gigBriefMedia";
-import { parseGigReelKit } from "@/lib/reelKit";
+import { parseCompanyReelKit } from "@/lib/reelKit";
 import { buttonClassName, cx, Icon } from "./dashboardUi";
 import BriefUsageGuide from "./BriefUsageGuide";
 import ReelKitPanel from "./ReelKitPanel";
@@ -351,7 +351,7 @@ function AssetViewer({ assets, index, sizes, forReels, company, initialMode, onI
 /** Approved-only brief assets, distinct from the public sample reels. The caller controls approval access. */
 export default function GigBriefAssets({ requirements, company, creatorName, gigId, forReels = false, embedded = false }: { requirements: string[]; company?: string; creatorName?: string; gigId?: string; forReels?: boolean; embedded?: boolean }) {
   const assets = useMemo(() => parseGigBriefAssets(requirements), [requirements]);
-  const kit = useMemo(() => (forReels ? parseGigReelKit(gigId, requirements) : null), [forReels, gigId, requirements]);
+  const kit = useMemo(() => (forReels ? parseCompanyReelKit(company, requirements) : null), [forReels, company, requirements]);
   const previewable = useMemo(() => assets.filter(asset => asset.kind !== "file"), [assets]);
   const [openUrl, setOpenUrl] = useState<string | null>(null);
   const hasExamples = forReels && assets.some(asset => asset.reelExample);
