@@ -225,13 +225,9 @@ export default function WorkerAccessPanel({ worker, onChanged }: { worker: Worke
   return (
     <section className={styles.panel} aria-labelledby={headingId} aria-busy={loading || pending}>
       <div className={styles.header}>
-        <div className={styles.headingGroup}>
-          <span className={styles.headerIcon}><ShieldIcon /></span>
-          <div><p className={styles.eyebrow}>User management</p><h3 id={headingId}>Access & safety</h3></div>
-        </div>
-        {status && <span className={`${styles.badge} ${status === "active" ? styles.active : status === "suspended" ? styles.suspended : styles.deleted}`}><span className={styles.statusDot} />{status === "deleted" ? "Deleted" : status === "suspended" ? "Suspended" : "Active"}</span>}
+        <div><h3 id={headingId}>Access & safety</h3><p className={styles.intro}>Pause, restore or remove this user’s access, and review where they signed in from.</p></div>
+        {moderation ? <span className={styles.lastSeen}>{moderation.lastSeenAt ? `Last seen ${dateLabel(moderation.lastSeenAt)}` : "No recorded visits yet"}</span> : null}
       </div>
-      <p className={styles.intro}>Control account access and review this user’s activity.</p>
 
       <div aria-live="polite" aria-atomic="true">
         {notice && <div className={`${styles.notice} ${notice.kind === "success" ? styles.success : styles.error}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
@@ -253,19 +249,19 @@ export default function WorkerAccessPanel({ worker, onChanged }: { worker: Worke
 
         <div className={styles.actionGrid}>
           {status === "active" ? <button type="button" className={styles.actionButton} disabled={!canAct} onClick={() => setSelection({ action: "suspend" })}>
-            <ShieldIcon variant="pause" /><span><strong>Suspend access</strong><small>Pause this user’s access</small></span>
+            <span className={styles.actionIcon}><ShieldIcon variant="pause" /></span><span><strong>Suspend access</strong><small>Pause sign-in and protected actions</small></span>
           </button> : <button type="button" className={`${styles.actionButton} ${styles.restoreButton}`} disabled={!canAct || !!moderation.purgeStartedAt} onClick={() => setSelection({ action: "restore" })}>
-            <ShieldIcon variant="restore" /><span><strong>Restore access</strong><small>{moderation.purgeStartedAt ? "Permanent deletion has started" : status === "deleted" ? "Cancel scheduled permanent deletion" : "Allow this user to return"}</small></span>
+            <span className={styles.actionIcon}><ShieldIcon variant="restore" /></span><span><strong>Restore access</strong><small>{moderation.purgeStartedAt ? "Permanent deletion has started" : status === "deleted" ? "Cancel scheduled permanent deletion" : "Allow this user to return"}</small></span>
           </button>}
           {status !== "deleted" && <button type="button" className={styles.actionButton} disabled={!canAct || eligibleIps.length === 0 || moderation.canBlockIps === false} onClick={() => setSelection({ action: "suspend_ip" })} aria-describedby={eligibleIps.length === 0 || moderation.canBlockIps === false ? `${headingId}-ip-help` : undefined}>
-            <ShieldIcon variant="network" /><span><strong>Suspend + block IP</strong><small>Choose a recorded connection</small></span>
+            <span className={styles.actionIcon}><ShieldIcon variant="network" /></span><span><strong>Suspend + block IP</strong><small>{eligibleIps.length === 0 || moderation.canBlockIps === false ? "Needs a recorded public IP" : "Choose a recorded connection"}</small></span>
           </button>}
         </div>
 
         <details className={styles.networkSection}>
           <summary className={styles.disclosureHeading}><ShieldIcon variant="network" /><span>Recorded IP addresses</span><span className={styles.count}>{knownIps.length}</span>{blockedCount > 0 && <span className={styles.blockCount}>{blockedCount} blocked</span>}</summary>
           <div className={styles.networkBody}>
-          <p className={styles.meta}>Last seen: {dateLabel(moderation.lastSeenAt)} · Times shown in your local time zone</p>
+          <p className={styles.meta}>Times shown in your local time zone</p>
           {knownIps.length > 0 && moderation.canBlockIps === false && <p id={`${headingId}-ip-help`} className={styles.networkHelp}>IP blocking is unavailable because your current connection cannot be verified. User suspension is still available.</p>}
           {knownIps.length > 0 && eligibleIps.length === 0 && moderation.canBlockIps !== false && <p id={`${headingId}-ip-help`} className={styles.networkHelp}>No eligible public IP addresses are available to block. Private addresses and your current connection are protected.</p>}
           {knownIps.length === 0 ? <div id={`${headingId}-ip-help`} className={styles.emptyState}>
@@ -284,7 +280,7 @@ export default function WorkerAccessPanel({ worker, onChanged }: { worker: Worke
         </details>
 
         <details className={styles.history}>
-          <summary>Moderation history <span className={styles.count}>{Math.min(moderation.history.length, 20)}</span></summary>
+          <summary className={styles.disclosureHeading}><ShieldIcon variant="restore" /><span>Moderation history</span><span className={styles.count}>{Math.min(moderation.history.length, 20)}</span></summary>
           {moderation.history.length ? <ol className={styles.timeline}>{moderation.history.slice(0, 20).map((entry) => <li key={entry.id}>
             <div className={styles.timelineTitle}><strong>{historyLabel(entry.action)}</strong><time dateTime={entry.createdAt}>{dateLabel(entry.createdAt)}</time></div>
             <p>{entry.reason}</p>{entry.actorLabel && <span className={styles.meta}>By {entry.actorLabel}</span>}
@@ -292,7 +288,7 @@ export default function WorkerAccessPanel({ worker, onChanged }: { worker: Worke
         </details>
 
         {status !== "deleted" && <details className={styles.dangerSection}>
-          <summary><ShieldIcon variant="archive" /><span>Delete user</span></summary>
+          <summary className={styles.disclosureHeading}><ShieldIcon variant="archive" /><span>Delete user</span></summary>
           <div className={styles.dangerContent}><p>Disable access now and schedule permanent removal of account records, files and sign-in access after 7 days. Restore access before automatic cleanup begins to cancel removal.</p><button type="button" className={styles.dangerOutline} disabled={!canAct} onClick={() => setSelection({ action: "delete" })}>Delete user…</button></div>
         </details>}
       </>}

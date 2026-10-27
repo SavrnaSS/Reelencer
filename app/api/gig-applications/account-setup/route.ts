@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
-import { checkAccountOwnership, getAccountVerifyCode, requestAccountChanges, revealAccountPassword, submitAccountSetup } from "@/lib/api/accountSetup";
+import { checkAccountOwnership, getAccountVerifyCode, previewAccountOwnership, requestAccountChanges, revealAccountPassword, submitAccountSetup } from "@/lib/api/accountSetup";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
 import { ACCOUNT_LIMITS } from "@/lib/accountSetup";
 
 // Content Posting account setup, verified by a code in the account's bio (no password).
-// Creators: GET ?applicationId= for their code, POST the new account, POST {action:"check"} to re-read the bio.
+// Creators: GET ?applicationId= for their code, GET ?applicationId=&handle= for a live read-only bio lookup while
+// filling in the form, POST the new account, POST {action:"check"} to re-read the bio.
 // Admins: POST {action:"check"} without a cooldown, POST {action:"reveal"} for a legacy password (POST so it never
 // lands in URLs or logs), PATCH to request changes.
 
@@ -26,6 +27,11 @@ export const GET = withApi({ auth: "user" }, async (req) => {
   const actor = await authenticate(req);
   const parsed = z.uuid().safeParse(req.nextUrl.searchParams.get("applicationId"));
   if (!parsed.success) throw new ApiError(400, "applicationId is required.", "invalid_input");
+  const handle = req.nextUrl.searchParams.get("handle");
+  if (handle !== null) {
+    if (handle.length > 200) throw new ApiError(400, "Enter a valid username.", "invalid_input");
+    return NextResponse.json(await previewAccountOwnership({ userId: actor.user.id, aliases: actor.aliases }, parsed.data, handle), { headers: NO_STORE_HEADERS });
+  }
   return NextResponse.json(await getAccountVerifyCode({ aliases: actor.aliases }, parsed.data), { headers: NO_STORE_HEADERS });
 });
 

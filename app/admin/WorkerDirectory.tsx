@@ -94,16 +94,12 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     </div>
     {hasFilters ? <div className={styles.filterSummary}><span>{extraFilters > 0 ? `${extraFilters} additional ${extraFilters === 1 ? "filter" : "filters"} applied` : "Filtered directory"}</span><button type="button" className={styles.reset} onClick={resetFilters}>Reset filters</button></div> : null}
 
-    <div className={styles.selectionHeader}>
-      <label><PageCheckbox checked={pageRows.length > 0 && pageSelected === pageRows.length} mixed={pageSelected > 0 && pageSelected < pageRows.length} disabled={!pageRows.length} onChange={checked => changeSelection(pageRows.map(worker => worker.id), checked)} /><span>Select page <small>({pageRows.length})</small></span></label>
-      <span>{filtered.length} matching {filtered.length === 1 ? "user" : "users"}</span>
-    </div>
-    <div className={styles.selectionTools}>
-      <button type="button" disabled={!filtered.length} onClick={() => changeSelection(filtered.map(worker => worker.id), true)}>Select matches{filtered.length > MAX_WORKER_SELECTION ? " (up to 100)" : ""}</button>
-      <button type="button" disabled={!selectedWorkers.length} onClick={exportSelection}>Export selected CSV</button>
+    <div className={styles.toolbar}>
+      <label className={styles.pageSelect}><PageCheckbox checked={pageRows.length > 0 && pageSelected === pageRows.length} mixed={pageSelected > 0 && pageSelected < pageRows.length} disabled={!pageRows.length} onChange={checked => changeSelection(pageRows.map(worker => worker.id), checked)} /><span><strong>{filtered.length}</strong> {filtered.length === 1 ? "user" : "users"}{pageCount > 1 ? <small> · page {page} of {pageCount}</small> : null}</span></label>
+      {filtered.length > pageRows.length ? <button type="button" className={styles.linkButton} onClick={() => changeSelection(filtered.map(worker => worker.id), true)}>Select all {Math.min(filtered.length, MAX_WORKER_SELECTION)}</button> : null}
     </div>
 
-    {selectedWorkers.length > 0 && <div className={styles.selectedSummary} role="status"><strong>{selectedWorkers.length} selected</strong><span>{hiddenCount > 0 ? `${hiddenCount} hidden by current filters · ` : ""}Selection stays across pages and filters</span></div>}
+    {selectedWorkers.length > 0 && <div className={styles.selectedSummary} role="status"><div><strong>{selectedWorkers.length} selected</strong><span>{hiddenCount > 0 ? `${hiddenCount} hidden by filters · ` : ""}Kept across pages and filters</span></div><button type="button" className={styles.linkButton} onClick={exportSelection}>Export CSV</button></div>}
     {notice && <div className={styles.notice} role="status">{notice}</div>}
 
     <WorkerBulkActions workers={selectedWorkers} onClear={() => { setSelected(new Set()); setNotice(null); }} onCompleted={async result => {
@@ -122,16 +118,22 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
             <label className={styles.rowCheck}><input type="checkbox" aria-label={`Select ${worker.name} (${worker.id})`} checked={effectiveSelection.has(worker.id)} onChange={event => changeSelection([worker.id], event.target.checked)} /></label>
             <button type="button" className={styles.openUser} onClick={() => onSelect(worker.id)} aria-label={`Manage ${worker.name} (${worker.id})`} aria-pressed={selectedWorkerId === worker.id}>
               <span className={styles.avatar} aria-hidden="true">{workerInitials(worker.name)}</span>
-              <span className={styles.identity}><span className={styles.identityTitle}><strong>{worker.name}</strong><span className={`${styles.status} ${styles[access]}`}>{access === "deleted" ? "Deleted" : access === "suspended" ? "Suspended" : "Active"}</span></span><span className={styles.workerId}>{worker.id}</span>{worker.email ? <small title={worker.email}>{worker.email}</small> : null}</span>
+              <span className={styles.identity}>
+                <span className={styles.identityTitle}><strong>{worker.name}</strong><span className={`${styles.status} ${styles[access]}`}>{access === "deleted" ? "Deleted" : access === "suspended" ? "Suspended" : "Active"}</span></span>
+                <span className={styles.identityMeta}><span className={styles.workerId}>{worker.id}</span>{worker.email ? <small title={worker.email}>{worker.email}</small> : null}</span>
+              </span>
+              <span className={styles.rowEarnings}><span>Approved</span><b>{currency.format(worker.approvedINR)}</b></span>
               <WorkerGlyph name="arrow" className={styles.openArrow} />
             </button>
           </div>
-          {access === "deleted" ? <p className={styles.deletionDeadline}>
-            <span>{workerDeletionLabel(worker.purgeAfter, worker.purgeStartedAt, now)}</span>
-            {worker.purgeAfter ? <time dateTime={worker.purgeAfter}>{new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(worker.purgeAfter))}</time> : null}
-          </p> : null}
-          {worker.upiId && <div className={styles.paymentRow}><span>UPI: {worker.upiId}</span><span className={worker.upiVerified ? styles.verified : styles.unverified}>{worker.upiVerified ? "Verified" : "Unverified"}</span>{!worker.upiVerified && <button type="button" onClick={() => onVerifyUpi(worker.id)}>Confirm verified UPI</button>}</div>}
-          <dl className={styles.metrics}><div><dt>Accounts</dt><dd>{worker.accountCount}</dd></div><div><dt>Submitted</dt><dd>{worker.submittedCount}</dd></div><div className={worker.resubmitCount > 0 ? styles.needsReview : undefined}><dt>Resubmits</dt><dd>{worker.resubmitCount}</dd></div><div className={styles.earnings}><dt>Approved</dt><dd>{currency.format(worker.approvedINR)}</dd></div></dl>
+          <div className={styles.rowDetails}>
+            <dl className={styles.metrics}><div><dt>{worker.accountCount === 1 ? "account" : "accounts"}</dt><dd>{worker.accountCount}</dd></div><div><dt>submitted</dt><dd>{worker.submittedCount}</dd></div><div className={worker.resubmitCount > 0 ? styles.needsReview : undefined}><dt>{worker.resubmitCount === 1 ? "resubmit" : "resubmits"}</dt><dd>{worker.resubmitCount}</dd></div></dl>
+            {worker.upiId && <div className={styles.paymentRow}><span title={worker.upiId}>UPI {worker.upiId}</span><span className={worker.upiVerified ? styles.verified : styles.unverified}>{worker.upiVerified ? "✓ Verified" : "Unverified"}</span>{!worker.upiVerified && <button type="button" onClick={() => onVerifyUpi(worker.id)}>Confirm verified UPI</button>}</div>}
+            {access === "deleted" ? <p className={styles.deletionDeadline}>
+              <span>{workerDeletionLabel(worker.purgeAfter, worker.purgeStartedAt, now)}</span>
+              {worker.purgeAfter ? <time dateTime={worker.purgeAfter}>{new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(worker.purgeAfter))}</time> : null}
+            </p> : null}
+          </div>
         </article>;
       })}
       {pageRows.length === 0 && <div className={styles.empty}><WorkerGlyph name="search" /><strong>No users match these filters</strong><p>Try another name, worker ID or access status.</p>{hasFilters ? <button type="button" onClick={resetFilters}>Clear filters</button> : null}</div>}

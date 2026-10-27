@@ -13,6 +13,7 @@ import {
   type StoredAccountSetup,
 } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
+import { localRateLimit } from "@/lib/api/rateLimit";
 import {
   decodeWorkerName,
   encodeWorkerName,
@@ -112,6 +113,46 @@ async function readOwnership(platformName: string, handle: string, code: string)
       checkedAt,
     };
   }
+}
+
+export type AccountPreview =
+  | { state: "manual" }
+  | { state: "not_found"; handle: string }
+  | { state: "unreadable"; handle: string }
+  | { state: "found"; handle: string; codeFound: boolean; isPrivate?: boolean; followers?: number; posts?: number };
+
+const previewCache = new Map<string, { at: number; value: AccountPreview }>();
+const PREVIEW_CACHE_MS = 10_000;
+
+/**
+ * Creator-only live lookup while filling in the form: does the account exist, and is the code in its bio yet?
+ * Read-only (nothing is stored), throttled per creator and briefly cached per handle so typing and the form's
+ * re-checks never hammer the platform.
+ */
+export async function previewAccountOwnership(actor: { userId: string; aliases: string[] }, applicationId: string, rawHandle: string): Promise<AccountPreview> {
+  const { row, gig } = await loadApplication(applicationId);
+  if (!actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
+  if (!isContentPostingType(String(gig.gig_type ?? ""))) throw new ApiError(409, "This gig doesn't need an account setup.");
+  const platform = accountPlatformFor(String(gig.platform ?? ""));
+  if (!canReadBio(platform)) return { state: "manual" };
+  const handle = normalizeHandle(rawHandle, platform);
+  if (!handle || !platform.handleRule.test(handle)) throw new ApiError(400, "Enter a valid username.", "invalid_input");
+  const code = accountVerifyCode(String(row.id));
+  const key = `${row.id}:${handle.toLowerCase()}`;
+  const cached = previewCache.get(key);
+  if (cached && Date.now() - cached.at < PREVIEW_CACHE_MS) return cached.value;
+  localRateLimit(`account-preview:${actor.userId}`, 15);
+  let value: AccountPreview;
+  try {
+    const profile = await fetchInstagramProfileSummary(handle, code);
+    value = { state: "found", handle, codeFound: !!profile.codeFound, isPrivate: profile.isPrivate, followers: profile.followers, posts: profile.posts };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    value = error instanceof ProfileNotFoundError || /not found|404/i.test(message) ? { state: "not_found", handle } : { state: "unreadable", handle };
+  }
+  if (previewCache.size > 2000) previewCache.clear();
+  previewCache.set(key, { at: Date.now(), value });
+  return value;
 }
 
 /** The email sent the first time the code is found in the bio: ownership is proven, the team review is next. */

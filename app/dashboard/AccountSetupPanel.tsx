@@ -120,6 +120,143 @@ function useVerifyCode(applicationId: string, known: string | undefined, enabled
   };
 }
 
+
+type ResolvedPreview =
+  | { state: "not_found" | "unreadable" | "error"; handle: string; at: number; message?: string }
+  | { state: "found"; handle: string; at: number; codeFound: boolean; isPrivate?: boolean; followers?: number; posts?: number };
+type LivePreview = { state: "idle" | "manual" } | { state: "checking"; handle: string; previous?: ResolvedPreview } | ResolvedPreview;
+const isResolved = (preview: LivePreview): preview is ResolvedPreview => preview.state !== "idle" && preview.state !== "manual" && preview.state !== "checking";
+const LIVE_DEBOUNCE_MS = 700;
+const LIVE_RECHECK_MS = 15_000;
+
+/**
+ * Live, read-only lookup of the account being set up: does it exist, is it public, is the code in the bio yet.
+ * Runs as the username settles, re-checks every 15s while the code is still missing, and straight away when the
+ * creator comes back from the Instagram app. Nothing is saved until they press Verify.
+ */
+function useLivePreview(applicationId: string, handle: string | null, enabled: boolean) {
+  const [preview, setPreview] = useState<LivePreview>({ state: "idle" });
+  const [tick, setTick] = useState(0);
+  const target = enabled && handle ? handle : null;
+  const settled = preview.state === "found" && preview.codeFound;
+
+  useEffect(() => {
+    if (!target) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setPreview((current) => ({ state: "checking", handle: target, previous: isResolved(current) && current.handle === target ? current : undefined }));
+      try {
+        const response = await fetch(`${ENDPOINT}?applicationId=${encodeURIComponent(applicationId)}&handle=${encodeURIComponent(target)}`, { signal: controller.signal });
+        const payload = await response.json().catch(() => null);
+        if (controller.signal.aborted) return;
+        if (!response.ok) throw new Error(payload?.error || "Couldn't look the account up.");
+        const at = Date.now();
+        if (payload?.state === "manual") setPreview({ state: "manual" });
+        else if (payload?.state === "found") setPreview({ state: "found", handle: target, at, codeFound: !!payload.codeFound, isPrivate: payload.isPrivate, followers: payload.followers, posts: payload.posts });
+        else setPreview({ state: payload?.state === "not_found" ? "not_found" : "unreadable", handle: target, at });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setPreview({ state: "error", handle: target, at: Date.now(), message: error instanceof Error ? error.message : undefined });
+      }
+    }, tick ? 0 : LIVE_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [applicationId, target, tick]);
+
+  // Keep watching the bio until the code shows up: on a timer while visible, and on return to the tab.
+  useEffect(() => {
+    if (!target || settled || preview.state === "manual" || preview.state === "checking" || preview.state === "idle") return;
+    const again = () => {
+      if (!document.hidden && navigator.onLine) setTick((value) => value + 1);
+    };
+    const timer = window.setTimeout(again, LIVE_RECHECK_MS);
+    const onVisible = () => {
+      if (!document.hidden) again();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", again);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", again);
+    };
+  }, [target, settled, preview.state]);
+
+  const current: LivePreview = !target ? { state: "idle" } : preview.state === "manual" ? preview : "handle" in preview && preview.handle === target ? preview : { state: "checking", handle: target };
+  return { preview: current, checkNow: () => setTick((value) => value + 1) };
+}
+
+/** Live status of the account under the username field. */
+function LiveAccountStatus({ preview, code, platformLabel, onCheck }: { preview: LivePreview; code: string | null; platformLabel: string; onCheck: () => void }) {
+  if (!("handle" in preview)) return null;
+  const shown: ResolvedPreview | undefined = preview.state === "checking" ? preview.previous : preview;
+  const looking = preview.state === "checking";
+  const tone =
+    !shown ? "neutral"
+    : shown.state === "found" ? (shown.codeFound ? "good" : shown.isPrivate ? "warn" : "wait")
+    : shown.state === "not_found" ? "bad" : "neutral";
+  const facts = shown?.state === "found"
+    ? [
+        shown.followers !== undefined ? `${formatCompact(shown.followers)} ${shown.followers === 1 ? "follower" : "followers"}` : null,
+        shown.posts !== undefined ? `${formatCompact(shown.posts)} ${shown.posts === 1 ? "post" : "posts"}` : null,
+        shown.isPrivate === undefined ? null : shown.isPrivate ? "Private" : "Public",
+      ].filter(Boolean)
+    : [];
+  const headline = !shown
+    ? `Looking up @${preview.handle} on ${platformLabel}…`
+    : shown.state === "found"
+      ? shown.codeFound ? "Code found in the bio. You're ready to verify." : shown.isPrivate ? "The account is private, so the bio can't be read." : `${code ?? "Your code"} isn't in the bio yet.`
+      : shown.state === "not_found" ? `No ${platformLabel} account called @${preview.handle} yet.`
+      : shown.state === "unreadable" ? `${platformLabel} didn't answer. Trying again shortly.`
+      : shown.message || "Couldn't look the account up.";
+  const hint = shown?.state === "found" && !shown.codeFound
+    ? shown.isPrivate ? "Switch it to public for a moment. We'll check again on our own." : "Paste it in the bio and save. We'll spot it on our own."
+    : shown?.state === "not_found" ? "Check the spelling, or finish creating the account first." : null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={cx(
+        "mt-2 rounded-lg px-3 py-2.5 transition-colors",
+        tone === "good" ? "bg-[#eaf5e6]" : tone === "wait" || tone === "warn" ? "bg-[#fdf6e6]" : tone === "bad" ? "bg-[#fdf0ee]" : "bg-[#f4f6f3]"
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <span
+          aria-hidden="true"
+          className={cx(
+            "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full",
+            tone === "good" ? "bg-[#2e7d4f] text-white" : tone === "bad" ? "bg-[#f6d5d0] text-[#8e2b20]" : tone === "neutral" ? "bg-[#e3e7e1] text-[#4b544e]" : "bg-[#f5e3b5] text-[#6b4a05]"
+          )}
+        >
+          {tone === "good" ? <UiIcon.Check className="h-3 w-3" /> : tone === "bad" ? <UiIcon.Close className="h-2.5 w-2.5" /> : looking || !shown ? <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className={cx("text-[12.5px] font-semibold leading-5", tone === "good" ? "text-[#1f5131]" : tone === "bad" ? "text-[#8e2b20]" : tone === "neutral" ? "text-[#3b443e]" : "text-[#6b4a05]")}>{headline}</p>
+          {facts.length ? <p className="text-[11.5px] tabular-nums text-[#616a64]">@{preview.handle} · {facts.join(" · ")}</p> : null}
+          {hint ? <p className="mt-0.5 text-[11.5px] leading-[1.1rem] text-[#616a64]">{hint}</p> : null}
+        </div>
+        {shown && tone !== "good" ? (
+          <button type="button" onClick={onCheck} disabled={looking} className="shrink-0 rounded-md px-1.5 py-1 text-[11.5px] font-semibold text-[#2b5d4a] underline-offset-2 hover:underline disabled:text-[#9aa29c] disabled:no-underline">
+            {looking ? "Checking…" : "Check now"}
+          </button>
+        ) : null}
+      </div>
+      {shown && tone !== "good" && tone !== "bad" && !looking ? (
+        <p className="mt-1.5 flex items-center gap-1.5 pl-[30px] text-[11px] text-[#7a827c]">
+          <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8dbf98] opacity-60 motion-reduce:hidden" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#2e7d4f]" />
+          </span>
+          Live: checking again every 15 seconds
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function CodeSlot({ code, error, onRetry, size }: { code: string | null; error: string | null; onRetry: () => void; size?: "md" | "lg" }) {
   if (code) return <CopyCode code={code} size={size} />;
   if (error)
@@ -261,6 +398,11 @@ export default function AccountSetupPanel({
   const errors = validateAccountOwnership(values, platform);
   const visibleError = (key: keyof AccountOwnershipInput) => (touched[key] ? errors[key] : undefined);
   const ready = Object.keys(errors).length === 0 && confirmed && !!code;
+  // Live lookup of the account while the form is open: steps tick off as the account and the code appear.
+  const liveHandle = formOpen && readable && !!code && !!values.handle && !errors.handle ? normalizeHandle(values.handle, platform) : null;
+  const { preview: live, checkNow } = useLivePreview(application.id, liveHandle, formOpen && readable);
+  const accountFound = live.state === "found";
+  const codeLive = live.state === "found" && live.codeFound;
 
   const set = (key: keyof AccountOwnershipInput, raw: string) =>
     setValues((prev) => {
@@ -551,6 +693,7 @@ export default function AccountSetupPanel({
   const steps: { title: string; hint?: string; done?: boolean; body: ReactNode }[] = [
     {
       title: `Create a new ${platform.label} account`,
+      done: accountFound,
       hint: platform.id === "instagram" ? "Not your personal one. Switch it to a Creator account." : "Not your personal one.",
       body: (
         <div className="space-y-2">
@@ -584,6 +727,7 @@ export default function AccountSetupPanel({
     },
     {
       title: "Add this code to the bio",
+      done: codeLive,
       hint: readable ? "Paste it anywhere in the bio and save. We'll find it." : "Paste it anywhere in the bio and save.",
       body: (
         <div className="flex flex-wrap items-center gap-2">
@@ -631,7 +775,9 @@ export default function AccountSetupPanel({
               <p id={`${ids.handle}-error`} className="mt-1.5 text-[12px] text-[#b42318]">
                 {visibleError("handle")}
               </p>
-            ) : null}
+            ) : (
+              <LiveAccountStatus preview={live} code={code} platformLabel={platform.label} onCheck={checkNow} />
+            )}
           </div>
 
           {showLinkField ? (
@@ -692,7 +838,7 @@ export default function AccountSetupPanel({
   return (
     <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-2xl border border-[#dfe3de] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
       {/* Header */}
-      <div className="flex items-start gap-3 border-b border-[#ebedea] p-4 @md:p-5">
+      <div className="flex items-start gap-3 p-4 @md:p-5">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f1f3f0] text-[#1a201c] ring-1 ring-[#e3e5e1]">
           <PlatformGlyph platform={platform} />
         </span>
@@ -711,6 +857,10 @@ export default function AccountSetupPanel({
             Takes about 5 minutes.
           </p>
         </div>
+      </div>
+
+      <div className="h-1 bg-[#eef1ed]" role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={steps.filter((step) => step.done).length}>
+        <div className="h-full bg-[#2e7d4f] transition-[width] duration-500 ease-out" style={{ width: `${(steps.filter((step) => step.done).length / steps.length) * 100}%` }} />
       </div>
 
       {changesRequested && setup?.reviewNote ? (
@@ -735,10 +885,10 @@ export default function AccountSetupPanel({
           {steps.map((step, index) => (
             <li key={step.title} className="relative flex gap-3.5 pb-6 last:pb-2">
               {/* Rail between step markers */}
-              {index < steps.length - 1 ? <span className="absolute left-[13px] top-8 bottom-1 w-px bg-[#e3e5e1]" aria-hidden="true" /> : null}
+              {index < steps.length - 1 ? <span className={cx("absolute left-[13px] top-8 bottom-1 w-px transition-colors", step.done ? "bg-[#9cc9a8]" : "bg-[#e3e5e1]")} aria-hidden="true" /> : null}
               <span
                 className={cx(
-                  "relative z-[1] flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-bold",
+                  "relative z-[1] flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-bold transition-colors",
                   step.done ? "bg-[#2e7d4f] text-white" : "bg-[#1f2b24] text-white"
                 )}
                 aria-hidden="true"
@@ -793,7 +943,7 @@ export default function AccountSetupPanel({
               ) : null}
               <Button type="submit" variant="primary" size="lg" className="w-full @md:w-auto" disabled={submitting} aria-disabled={!ready}>
                 {submitting ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
-                {submitting ? (readable ? "Checking bio…" : "Sending…") : changesRequested ? "Resubmit" : editing ? "Save changes" : readable ? "Verify account" : "Submit account"}
+                {submitting ? (readable ? "Checking bio…" : "Sending…") : changesRequested ? "Resubmit" : editing ? "Save changes" : codeLive && liveHandle ? `Verify @${liveHandle}` : readable ? "Verify account" : "Submit account"}
               </Button>
             </div>
           </div>

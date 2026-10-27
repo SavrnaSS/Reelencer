@@ -26,7 +26,7 @@ export function workerInitials(name: string) {
   return name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => Array.from(part)[0]).join("").toLocaleUpperCase() || "?";
 }
 
-const wideQuery = "(min-width: 1360px)";
+const wideQuery = "(min-width: 1180px)";
 function subscribeWide(listener: () => void) {
   const query = window.matchMedia(wideQuery);
   query.addEventListener("change", listener);
@@ -69,13 +69,13 @@ export default function WorkerWorkspace({ workers, selectedWorker, detailOpen, o
   };
   return <section className={styles.workspace} aria-label="Worker management workspace">
     <header className={styles.workspaceHeader}>
-      <div><p className={styles.eyebrow}>People & operations</p><div className={styles.titleLine}><h2>Workers</h2><span className={styles.total}>{workers.length}</span></div><p className={styles.description}>Your team, their access, and the work ahead.</p></div>
-      <div className={styles.headerRight}><div className={styles.quickStats}><span><i />{activeCount} active</span>{deletedCount > 0 ? <span className={styles.deletedStat}>{deletedCount} pending removal</span> : null}</div><button type="button" className={styles.createButton} onClick={onCreateWorker}><WorkerGlyph name="plus" />Create worker</button></div>
+      <div className={styles.headerTitle}><div className={styles.titleLine}><h2>Workers</h2><span className={styles.total}>{workers.length}</span></div><p className={styles.description}>Your team, their access, and the work ahead.</p></div>
+      <div className={styles.headerRight}><div className={styles.quickStats}><span className={styles.activeStat}><i />{activeCount} active</span>{deletedCount > 0 ? <span className={styles.deletedStat}>{deletedCount} pending removal</span> : null}</div><button type="button" className={styles.createButton} onClick={onCreateWorker}><WorkerGlyph name="plus" />Create worker</button></div>
     </header>
     {!wide ? <nav className={styles.mobileViews} aria-label="Worker workspace view"><button type="button" aria-pressed={!detailOpen} onClick={back}><WorkerGlyph name="users" />Directory<span>{workers.length}</span></button><button type="button" aria-pressed={detailOpen} onClick={() => onViewChange(true)} disabled={!selectedWorker}><WorkerGlyph name="profile" />Worker details</button></nav> : null}
     <div className={styles.layout}>
       <section ref={directoryPane} tabIndex={-1} hidden={!wide && detailOpen} className={styles.directoryPane} aria-label="Worker directory">
-        <div className={styles.paneHeading}><div><WorkerGlyph name="users" /><h2>Team directory</h2></div><span>Select a user to manage</span></div>
+        <div className={styles.paneHeading}><div><WorkerGlyph name="users" /><h2>Team directory</h2></div><span>{selectedWorker ? `Viewing ${selectedWorker.name}` : "Select a user to manage"}</span></div>
         <div className={styles.directoryBody}>{directory}</div>
       </section>
       <section ref={details} id="admin-worker-controls" tabIndex={-1} hidden={!wide && !detailOpen} className={styles.detailsPane} aria-label="Worker controls">
@@ -86,11 +86,25 @@ export default function WorkerWorkspace({ workers, selectedWorker, detailOpen, o
   </section>;
 }
 
+const currency = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
+
 export function WorkerProfileHeader({ worker, onCreateAccount, onCreateWork }: { worker: WorkerDirectoryRecord; onCreateAccount: () => void; onCreateWork: () => void }) {
   const status = workerAccessStatus(worker);
   return <header className={styles.profileHeader}>
-    <div className={styles.profileMain}><div className={styles.profileAvatar} aria-hidden="true">{workerInitials(worker.name)}</div><div className={styles.profileIdentity}><div className={styles.profileName}><h2>{worker.name}</h2><span className={`${styles.status} ${styles[status]}`}>{status === "active" ? "Active" : status === "deleted" ? "Deleted" : "Suspended"}</span></div><span className={styles.workerCode}>{worker.id}</span>{worker.email ? <a href={`mailto:${worker.email}`} className={styles.email}><WorkerGlyph name="mail" />{worker.email}</a> : null}</div></div>
-    <div className={styles.profileFooter}><div className={styles.profileFacts}><span><WorkerGlyph name="briefcase" /><strong>{worker.accountCount}</strong> assigned {worker.accountCount === 1 ? "account" : "accounts"}</span><span><WorkerGlyph name="clock" />{worker.submittedCount} submitted</span></div><div className={styles.profileActions}><button type="button" onClick={onCreateAccount}><WorkerGlyph name="plus" />Create account</button><button type="button" className={styles.primaryAction} onClick={onCreateWork} disabled={!worker.active}><WorkerGlyph name="plus" />Create work</button></div></div>
+    <div className={styles.profileMain}>
+      <div className={styles.profileAvatar} aria-hidden="true">{workerInitials(worker.name)}</div>
+      <div className={styles.profileIdentity}>
+        <div className={styles.profileName}><h2>{worker.name}</h2><span className={`${styles.status} ${styles[status]}`}>{status === "active" ? "Active" : status === "deleted" ? "Deleted" : "Suspended"}</span></div>
+        <div className={styles.profileMeta}><span className={styles.workerCode}>{worker.id}</span>{worker.email ? <a href={`mailto:${worker.email}`} className={styles.email}><WorkerGlyph name="mail" /><span>{worker.email}</span></a> : null}</div>
+      </div>
+      <div className={styles.profileActions}><button type="button" onClick={onCreateAccount}><WorkerGlyph name="plus" />Create account</button><button type="button" className={styles.primaryAction} onClick={onCreateWork} disabled={!worker.active}><WorkerGlyph name="plus" />Create work</button></div>
+    </div>
+    <dl className={styles.profileFacts}>
+      <div><dt>Accounts</dt><dd>{worker.accountCount}</dd></div>
+      <div><dt>Submitted</dt><dd>{worker.submittedCount}</dd></div>
+      <div className={worker.resubmitCount > 0 ? styles.factWarn : undefined}><dt>Resubmits</dt><dd>{worker.resubmitCount}</dd></div>
+      <div className={styles.factMoney}><dt>Approved</dt><dd>{currency.format(worker.approvedINR)}</dd></div>
+    </dl>
   </header>;
 }
 
