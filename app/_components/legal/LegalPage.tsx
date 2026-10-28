@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { BrandLogo } from "@/app/_components/BrandLogo";
+import { LEGAL } from "@/lib/legal";
 import LegalToc from "./LegalToc";
 
 // Building blocks shared by the privacy policy and the terms of service, so both pages read as one set.
@@ -74,7 +75,7 @@ export function Note({ children }: { children: ReactNode }) {
 }
 
 
-export const CONTACT_EMAIL = "support@reelencer.com";
+export const CONTACT_EMAIL = LEGAL.email;
 
 export function MailLink({ subject }: { subject?: string }) {
   return (
@@ -85,12 +86,14 @@ export function MailLink({ subject }: { subject?: string }) {
 }
 
 /** The dark contact card that closes each legal page. */
-export function ContactCard({ eyebrow, note, subject }: { eyebrow: string; note: string; subject: string }) {
+export function ContactCard({ eyebrow, note, subject, person }: { eyebrow: string; note: string; subject: string; person?: string }) {
   return (
     <div className="flex flex-col gap-4 rounded-2xl bg-[#031713] p-5 text-white sm:flex-row sm:items-center sm:justify-between sm:p-6">
       <div className="min-w-0">
         <div className="text-[12px] font-bold uppercase tracking-[0.18em] text-[#8fe05f]">{eyebrow}</div>
-        <div className="mt-1.5 break-all text-[17px] font-semibold">{CONTACT_EMAIL}</div>
+        {person ? <div className="mt-1.5 text-[17px] font-semibold">{person}</div> : null}
+        <div className={person ? "mt-0.5 break-all text-[14.5px] font-medium text-white/85" : "mt-1.5 break-all text-[17px] font-semibold"}>{CONTACT_EMAIL}</div>
+        {LEGAL.address ? <div className="mt-1 text-[13px] leading-5 text-white/60">{LEGAL.entity}, {LEGAL.address}</div> : null}
         <p className="mt-1 text-[13.5px] leading-6 text-white/65">{note}</p>
       </div>
       <a

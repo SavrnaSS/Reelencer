@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LEGAL, legalPartyLabel } from "@/lib/legal";
 import { publicPageMetadata } from "@/lib/site";
 import { Bullets, ContactCard, Glyph, LegalPage, MailLink, Note, Section, type IconName } from "@/app/_components/legal/LegalPage";
 
@@ -65,7 +66,7 @@ export default function TermsPage() {
     >
       <Section id="agreement" index={0} title="Agreeing to these terms">
         <p>
-          These terms are an agreement between you and Reelencer (&ldquo;Reelencer&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;). They apply when you create an account, apply to a gig or use any part of our website and creator dashboard.
+          These terms are an agreement between you and {legalPartyLabel()}. They apply when you create an account, apply to a gig or use any part of our website and creator dashboard.
         </p>
         <p>
           By creating an account, you confirm that you are <strong>at least 18 years old</strong>, that you can enter a binding contract, and that you accept these terms and our{" "}
@@ -306,7 +307,7 @@ export default function TermsPage() {
       <Section id="law" index={12} title="Governing law and disputes">
         <p>These terms are governed by the laws of India.</p>
         <p>
-          If something goes wrong, contact us first. Most issues are solved quickly that way. If we can&apos;t resolve a dispute together within 30 days, it will be handled by the competent courts in India.
+          If something goes wrong, contact us first. Most issues are solved quickly that way. If we can&apos;t resolve a dispute together within 30 days, {LEGAL.courtCity ? `the courts at ${LEGAL.courtCity}, India will have exclusive jurisdiction over it.` : "it will be handled by the competent courts in India."}
         </p>
       </Section>
 

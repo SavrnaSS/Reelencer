@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { LEGAL, legalPartyLabel } from "@/lib/legal";
 import { publicPageMetadata } from "@/lib/site";
 import { Bullets, ContactCard, Glyph, LegalPage, MailLink, Note, Section, type IconName } from "@/app/_components/legal/LegalPage";
 
@@ -104,7 +105,7 @@ export default function PrivacyPage() {
     >
       <Section id="who-we-are" index={0} title="Who we are">
         <p>
-          Reelencer (&ldquo;Reelencer&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;) runs a platform that connects creators with paid brand gigs for short-form video, such as Instagram Reels and YouTube Shorts. This policy covers our website, creator dashboard and the emails we send.
+          {legalPartyLabel()} runs a platform that connects creators with paid brand gigs for short-form video, such as Instagram Reels and YouTube Shorts. This policy covers our website, creator dashboard and the emails we send.
         </p>
         <p>
           For the personal data described here, Reelencer is the <strong>data fiduciary</strong>: we decide why and how it&apos;s processed. Gigs are reviewed and managed by the Reelencer team on behalf of the brands behind them.
@@ -286,7 +287,7 @@ export default function PrivacyPage() {
 
       <Section id="contact" index={12} title="Contact and grievances">
         <p>Questions, requests or complaints about your data go to our Grievance Officer:</p>
-        <ContactCard eyebrow="Grievance Officer · Reelencer" subject="Privacy request" note="Use the subject “Privacy request”. We acknowledge every request and reply as soon as we can." />
+        <ContactCard eyebrow="Grievance Officer · Reelencer" person={LEGAL.grievanceOfficer || undefined} subject="Privacy request" note="Use the subject “Privacy request”. We acknowledge every request and reply as soon as we can." />
         <p className="text-[13.5px] text-[#5b665f]">
           If you&apos;re not satisfied with our response, you can complain to the Data Protection Board of India.
         </p>
