@@ -11,7 +11,7 @@ export const metadata: Metadata = publicPageMetadata({
 });
 
 // Keep the effective date in step with any change to these terms.
-const EFFECTIVE = { iso: "2026-10-28", label: "28 October 2026" };
+const EFFECTIVE = { iso: "2026-09-28", label: "28 September 2026" };
 
 const SECTIONS = [
   { id: "agreement", title: "Agreeing to these terms" },

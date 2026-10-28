@@ -10,7 +10,7 @@ export const metadata: Metadata = publicPageMetadata({
 });
 
 // Keep the effective date in step with any change to what the policy describes.
-const EFFECTIVE = { iso: "2026-10-28", label: "28 October 2026" };
+const EFFECTIVE = { iso: "2026-09-28", label: "28 September 2026" };
 
 const SECTIONS = [
   { id: "who-we-are", title: "Who we are" },
