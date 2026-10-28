@@ -329,7 +329,11 @@ function SignupPageInner() {
               className="auth-field-checkbox mt-1 h-[1.1rem] w-[1.1rem] shrink-0 cursor-pointer rounded accent-[#58b52d]"
             />
             <span>
-              I agree to the terms and the{" "}
+              I agree to the{" "}
+              <a href="/terms" target="_blank" rel="noopener" className="font-semibold text-white underline decoration-white/40 underline-offset-4 hover:decoration-white">
+                terms
+              </a>{" "}
+              and the{" "}
               <a href="/privacy" target="_blank" rel="noopener" className="font-semibold text-white underline decoration-white/40 underline-offset-4 hover:decoration-white">
                 privacy policy
               </a>

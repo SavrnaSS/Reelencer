@@ -5,10 +5,10 @@ import { useEffect, useState } from "react";
 type Item = { id: string; title: string };
 
 /**
- * Contents for the privacy policy: a sticky list beside the text on large screens and a collapsible
+ * Contents for a legal page (privacy policy, terms): a sticky list beside the text on large screens and a collapsible
  * "On this page" menu above it on phones. The section in view is highlighted, and a thin bar shows reading progress.
  */
-export default function PrivacyToc({ items }: { items: Item[] }) {
+export default function LegalToc({ items, label }: { items: Item[]; label: string }) {
   const [active, setActive] = useState(items[0]?.id ?? "");
   const [progress, setProgress] = useState(0);
   const [open, setOpen] = useState(false);
@@ -70,7 +70,7 @@ export default function PrivacyToc({ items }: { items: Item[] }) {
           type="button"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
-          aria-controls="privacy-toc-mobile"
+          aria-controls="legal-toc-mobile"
           className="flex min-h-12 w-full items-center gap-3 text-left"
         >
           <span className="shrink-0 rounded-md bg-[#e8f3ea] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[#2e7d4f]">
@@ -83,14 +83,14 @@ export default function PrivacyToc({ items }: { items: Item[] }) {
           </svg>
         </button>
         {open ? (
-          <nav id="privacy-toc-mobile" aria-label="Privacy policy contents" className="max-h-[60vh] overflow-y-auto pb-3">
+          <nav id="legal-toc-mobile" aria-label={`${label} contents`} className="max-h-[60vh] overflow-y-auto pb-3">
             {list(() => setOpen(false))}
           </nav>
         ) : null}
       </div>
 
       {/* Large screens: sticky beside the text. */}
-      <nav aria-label="Privacy policy contents" className="sticky top-8 hidden max-h-[calc(100vh-4rem)] overflow-y-auto pr-2 lg:block print:hidden">
+      <nav aria-label={`${label} contents`} className="sticky top-8 hidden max-h-[calc(100vh-4rem)] overflow-y-auto pr-2 lg:block print:hidden">
         <div className="mb-2 px-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-[#8a928c]">On this page</div>
         {list()}
         <div className="mx-2.5 mt-4 h-1 overflow-hidden rounded-full bg-[#eef1ed]">
