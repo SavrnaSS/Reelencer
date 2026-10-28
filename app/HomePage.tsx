@@ -2106,7 +2106,12 @@ export default function HomePage() {
           </div>
           <div className="border-t border-white/6">
             <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-5 text-xs text-white/40 sm:px-6 lg:px-8">
-              <span>© {new Date().getFullYear()} Reelencer. Built for creators.</span>
+              <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span>© {new Date().getFullYear()} Reelencer. Built for creators.</span>
+                <Link href="/privacy" className="font-semibold text-white/60 transition hover:text-[#aef07f]">
+                  Privacy policy
+                </Link>
+              </span>
               <button
                 type="button"
                 onClick={() => animateToSection("#top", "Home")}
