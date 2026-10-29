@@ -1,5 +1,6 @@
 import { reelEarnings, type LinkedSocialAccount } from "./socialAnalytics";
 import { needsProfileRecovery } from "./accountProfileHealth";
+import { countedReels } from "./reelTracking";
 
 export type AccountEarnings = {
   accountId: string;
@@ -66,10 +67,11 @@ const normalizeHandle = (handle?: string) => String(handle ?? "").trim().replace
  * or queued for that account (payout items are matched by handle). Drives the "post, then get paid" steps.
  */
 export function postingProgress(
-  account: Pick<LinkedSocialAccount, "handle" | "posts" | "payout" | "payoutType"> | null | undefined,
+  account: (Pick<LinkedSocialAccount, "handle" | "posts" | "payout" | "payoutType"> & { linkedAt?: string }) | null | undefined,
   batches: Array<{ status: string; items: Array<{ amountINR: number; handle?: string }> }>,
 ) {
-  const posts = account?.posts ?? [];
+  // Reels from before the account was linked don't count towards posting progress or pay.
+  const posts = countedReels(account?.posts ?? [], account?.linkedAt);
   const approved = posts.filter((post) => post.status === "approved").length;
   const inReview = posts.filter((post) => post.status === "submitted").length;
   const rejected = posts.filter((post) => post.status === "rejected").length;

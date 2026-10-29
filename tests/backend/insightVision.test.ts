@@ -126,3 +126,21 @@ test('saving: rejects other accounts and unclear readings, stores a screenshot c
   assert.equal(reelUpdate.views, 48200);
   assert.equal(reelUpdate.shares, 410);
 });
+
+test('screenshot readings never update reels from before the account was linked', async () => {
+  const account = { id: 'acc', handle: 'aimoneygina', linked_at: '2026-10-29T07:52:00Z' };
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [],
+    social_account_posts: [
+      { id: 'old', account_id: 'acc', posted_at: '2026-10-05T10:00:00Z', caption: 'Old reel', status: 'approved' },
+      { id: 'new', account_id: 'acc', posted_at: '2026-10-30T10:00:00Z', caption: 'New reel', status: 'approved' },
+    ],
+  });
+  const reading = { screens: ['reel_insights' as const], handle: 'aimoneygina', account: {}, warnings: [], confidence: 0.95 };
+  const opts = { actorId: 'u1', byCreator: true, imageCount: 1 };
+  await assert.rejects(applyReading(sb, account, { ...reading, reels: [{ postedOn: '2026-10-05', views: 90_000 }] }, opts), /couldn't be matched/);
+  const result = await applyReading(sb, account, { ...reading, reels: [{ postedOn: '2026-10-30', views: 1_200 }] }, opts);
+  assert.deepEqual(result.updatedPostIds, ['new']);
+  await assert.rejects(applyReading(sb, account, { ...reading, reels: [{ views: 5 }] }, { ...opts, postId: 'old' }), /couldn't be matched/, 'a direct update of a pre-link reel is refused too');
+  assert.equal(writes.filter((w) => w.table === 'social_account_posts').length, 1);
+});

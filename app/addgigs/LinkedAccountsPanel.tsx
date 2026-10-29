@@ -34,9 +34,11 @@ import {
 } from "@/lib/socialAnalytics";
 import MetricChart from "../dashboard/MetricChart";
 import AutoSyncCard from "./AutoSyncCard";
+import ReelList from "./ReelList";
+import { countedReels, trackingStartInput } from "@/lib/reelTracking";
 import AccountRequestsQueue from "./AccountRequestsQueue";
 import PlatformGlyph from "../dashboard/PlatformGlyph";
-import { Banner, ConfirmDialog, EmptyState, ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, cardClass, fieldClass, formatDate, formatDateTime, formatRelative } from "./adminUi";
+import { Banner, ConfirmDialog, EmptyState, ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, cardClass, fieldClass, formatDate, formatDateTime } from "./adminUi";
 
 // Admin: every account linked after Content Posting screening. The team logs in, reads the platform's insights and
 // records them here as check-ins; creators see the result in Dashboard → Accounts.
@@ -61,6 +63,8 @@ const isDue = (account: LinkedSocialAccount, now: number) => {
   const days = daysSinceSnapshot(account.snapshots, now);
   return days === undefined || days >= STALE_AFTER_DAYS;
 };
+/** Reels waiting for review inside the account's tracking window. */
+const toReview = (account: LinkedSocialAccount) => countedReels(account.posts, account.linkedAt).filter((p) => p.status === "submitted").length;
 const localInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
 async function adminPost<T>(body: Record<string, unknown>): Promise<T> {
@@ -319,7 +323,7 @@ function PostEditor({
         </label>
         <label className="block text-[12px] font-medium text-[#1a201c]">
           Posted on
-          <input type="date" value={postedAt} onChange={(e) => setPostedAt(e.target.value)} className={`${fieldClass} mt-1 h-10`} />
+          <input type="date" value={postedAt} min={trackingStartInput(account.linkedAt)} onChange={(e) => setPostedAt(e.target.value)} className={`${fieldClass} mt-1 h-10`} />
         </label>
       </div>
       <label className="mt-2.5 block text-[12px] font-medium text-[#1a201c]">
@@ -374,29 +378,37 @@ function AccountDetail({
   const platform = accountPlatformFor(account.platform);
   const [chartMetric, setChartMetric] = useState<SnapshotMetric>("followers");
   const [postEditor, setPostEditor] = useState<{ post: SocialPost | null } | null>(null);
-  const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
   const [reportMissing, setReportMissing] = useState(false);
+  // Bulk approvals finish out of order: each one builds on the latest account, not the one it started from.
+  const latestAccount = useRef(account);
+  useEffect(() => { latestAccount.current = account; }, [account]);
+  const replacePost = (updated: SocialPost) => {
+    const next = { ...latestAccount.current, posts: latestAccount.current.posts.map((p) => (p.id === updated.id ? updated : p)) };
+    latestAccount.current = next;
+    onChange(next);
+  };
   const review = async (post: SocialPost, status: "approved" | "rejected", note?: string) => {
     setBusy(post.id);
     setError(null);
     try {
       const { post: updated } = await adminPost<{ post: SocialPost }>({ action: "review_post", id: post.id, status, note });
-      onChange({ ...account, posts: account.posts.map((p) => (p.id === post.id ? updated : p)) });
-      setRejecting(null);
+      const next = { ...latestAccount.current, posts: latestAccount.current.posts.map((p) => (p.id === post.id ? updated : p)) };
+      latestAccount.current = next;
+      onChange(next);
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "The review couldn't be saved.");
+      return false;
     } finally {
-      setBusy(null);
+      setBusy((current) => (current === post.id ? null : current));
     }
   };
-  // Creators' submissions first, then newest.
-  const orderedPosts = [...account.posts].sort((a, b) => Number(b.status === "submitted") - Number(a.status === "submitted"));
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const latest = account.snapshots.at(-1);
   const followers = metricChange(account.snapshots, "followers");
   const observedTotal = (key: "views" | "likes") => {
-    const measured = account.posts.filter((post) => typeof post[key] === "number");
+    const measured = countedReels(account.posts, account.linkedAt).filter((post) => typeof post[key] === "number");
     return { value: measured.length ? measured.reduce((sum, post) => sum + (post[key] ?? 0), 0) : undefined, count: measured.length };
   };
   const reelViews = observedTotal("views");
@@ -518,7 +530,7 @@ function AccountDetail({
                 ? earnings.basis === "views"
                   ? { label: "Estimated view earnings", value: earnings.earned, sub: `${formatCompact(earnings.approvedViews)} approved views at ${earnings.rate} / 1,000${earnings.unmeasuredApproved ? ` · ${earnings.unmeasuredApproved} missing counts` : ""}${earnings.pending ? ` · ${earnings.pendingValue} in review` : ""}${earnings.unmeasuredPending ? ` · ${earnings.unmeasuredPending} pending counts` : ""}` }
                   : { label: "Approved reels", value: String(earnings.approved), sub: `${earnings.earned} owed at ${earnings.rate}${earnings.pending ? ` · ${earnings.pending} to review` : ""}` }
-                : { label: "Approved reels", value: String(account.posts.filter((p) => p.status === "approved").length), sub: account.payout ? `${account.payout}${account.payoutType ? ` · ${account.payoutType}` : ""}` : "" },
+                : { label: "Approved reels", value: String(countedReels(account.posts, account.linkedAt).filter((p) => p.status === "approved").length), sub: account.payout ? `${account.payout}${account.payoutType ? ` · ${account.payoutType}` : ""}` : "" },
             ].map((item) => (
               <div key={item.label} className="min-w-0 rounded-[10px] border border-[#eef0ec] bg-[#fafbf9] px-3 py-2">
                 <dt className="text-[11px] font-medium text-[#8a928c]">{item.label}</dt>
@@ -575,77 +587,29 @@ function AccountDetail({
             </div>
           ) : null}
           {account.posts.length ? (
-            <ul className="mt-2 divide-y divide-[#eef0ec] overflow-hidden rounded-[12px] border border-[#e3e5e1]">
-              {orderedPosts.map((post) => (
-                <li key={post.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2.5 ${post.status === "submitted" ? "bg-[#fffaf0]" : ""}`}>
-                  <div className="min-w-0 flex-1 basis-56">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <a href={post.url} target="_blank" rel="noreferrer" className="truncate text-[13px] font-semibold text-[#1a201c] underline-offset-2 hover:underline">
-                        {post.caption || post.url}
-                      </a>
-                      {(post.source === "api" || post.source === "profile") ? <StatusChip label="Auto" tone="info" /> : null}
-                      {post.status !== "approved" ? <StatusChip label={post.status === "submitted" ? "To review" : "Rejected"} tone={post.status === "submitted" ? "warning" : "danger"} /> : null}
-                    </div>
-                    <div className="text-[11.5px] text-[#8a928c]">
-                      {post.postedAt ? formatDate(post.postedAt) : "No date"}
-                      {post.submittedByWorker ? ` · sent by creator ${formatRelative(post.createdAt)}` : (post.source === "api" || post.source === "profile") ? ` · found by sync, updated ${formatRelative(post.updatedAt)}` : ` · updated ${formatRelative(post.updatedAt)}`}
-                    </div>
-                    {post.status === "rejected" && post.reviewNote ? <div className="mt-0.5 truncate text-[11.5px] text-[#b42318]">Note: {post.reviewNote}</div> : null}
-                  </div>
-                  <div className={`gap-3 text-[12px] tabular-nums text-[#3b443e] ${post.views === undefined && post.likes === undefined && post.comments === undefined ? "hidden" : "flex"}`}>
-                    <span title="Views">▶ {formatCompact(post.views)}</span>
-                    <span title="Likes">♥ {formatCompact(post.likes)}</span>
-                    <span title="Comments">💬 {formatCompact(post.comments)}</span>
-                  </div>
-                  {post.status === "submitted" ? (
-                    <div className="flex w-full gap-1.5 sm:w-auto">
-                      <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy === post.id} onClick={() => void review(post, "approved")}>
-                        {busy === post.id ? <Spinner /> : <Icon d={ICONS.check} className="h-3.5 w-3.5" />}
-                        Approve
-                      </button>
-                      <button type="button" className={`${btnGhost} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy === post.id} onClick={() => setRejecting({ id: post.id, note: "" })}>
-                        Reject
-                      </button>
-                    </div>
-                  ) : null}
-                  {rejecting?.id === post.id ? (
-                    <div className="flex w-full flex-col gap-2 sm:flex-row">
-                      <input
-                        autoFocus
-                        value={rejecting.note}
-                        maxLength={500}
-                        onChange={(e) => setRejecting({ id: post.id, note: e.target.value })}
-                        placeholder="Why? The creator sees this (e.g. posted on a different account)"
-                        className={`${fieldClass} h-9 flex-1`}
-                      />
-                      <div className="flex gap-1.5">
-                        <button type="button" className={`${btnGhost} h-9 flex-1`} onClick={() => setRejecting(null)}>
-                          Cancel
-                        </button>
-                        <button type="button" className={`${btnPrimary} h-9 flex-1 bg-[#b42318] hover:bg-[#9a1e14]`} disabled={!rejecting.note.trim() || busy === post.id} onClick={() => void review(post, "rejected", rejecting.note)}>
-                          Reject reel
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="flex gap-1">
-                    <button type="button" className={btnIcon} onClick={() => setPostEditor({ post })} aria-label="Update numbers" title="Update numbers">
-                      <Icon d={ICONS.refresh} />
-                    </button>
-                    <button
-                      type="button"
-                      className={btnIcon}
-                      disabled={busy === post.id}
-                      onClick={() => void run(post.id, { action: "delete_post", id: post.id }, () => onChange({ ...account, posts: account.posts.filter((p) => p.id !== post.id) }))}
-                      aria-label="Remove reel"
-                      title="Remove"
-                    >
-                      {busy === post.id ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.x} />}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <ReelList
+              account={account}
+              now={now}
+              busyId={busy}
+              onReview={review}
+              onEdit={(post) => setPostEditor({ post })}
+              onRemove={async (post, reason) => {
+                let pending: number | null = null;
+                await run<{ post: SocialPost; pendingClaims: number }>(post.id, { action: "remove_post", id: post.id, reason: reason.trim() || undefined }, (payload) => {
+                  replacePost(payload.post);
+                  pending = payload.pendingClaims ?? 0;
+                });
+                return pending;
+              }}
+              onRestore={async (post) => {
+                let ok = false;
+                await run<{ post: SocialPost }>(post.id, { action: "restore_post", id: post.id }, (payload) => {
+                  replacePost(payload.post);
+                  ok = true;
+                });
+                return ok;
+              }}
+            />
           ) : !postEditor ? (
             <p className="mt-2 rounded-[12px] border border-dashed border-[#e3e5e1] px-3.5 py-3 text-[12.5px] text-[#7a827c]">No reels recorded yet. Add each reel the creator posts with its views and interactions.</p>
           ) : null}
@@ -812,7 +776,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
       all: list.length,
       attention: list.filter(needsProfileRecovery).length,
       due: list.filter((a) => isDue(a, now)).length,
-      reels: list.filter((a) => a.posts.some((p) => p.status === "submitted")).length,
+      reels: list.filter((a) => toReview(a) > 0).length,
       active: list.filter((a) => a.status === "active").length,
       paused: list.filter((a) => a.status === "paused").length,
       unlinked: list.filter((a) => a.status === "unlinked").length,
@@ -830,7 +794,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
           : filter === "due"
             ? isDue(a, now)
             : filter === "reels"
-              ? a.posts.some((p) => p.status === "submitted")
+              ? toReview(a) > 0
               : a.status === filter,
       )
       .filter((a) => !text || [a.handle, a.gigTitle, a.company, a.workerCode, a.platform].some((v) => String(v ?? "").toLowerCase().includes(text)))
@@ -946,8 +910,8 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
                       </span>
                       <span className="mt-0.5 flex items-center justify-between gap-2 text-[11.5px]">
                         <span className="truncate text-[#7a827c]">
-                          {account.posts.some((p) => p.status === "submitted") ? (
-                            <span className="mr-1 font-semibold text-[#9a5b00]">{account.posts.filter((p) => p.status === "submitted").length} to review ·</span>
+                          {toReview(account) ? (
+                            <span className="mr-1 font-semibold text-[#9a5b00]">{toReview(account)} to review ·</span>
                           ) : null}
                           {account.gigTitle ?? account.gigId}
                         </span>

@@ -37,6 +37,37 @@ Submissions reuse an existing record before checking the pending queue limit and
 Card headlines, performance ranks and charts compare one shared metric across reels. If views are selected, a reel missing views is not ranked or shown with likes/comments as a substitute; a measured zero remains visible as zero.
 
 
+## Tracking window
+
+Reels count from the day their account was linked, in India time (`lib/reelTracking.ts`; `public.reel_tracking_start` in the database). A reel that went live earlier on the linking day counts; one from any earlier day doesn't. Apply `202610290001_reel_tracking_window.sql`.
+
+- **Sync:** discovery only adds reels dated inside the window, and reels dated before it are never refreshed. If an undated reel waiting for review turns out to predate linking, sync records its date and rejects it with the note "Posted before this account was linked."
+- **Submissions:** creators can't submit, and admins can't add or approve, a reel from before the linking day (`reel_before_link`). The date pickers start at the linking day.
+- **Database:** a trigger blocks approving a pre-link reel or moving an approved reel's date before the window. The migration rejects pending pre-link reels with the same note. View payout quotes and claims leave out pre-link reels, including ones approved before this rule existed. Undated reels stay eligible and are flagged for a check.
+- **Creators never see pre-link reels.** The creator API drops them (`listCreatorAccounts`, the creator's "Sync now" and profile-recovery responses), as does the device cache (`creatorAccountData`). Creator reel lists, charts, top reel, totals, earnings and posting progress therefore come only from reels that can be paid. Resubmitting a pre-link reel's link is refused rather than returning the saved record.
+- **Account statistics:** each sync's period views (`impressions`) are the views gained on tracked reels since the last sync, plus the views of newly found ones. The snapshot's `total_views` is the sum over tracked reels. Account-wide totals such as a YouTube channel's lifetime views are no longer used, because they include older videos. Followers, following and post count remain profile-level figures. Snapshots saved before this change keep their original values.
+- **Screenshots:** the screenshot reader matches and updates only reels inside the window.
+- **Admins** still see every reel, with pre-link ones in the **Before linking** tab for auditing. Admin totals and earnings ignore them.
+- **Admin reel list:** the panel states the tracking start date. Tabs (All tracked, To review, Approved, Rejected, No date, Before linking) show counts. The list can be searched by caption or link, filtered by source (sync, creator, team) and posting date (7 or 30 days), and sorted by review state, date, views, likes or last update. It shows totals for the current view, bulk-approves the reels shown and exports them as CSV.
+
+## Removing a reel
+
+Apply `202610290002_reel_removal.sql`. In the admin reel list, ✕ asks for confirmation and an optional team-only reason, then removes the reel from Reelencer. Removal keeps the row as a tombstone (`removed_at`, `removed_by`, `removal_reason`) instead of deleting it, so that:
+
+- **Creators never see it.** It's dropped from every creator response and from the creator's cached data, so it disappears from Linked, charts, totals, top reel, earnings and posting progress.
+- **It never counts.**
+  - A removed reel is always `rejected`, and a database trigger (`reel_removed`) blocks approving or re-queuing it, so it's never approved, waiting or payable.
+  - View quotes and claims leave it out.
+  - Pending claims that cite it can no longer be approved as they are; the admin is told how many there are.
+  - The admin overview's reel activity and review queue, admin totals and the account list's "to review" counts skip it.
+- **It can't come back.**
+  - Sync still recognises the reel, so it never re-discovers it or refreshes its numbers.
+  - A creator resubmitting the link is refused.
+  - An admin re-adding the same link is pointed to Restore.
+  - The screenshot reader skips it.
+
+Removed reels wait in the admin's **Removed** tab with who removed them and why. **Restore** brings a reel back to **To review** so it's checked again; the tracking window still applies. Views already paid through approved claims stay in payout history. Creators withdrawing their own unreviewed submission is unchanged.
+
 ## Missing profiles and recovery
 
 Apply `202610270001_social_profile_recovery.sql`. A linked profile is removed from the creator’s active Linked list only after two explicit profile-level not-found observations at least five minutes apart. A direct Instagram profile 404/410 or an empty, successful YouTube handle lookup can supply that evidence. Individual reel errors, login walls, private profiles, rate limits, malformed replies, credential failures and an ineligible Meta Business Discovery lookup cannot remove an account. A successful profile read clears earlier suspicion. For a platform that cannot be read automatically, admins can use **Profile not found?**, confirm that they opened the real profile and found it unavailable, and send the same recovery prompt. Existing ambiguous not-found failures are queued for a fresh check by the migration; it does not unlink any account.

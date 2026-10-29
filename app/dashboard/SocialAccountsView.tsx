@@ -7,6 +7,7 @@ import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { accountPlatformFor, isPlatformProfileUrl, payoutPhrase } from "@/lib/accountSetup";
 import type { SocialAccountsState } from "@/lib/useSocialAccounts";
+import { trackingStartInput } from "@/lib/reelTracking";
 import {
   STALE_AFTER_DAYS,
   averageViews,
@@ -419,6 +420,7 @@ const postScore = (post: SocialPost, metric: string) => metric === "views" ? pos
 function ReelSubmitForm({ account, onSubmitted, onCancel }: { account: LinkedSocialAccount; onSubmitted: (post: SocialPost, message?: string) => void; onCancel: () => void }) {
   const platform = accountPlatformFor(account.platform);
   const today = new Date().toISOString().slice(0, 10);
+  const linkedDay = trackingStartInput(account.linkedAt);
   const [url, setUrl] = useState("");
   const [caption, setCaption] = useState("");
   const [postedAt, setPostedAt] = useState(today);
@@ -476,7 +478,8 @@ function ReelSubmitForm({ account, onSubmitted, onCancel }: { account: LinkedSoc
         </label>
         <label className="block text-[12.5px] font-semibold text-[#1a201c]">
           Went live
-          <input type="date" value={postedAt} max={today} onChange={(event) => setPostedAt(event.target.value)} className={cx(input, "mt-1.5")} />
+          <input type="date" value={postedAt} min={linkedDay} max={today} onChange={(event) => setPostedAt(event.target.value)} className={cx(input, "mt-1.5")} />
+          {linkedDay ? <span className="mt-1 block text-[11.5px] font-normal text-[#7a827c]">Reels count from the day this account was linked.</span> : null}
         </label>
       </div>
       <label className="mt-3 block text-[12.5px] font-semibold text-[#1a201c]">

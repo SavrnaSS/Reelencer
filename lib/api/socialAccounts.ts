@@ -12,6 +12,7 @@ import { fetchInstagramReel, type ProfilePost } from "@/lib/api/instagramProfile
 import { canonicalInstagramReelUrl, externalPostId, STALE_AFTER_DAYS, SYNC_COOLDOWN_MINUTES, SYNC_STALE_HOURS, type LinkedSocialAccount, type SyncState, type SocialAccountStatus, type SocialPost, type SocialPostStatus, type SocialSnapshot } from "@/lib/socialAnalytics";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readProfileHealth } from "@/lib/accountProfileHealth";
+import { countedReels, reelTracking, trackingStartLabel } from "@/lib/reelTracking";
 import { profileRecoveryCode } from "./accountProfileRecovery";
 
 type Row = Record<string, unknown>;
@@ -57,6 +58,7 @@ const toPost = (r: Row): SocialPost => ({
   reviewedAt: str(r.reviewed_at),
   createdAt: String(r.created_at ?? r.updated_at),
   source: r.source === "api" || r.source === "screenshot" || r.source === "profile" ? r.source : "manual",
+  ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason) } : {}),
 });
 
 const toSync = (r: Row, config: SyncConfig): SyncState => {
@@ -91,7 +93,13 @@ async function linkMissing(sb: Sb, aliases: string[]) {
   }
 }
 
-async function hydrate(sb: Sb, rows: Row[]): Promise<LinkedSocialAccount[]> {
+/**
+ * Creators only ever receive reels from the day their account was linked: earlier reels aren't tracked or paid, so
+ * they're left out of everything the creator sees (lists, charts, totals). Admins get every reel to audit.
+ */
+type Audience = "creator" | "admin";
+
+async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedSocialAccount[]> {
   if (!rows.length) return [];
   const ids = rows.map((r) => String(r.id));
   const gigIds = [...new Set(rows.map((r) => String(r.gig_id)))];
@@ -127,7 +135,10 @@ async function hydrate(sb: Sb, rows: Row[]): Promise<LinkedSocialAccount[]> {
       payoutType: str(gig?.payout_type),
       sync: toSync(r, config),
       snapshots: (snapshots.data ?? []).filter((s) => String(s.account_id) === String(r.id)).reverse().map(toSnapshot),
-      posts: (posts.data ?? []).filter((p) => String(p.account_id) === String(r.id)).map(toPost),
+      posts: (() => {
+        const own = (posts.data ?? []).filter((p) => String(p.account_id) === String(r.id)).map(toPost);
+        return audience === "creator" ? countedReels(own, String(r.linked_at)) : own;
+      })(),
     };
   });
 }
@@ -148,7 +159,7 @@ export async function listCreatorAccounts(aliases: string[], sync = false): Prom
       const result = await syncStale(sb, rows, SYNC_STALE_HOURS * 3_600_000, 9_000);
       if (result.due) rows = await load();
     }
-    const hydrated = await hydrate(sb, rows);
+    const hydrated = await hydrate(sb, rows, "creator");
     return { accounts: hydrated.filter(account => account.status !== "unlinked"), accountIssues: hydrated.filter(account => account.status === "unlinked"), statsEnabled: true, screenshotReader };
   } catch (error) {
     // Linked-account tables not migrated yet: still show every verified account (without stats) instead of an error.
@@ -205,11 +216,11 @@ export async function listAllAccounts(sync = false) {
     const result = await syncStale(sb, rows, SYNC_STALE_HOURS * 3_600_000, 9_000);
     if (result.synced || result.failed) rows = await load();
   }
-  return hydrate(sb, rows);
+  return hydrate(sb, rows, "admin");
 }
 
 async function requireAccount(sb: Sb, accountId: string) {
-  const { data, error } = await sb.from("linked_social_accounts").select("id,status").eq("id", accountId).maybeSingle();
+  const { data, error } = await sb.from("linked_social_accounts").select("id,status,handle,linked_at").eq("id", accountId).maybeSingle();
   databaseError(error);
   if (!data) throw new ApiError(404, "Linked account not found.");
   return data as Row;
@@ -284,9 +295,12 @@ export type PostInput = {
 /** Adds a reel, or updates its numbers when the same link is entered again. */
 export async function upsertPost(actorId: string, input: PostInput) {
   const sb = supabaseAdmin();
-  await requireAccount(sb, input.accountId);
+  const account = await requireAccount(sb, input.accountId);
   const postedAt = input.postedAt ? new Date(input.postedAt) : null;
   if (postedAt && Number.isNaN(postedAt.getTime())) throw new ApiError(400, "Invalid post date.", "invalid_input");
+  if (postedAt) assertInWindow(postedAt.toISOString(), account);
+  const { data: current } = await sb.from("social_account_posts").select("removed_at").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
+  if (current?.removed_at) throw new ApiError(409, "This reel was removed. Restore it from the Removed tab instead.", "reel_removed");
   const { data, error } = await sb
     .from("social_account_posts")
     .upsert(
@@ -315,10 +329,45 @@ export async function upsertPost(actorId: string, input: PostInput) {
   return toPost(data as Row);
 }
 
-export async function deletePost(id: string) {
-  const { error } = await supabaseAdmin().from("social_account_posts").delete().eq("id", id);
+/**
+ * Removes a reel from Reelencer. The row stays as a tombstone (who, when, why) so sync and creator resubmissions
+ * can't bring it back; removed reels are always 'rejected', so they're never approved, waiting or paid, and creators
+ * never receive them. Reports pending view claims that cite the reel, since those can no longer be approved.
+ */
+export async function removePost(actorId: string, id: string, reason?: string) {
+  const sb = supabaseAdmin();
+  const now = new Date().toISOString();
+  const { data, error } = await sb
+    .from("social_account_posts")
+    .update({ status: "rejected", removed_at: now, removed_by: actorId, removal_reason: reason?.trim() ?? "", review_note: "", reviewed_at: now, updated_at: now })
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+  if (error?.code === MISSING_COLUMN) throw new ApiError(503, "Run the latest database migration to remove reels.", "schema_outdated");
   databaseError(error);
+  if (!data) throw new ApiError(404, "Reel not found.");
+  const { data: claimRows, error: claimError } = await sb.from("view_payout_claim_items").select("claim_id,view_payout_claims!inner(status)").eq("post_id", id).eq("view_payout_claims.status", "Pending");
+  // Older databases without view claims simply have none pending.
+  const pendingClaims = claimError ? 0 : new Set((claimRows ?? []).map((row) => String(row.claim_id))).size;
+  return { post: toPost(data as Row), pendingClaims };
 }
+
+/** Brings a removed reel back. It returns to review rather than to its old state, so it's checked again. */
+export async function restorePost(id: string) {
+  const now = new Date().toISOString();
+  const { data, error } = await supabaseAdmin()
+    .from("social_account_posts")
+    .update({ removed_at: null, removed_by: null, removal_reason: "", status: "submitted", review_note: "", reviewed_at: null, updated_at: now })
+    .eq("id", id)
+    .not("removed_at", "is", null)
+    .select("*")
+    .maybeSingle();
+  databaseError(error);
+  if (!data) throw new ApiError(404, "Removed reel not found.");
+  return toPost(data as Row);
+}
+
+const REMOVED_MESSAGE = "The team removed this reel, so it can't be added again.";
 
 export async function setAccountStatus(accountId: string, status: SocialAccountStatus) {
   const sb = supabaseAdmin();
@@ -330,8 +379,15 @@ export async function setAccountStatus(accountId: string, status: SocialAccountS
   databaseError(error);
 }
 
+/** Reels from before the account was linked are never tracked; say which day counts from. */
+function assertInWindow(postedAt: string, account: Row) {
+  if (reelTracking(postedAt, String(account.linked_at)) !== "before_link") return;
+  const since = trackingStartLabel(String(account.linked_at));
+  throw new ApiError(409, `This reel went live before @${String(account.handle)} was linked. Only reels posted from ${since} count.`, "reel_before_link");
+}
+
 async function requireCreatorAccount(sb: Sb, accountId: string, aliases: string[]) {
-  const { data, error } = await sb.from("linked_social_accounts").select("id,status,platform,handle,worker_code").eq("id", accountId).maybeSingle();
+  const { data, error } = await sb.from("linked_social_accounts").select("id,status,platform,handle,worker_code,linked_at").eq("id", accountId).maybeSingle();
   databaseError(error);
   if (!data || !aliases.includes(String(data.worker_code))) throw new ApiError(404, "Linked account not found.");
   return data as Row;
@@ -359,6 +415,7 @@ export async function submitCreatorReel(aliases: string[], input: { accountId: s
   const findExisting = (posts: Row[]) => posts.find(post => String(post.url) === url || (!!externalId && (post.external_id === externalId || externalPostId(String(post.url)) === externalId)));
   const posts = await loadPosts();
   const existing = findExisting(posts);
+  if (existing?.removed_at) throw new ApiError(409, REMOVED_MESSAGE, "reel_removed");
   if (!existing && posts.filter(post => post.status === "submitted").length >= MAX_PENDING_REELS) throw new ApiError(429, "You have a lot of reels waiting for review. Try again once the team catches up.");
 
   let fetched: ProfilePost | undefined;
@@ -393,6 +450,8 @@ export async function submitCreatorReel(aliases: string[], input: { accountId: s
     databaseError(error);
     return result(data as Row, true);
   };
+  // Checked before reusing a saved record too, so a pre-link reel is never handed back to the creator.
+  assertInWindow(fetched?.postedAt ?? (existing?.posted_at ? String(existing.posted_at) : postedAt.toISOString()), account);
   if (existing) return refreshExisting(existing);
 
   const { data, error } = await sb
@@ -435,6 +494,13 @@ export async function withdrawCreatorReel(aliases: string[], postId: string) {
 
 export async function reviewPost(postId: string, status: "approved" | "rejected", note?: string) {
   const sb = supabaseAdmin();
+  if (status === "approved") {
+    const { data: current, error: readError } = await sb.from("social_account_posts").select("account_id,posted_at,removed_at").eq("id", postId).maybeSingle();
+    databaseError(readError);
+    if (!current) throw new ApiError(404, "Reel not found.");
+    if (current.removed_at) throw new ApiError(409, "This reel was removed. Restore it before reviewing it.", "reel_removed");
+    if (current.posted_at) assertInWindow(String(current.posted_at), await requireAccount(sb, String(current.account_id)));
+  }
   const { data, error } = await sb
     .from("social_account_posts")
     .update({ status, review_note: note?.trim() ?? "", reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -497,7 +563,7 @@ export async function accountsSummary() {
 }
 
 /** "Sync now": creators for their own accounts (with a cooldown), admins for any. Returns the refreshed account. */
-export async function syncAccountNow(accountId: string, actor: { aliases: string[]; isAdmin: boolean }) {
+export async function syncAccountNow(accountId: string, actor: { aliases: string[]; isAdmin: boolean }, audience: Audience = "creator") {
   const sb = supabaseAdmin();
   const { data, error } = await sb.from("linked_social_accounts").select("*").eq("id", accountId).maybeSingle();
   databaseError(error);
@@ -515,7 +581,7 @@ export async function syncAccountNow(accountId: string, actor: { aliases: string
   await syncAccount(sb, row, undefined, { force: true });
   const { data: fresh, error: freshError } = await sb.from("linked_social_accounts").select("*").eq("id", accountId).maybeSingle();
   databaseError(freshError);
-  const [account] = await hydrate(sb, fresh ? [fresh as Row] : []);
+  const [account] = await hydrate(sb, fresh ? [fresh as Row] : [], audience);
   return account;
 }
 
@@ -524,6 +590,7 @@ export async function syncAllAccounts() {
   return runScheduledSocialSync();
 }
 
-export async function recoveredAccountView(row: Row) {
-  return (await hydrate(supabaseAdmin(), [row]))[0];
+/** An account after a profile recovery step; creators get their view of it (only reels since linking). */
+export async function recoveredAccountView(row: Row, audience: Audience = "creator") {
+  return (await hydrate(supabaseAdmin(), [row], audience))[0];
 }

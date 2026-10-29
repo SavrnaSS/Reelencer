@@ -4,7 +4,7 @@ import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
-import { deletePost, deleteSnapshot, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { deleteSnapshot, removePost, restorePost, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
 import { reportMissingAccountProfile, restoreAccountProfile } from "@/lib/api/accountProfileRecovery";
 
 // Admin writes for linked accounts: insight check-ins, per-reel results, pause/unlink.
@@ -45,7 +45,9 @@ const actions = z.discriminatedUnion("action", [
   z.object({ action: z.literal("review_post"), id: z.uuid(), status: z.enum(["approved", "rejected"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
   z.object({ action: z.literal("sync"), accountId: z.uuid() }),
-  z.object({ action: z.literal("delete_post"), id: z.uuid() }),
+  // "delete_post" is the older name for removing a reel; both keep a tombstone.
+  z.object({ action: z.enum(["remove_post", "delete_post"]), id: z.uuid(), reason: z.string().max(300).optional() }),
+  z.object({ action: z.literal("restore_post"), id: z.uuid() }),
   z.object({ action: z.literal("status"), accountId: z.uuid(), status: z.enum(["active", "paused", "unlinked"]) }),
 ]);
 
@@ -56,9 +58,9 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
   const body = parsed.data;
   switch (body.action) {
     case "report_missing_profile":
-      return NextResponse.json({ account: await recoveredAccountView(await reportMissingAccountProfile(actor.user.id, body.accountId, body.notFoundConfirmed)) }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json({ account: await recoveredAccountView(await reportMissingAccountProfile(actor.user.id, body.accountId, body.notFoundConfirmed), "admin") }, { headers: NO_STORE_HEADERS });
     case "restore_profile":
-      return NextResponse.json({ account: await recoveredAccountView(await restoreAccountProfile(actor.user.id, body.accountId, body.ownershipConfirmed, body)) }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json({ account: await recoveredAccountView(await restoreAccountProfile(actor.user.id, body.accountId, body.ownershipConfirmed, body), "admin") }, { headers: NO_STORE_HEADERS });
     case "snapshot": {
       const { action: _action, ...input } = body;
       void _action;
@@ -72,13 +74,15 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
     case "review_post":
       return NextResponse.json(await reviewPost(body.id, body.status, body.note), { headers: NO_STORE_HEADERS });
     case "sync":
-      return NextResponse.json({ account: await syncAccountNow(body.accountId, { aliases: [], isAdmin: true }) }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json({ account: await syncAccountNow(body.accountId, { aliases: [], isAdmin: true }, "admin") }, { headers: NO_STORE_HEADERS });
     case "delete_snapshot":
       await deleteSnapshot(body.id);
       return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
+    case "remove_post":
     case "delete_post":
-      await deletePost(body.id);
-      return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json(await removePost(actor.user.id, body.id, body.reason), { headers: NO_STORE_HEADERS });
+    case "restore_post":
+      return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
     case "status":
       await setAccountStatus(body.accountId, body.status);
       return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });

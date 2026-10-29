@@ -179,7 +179,81 @@ test('instagram sync updates known reels, adds new ones for review and records a
   assert.equal(accountUpdate.external_id, '999');
 });
 
-test('youtube sync derives period views from the previous lifetime total', async () => {
+test('instagram sync tracks reels from the linking day only and leaves earlier reels untouched', async () => {
+  // Linked 29 Oct 2026 at 13:22 India time: reels count from 29 Oct 00:00 IST (28 Oct 18:30 UTC).
+  const account = { id: 'win', platform: 'Instagram', handle: 'window.test', status: 'active', linked_at: '2026-10-29T07:52:00Z' };
+  const seconds = (iso: string) => Date.parse(iso) / 1000;
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [],
+    social_account_posts: [
+      { id: 'old', account_id: 'win', url: 'https://www.instagram.com/reel/OLDAPPROVED/', posted_at: '2026-10-20T10:00:00Z', status: 'approved', likes: 5 },
+      { id: 'undated', account_id: 'win', url: 'https://www.instagram.com/reel/UNDATED/', status: 'submitted', likes: 1 },
+    ],
+  });
+  globalThis.fetch = (async () => new Response(`<script type="application/json">${JSON.stringify({ user: {
+    id: '42', username: 'window.test', edge_followed_by: { count: 10 }, edge_follow: { count: 1 },
+    edge_owner_to_timeline_media: { count: 4, edges: [
+      { node: { shortcode: 'OLDAPPROVED', is_video: true, like_count: 900, comment_count: 9, taken_at: seconds('2026-10-20T10:00:00Z') } },
+      { node: { shortcode: 'UNDATED', is_video: true, like_count: 3, comment_count: 0, taken_at: seconds('2026-10-25T10:00:00Z') } },
+      { node: { shortcode: 'SAMEDAY', is_video: true, like_count: 2, comment_count: 0, taken_at: seconds('2026-10-28T20:00:00Z') } },
+      { node: { shortcode: 'DAYBEFORE', is_video: true, like_count: 2, comment_count: 0, taken_at: seconds('2026-10-28T12:00:00Z') } },
+    ] },
+  } })}</script>`, { headers: { 'content-type': 'text/html' } })) as typeof fetch;
+  assert.equal((await syncAccount(sb, account, cfg({}))).status, 'ok');
+  const postWrites = writes.filter((w) => w.table === 'social_account_posts');
+  assert.equal(postWrites.some((w) => w.filters.some(([, v]) => v === 'old')), false, 'reels from before linking are not refreshed');
+  const closed = postWrites.find((w) => w.filters.some(([, v]) => v === 'undated'))!;
+  assert.equal(closed.payload.status, 'rejected', 'a waiting reel found to predate linking is closed');
+  assert.match(String(closed.payload.review_note), /before this account was linked/);
+  assert.equal(closed.payload.likes, undefined, 'its numbers are not tracked');
+  const inserted = postWrites.filter((w) => w.op === 'insert').map((w) => w.payload.url);
+  assert.deepEqual(inserted, ['https://www.instagram.com/reel/SAMEDAY/'], 'only the reel from the linking day is discovered');
+  const snapshot = writes.find((w) => w.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.engagements, null, 'first sync has no interaction delta');
+});
+
+test('period views and totals count tracked reels only, never reels from before linking', async () => {
+  const account = { id: 'gain', platform: 'Instagram', handle: 'gain.test', status: 'active', linked_at: '2026-10-29T07:52:00Z' };
+  const seconds = (iso: string) => Date.parse(iso) / 1000;
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [{ account_id: 'gain', source: 'profile', captured_at: new Date(Date.now() - 86_400_000).toISOString(), total_views: 100 }],
+    social_account_posts: [
+      { id: 'old', account_id: 'gain', url: 'https://www.instagram.com/reel/OLD/', posted_at: '2026-10-01T00:00:00Z', status: 'approved', views: 1000 },
+      { id: 'cur', account_id: 'gain', url: 'https://www.instagram.com/reel/CUR/', posted_at: '2026-10-30T00:00:00Z', status: 'approved', views: 100 },
+    ],
+  });
+  globalThis.fetch = (async () => new Response(`<script type="application/json">${JSON.stringify({ user: {
+    id: '7', username: 'gain.test', edge_followed_by: { count: 10 }, edge_follow: { count: 1 },
+    edge_owner_to_timeline_media: { count: 2, edges: [
+      { node: { shortcode: 'OLD', is_video: true, video_view_count: 5000, taken_at: seconds('2026-10-01T00:00:00Z') } },
+      { node: { shortcode: 'CUR', is_video: true, video_view_count: 300, taken_at: seconds('2026-10-30T00:00:00Z') } },
+    ] },
+  } })}</script>`, { headers: { 'content-type': 'text/html' } })) as typeof fetch;
+  assert.equal((await syncAccount(sb, account, cfg({}))).status, 'ok');
+  const snapshot = writes.find((w) => w.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.impressions, 200, 'only the tracked reel grew from 100 to 300; the old reel’s 4,000 new views are ignored');
+  assert.equal(snapshot.total_views, 300);
+});
+
+test('a reel the team removed is never refreshed, re-discovered or counted by sync', async () => {
+  const account = { id: 'rm', platform: 'Instagram', handle: 'removed.test', status: 'active', linked_at: '2026-10-29T07:52:00Z' };
+  const seconds = (iso: string) => Date.parse(iso) / 1000;
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [{ account_id: 'rm', source: 'profile', captured_at: new Date(Date.now() - 86_400_000).toISOString() }],
+    social_account_posts: [{ id: 'gone', account_id: 'rm', url: 'https://www.instagram.com/reel/GONE/', posted_at: '2026-10-30T00:00:00Z', status: 'rejected', views: 10, removed_at: '2026-10-31T00:00:00Z' }],
+  });
+  globalThis.fetch = (async () => new Response(`<script type="application/json">${JSON.stringify({ user: {
+    id: '8', username: 'removed.test', edge_followed_by: { count: 10 }, edge_follow: { count: 1 },
+    edge_owner_to_timeline_media: { count: 1, edges: [{ node: { shortcode: 'GONE', is_video: true, video_view_count: 9000, like_count: 50, taken_at: seconds('2026-10-30T00:00:00Z') } }] },
+  } })}</script>`, { headers: { 'content-type': 'text/html' } })) as typeof fetch;
+  assert.equal((await syncAccount(sb, account, cfg({}))).status, 'ok');
+  assert.equal(writes.filter((w) => w.table === 'social_account_posts').length, 0, 'no update and no new row for the removed reel');
+  const snapshot = writes.find((w) => w.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.impressions, null, 'its 8,990 new views are not counted');
+  assert.equal(snapshot.total_views, null);
+});
+
+test('youtube period views come from tracked reels, not the channel lifetime total', async () => {
   process.env.YOUTUBE_API_KEY = 'k';
   const account = { id: 'acc', platform: 'YouTube', handle: 'TravelLite', status: 'active', linked_at: '2026-10-01T00:00:00Z' };
   const lastSync = new Date(Date.now() - 3 * 86_400_000).toISOString();
@@ -194,7 +268,8 @@ test('youtube sync derives period views from the previous lifetime total', async
   ]);
   await syncAccount(sb, account, cfg({ youtubeApiKey: 'k' }));
   const snapshot = writes.find((w) => w.table === 'social_account_snapshots')!.payload;
-  assert.equal(snapshot.impressions, 2500);
+  assert.equal(snapshot.impressions, 4000, 'the new tracked reel, not 12,500 − 10,000 channel views that include older videos');
+  assert.equal(snapshot.total_views, 4000);
   assert.equal(snapshot.period_days, 3);
   assert.equal(snapshot.followers, 800);
   const inserted = writes.find((w) => w.table === 'social_account_posts' && w.op === 'insert')!.payload;

@@ -1,4 +1,5 @@
 import { formatAmount } from "./money";
+import { countedReels } from "./reelTracking";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -47,6 +48,9 @@ export type SocialPost = {
   createdAt: string;
   /** "api": found on the account by the automatic sync (numbers refresh by themselves). */
   source: "manual" | "api" | "screenshot" | "profile";
+  /** Removed by the team: kept only so it can't come back; never shown to creators or counted. Admins only. */
+  removedAt?: string;
+  removalReason?: string;
 };
 
 export type SocialPostStatus = "submitted" | "approved" | "rejected";
@@ -328,17 +332,19 @@ export function isValidViewPayoutRate(payout?: string): boolean {
 }
 
 /** Reel earnings estimates: approved results and pending review stay separate; view rates are prorated and rounded to cents. */
-export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payout" | "payoutType">) {
+/** Reels posted before the account was linked never earn, so they're left out when `linkedAt` is known. */
+export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payout" | "payoutType"> & { linkedAt?: string }) {
   const type = String(account.payoutType ?? "").trim().toLowerCase();
   if (type !== "per post" && type !== "per 1k views") return undefined;
   const rate = parsePayoutAmount(account.payout);
   if (!rate) return undefined;
-  const approved = account.posts.filter((p) => p.status === "approved").length;
-  const pending = account.posts.filter((p) => p.status === "submitted").length;
+  const posts = countedReels(account.posts, account.linkedAt);
+  const approved = posts.filter((p) => p.status === "approved").length;
+  const pending = posts.filter((p) => p.status === "submitted").length;
   const money = (n: number) => formatAmount(n, rate.symbol);
   if (type === "per 1k views") {
     if (!isValidViewPayoutRate(account.payout)) return undefined;
-    const measured = (status: SocialPostStatus) => account.posts.filter((post) => post.status === status && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
+    const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
     const approvedPosts = measured("approved");
     const pendingPosts = measured("submitted");
     const approvedViews = approvedPosts.reduce((sum, post) => sum + (post.views ?? 0), 0);

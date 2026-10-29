@@ -2,6 +2,7 @@ import "server-only";
 import { ApiError } from "@/lib/api/errors";
 import { resolveSyncConfig } from "@/lib/api/integrations";
 import type { SocialPost, SocialSnapshot } from "@/lib/socialAnalytics";
+import { reelTracking } from "@/lib/reelTracking";
 import type { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // AI screenshot reader: turns screenshots the account holder takes inside the app (profile, Professional dashboard,
@@ -274,8 +275,12 @@ export async function applyReading(
   const updatedPostIds: string[] = [];
   let unmatchedReels = 0;
   if (reading.reels.length) {
-    const { data: postRows } = await sb.from("social_account_posts").select("id,posted_at,caption,status,url").eq("account_id", id);
-    const posts = (postRows ?? []).map((p) => ({ id: String(p.id), postedAt: p.posted_at ? String(p.posted_at) : undefined, caption: String(p.caption ?? ""), status: String(p.status ?? "approved") as SocialPost["status"] }));
+    const { data: postRows } = await sb.from("social_account_posts").select("*").eq("account_id", id);
+    // Reels from before the account was linked aren't tracked, so screenshots never update them.
+    const posts = (postRows ?? [])
+      .filter((p) => !p.removed_at)
+      .map((p) => ({ id: String(p.id), postedAt: p.posted_at ? String(p.posted_at) : undefined, caption: String(p.caption ?? ""), status: String(p.status ?? "approved") as SocialPost["status"] }))
+      .filter((p) => reelTracking(p.postedAt, String(account.linked_at ?? "")) !== "before_link");
     const pairs = options.postId
       ? [{ reel: reading.reels[0], postId: posts.some((p) => p.id === options.postId) ? options.postId : undefined }]
       : matchReels(reading.reels, posts);

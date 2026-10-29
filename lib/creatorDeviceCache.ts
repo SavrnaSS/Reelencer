@@ -1,5 +1,6 @@
 import { createAdminSessionCache } from "./adminSessionCache";
 import { linkedAccountsData, type LinkedAccountsData } from "./linkedAccountCache";
+import { countedReels } from "./reelTracking";
 
 export const CREATOR_CACHE_PREFIX = "reelencer:creator-cache:v1:";
 export const CREATOR_CACHE_OWNER = "reelencer:creator-cache-owner:v1";
@@ -109,9 +110,14 @@ export function patchCachedDashboard(scope: string, patch: Partial<DashboardColl
 }
 
 export type CreatorAccountData = LinkedAccountsData & { accountIssues: LinkedAccountsData["accounts"]; statsEnabled: boolean };
+/** Creator account data from the API or this device's cache. Reels from before linking are dropped here too, so
+ *  data cached before that rule existed never shows them. */
 export function creatorAccountData(value: unknown): CreatorAccountData {
   const v = row(value);
-  return { ...linkedAccountsData(v), accountIssues: linkedAccountsData({ accounts: Array.isArray(v.accountIssues) ? v.accountIssues : [], screenshotReader: false }).accounts, statsEnabled: v.statsEnabled !== false };
+  const linked = linkedAccountsData(v);
+  const issues = linkedAccountsData({ accounts: Array.isArray(v.accountIssues) ? v.accountIssues : [], screenshotReader: false }).accounts;
+  const trackedOnly = <T extends { posts: Array<{ postedAt?: string }>; linkedAt: string }>(account: T): T => ({ ...account, posts: countedReels(account.posts, account.linkedAt) });
+  return { ...linked, accounts: linked.accounts.map(trackedOnly), accountIssues: issues.map(trackedOnly), statsEnabled: v.statsEnabled !== false };
 }
 
 export function creatorProfileData(value: unknown): Row {

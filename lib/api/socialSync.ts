@@ -4,6 +4,7 @@ import { fetchInstagramBusinessProfile } from "@/lib/api/instagramGraph";
 import { accountPlatformFor } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { externalPostId, type SyncState } from "@/lib/socialAnalytics";
+import { BEFORE_LINK_NOTE, reelTracking, trackingStart } from "@/lib/reelTracking";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveSyncConfig, type SyncConfig } from "@/lib/api/integrations";
 import { classifySyncError, ProfileNotFoundError, retryDelayMs, SocialSyncError, storedSyncState, syncInterval } from "@/lib/socialSyncSchedule";
@@ -213,12 +214,15 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     databaseError(previousError);
     databaseError(postsError);
     const posts = (existing ?? []) as Row[];
-    const linkedAt = Date.parse(String(account.linked_at)) - 86_400_000;
-    const tracked = [...posts].sort((a, b) => {
+    // Only reels from the linking day on are discovered or refreshed; earlier ones are left as they are.
+    const windowStart = trackingStart(String(account.linked_at));
+    // Removed reels stay known (so they're never re-discovered) but are never refreshed or counted.
+    const inWindow = (post: Row) => !post.removed_at && reelTracking(post.posted_at ? String(post.posted_at) : undefined, String(account.linked_at)) !== "before_link";
+    const tracked = [...posts].filter(inWindow).sort((a, b) => {
       const needsNumbers = (post: Row) => post.status === "submitted" && post.views == null;
       return Number(needsNumbers(b)) - Number(needsNumbers(a)) || Date.parse(String(a.views_captured_at ?? a.updated_at ?? "1970-01-01")) - Date.parse(String(b.views_captured_at ?? b.updated_at ?? "1970-01-01"));
     });
-    const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), Number.isFinite(linkedAt) ? linkedAt : undefined);
+    const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), windowStart);
     const source = fetched.source ?? "api";
     const lastApi = previous?.source === source ? previous : null;
     const byExternal = new Map<string, Row>();
@@ -227,12 +231,35 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
       if (key) byExternal.set(key, post);
     }
 
-    // Interactions gained on posts we already knew about, since the last sync.
+    // Interactions and views gained on tracked reels since the last sync. Account-wide totals (a YouTube channel's
+    // lifetime views) include reels from before linking, so period views come from tracked reels only.
     let interactionsGained = 0;
+    let viewsGained = 0;
+    let viewsMeasured = false;
+    const latestViews = new Map(posts.filter(inWindow).map((post) => [String(post.id), post.views == null ? undefined : Number(post.views)]));
     for (const media of fetched.media) {
       const known = byExternal.get(media.externalId);
+      if (known && !inWindow(known)) continue;
+      if (known && !known.posted_at && media.postedAt && reelTracking(media.postedAt, String(account.linked_at)) === "before_link") {
+        // Its date is only known now and it predates linking: record the date and close it if it was waiting.
+        const { error } = await sb
+          .from("social_account_posts")
+          .update({
+            posted_at: media.postedAt,
+            ...(known.status === "submitted" ? { status: "rejected", review_note: BEFORE_LINK_NOTE, reviewed_at: now.toISOString() } : {}),
+            updated_at: now.toISOString(),
+          })
+          .eq("id", String(known.id));
+        if (error) throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
+        continue;
+      }
       if (known) {
         interactionsGained += Math.max(0, (media.likes ?? 0) - Number(known.likes ?? 0)) + Math.max(0, (media.comments ?? 0) - Number(known.comments ?? 0));
+        if (media.views !== undefined) {
+          viewsMeasured = true;
+          if (known.views != null) viewsGained += Math.max(0, media.views - Number(known.views));
+          latestViews.set(String(known.id), media.views);
+        }
         const { error } = await sb
           .from("social_account_posts")
           .update({
@@ -245,8 +272,13 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
           })
           .eq("id", String(known.id));
         if (error) throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
-      } else if (media.postedAt && Date.parse(media.postedAt) >= linkedAt && (accountPlatformFor(String(account.platform)).id !== "instagram" || media.url.includes('/reel/'))) {
+      } else if (media.postedAt && windowStart !== undefined && Date.parse(media.postedAt) >= windowStart && (accountPlatformFor(String(account.platform)).id !== "instagram" || media.url.includes('/reel/'))) {
         // Posted for the gig after linking: track it automatically, pending the team's review for pay.
+        if (media.views !== undefined) {
+          viewsMeasured = true;
+          viewsGained += media.views;
+          latestViews.set(`new:${media.externalId}`, media.views);
+        }
         await insertTolerant(
           sb,
           "social_account_posts",
@@ -274,8 +306,8 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     const lastAt = lastApi ? Date.parse(String(lastApi.captured_at)) : 0;
     if (now.getTime() - lastAt >= 60_000) {
       const days = lastApi ? (now.getTime() - lastAt) / 86_400_000 : 7;
-      const prevTotal = lastApi ? Number(lastApi.total_views ?? NaN) : NaN;
-      const viewsGained = fetched.totalViews !== undefined && Number.isFinite(prevTotal) ? Math.max(0, fetched.totalViews - prevTotal) : undefined;
+      const trackedViews = [...latestViews.values()].filter((views): views is number => views !== undefined);
+      const totalViews = trackedViews.length ? trackedViews.reduce((sum, views) => sum + views, 0) : undefined;
       await insertTolerant(
         sb,
         "social_account_snapshots",
@@ -286,11 +318,11 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
           followers: fetched.followers ?? null,
           following: fetched.following ?? null,
           posts: fetched.posts ?? null,
-          impressions: viewsGained ?? null,
+          impressions: lastApi && viewsMeasured ? viewsGained : null,
           engagements: source === "api" && lastApi ? interactionsGained : null,
           source,
           note: fetched.note ?? "Synced automatically",
-          total_views: fetched.totalViews ?? null,
+          total_views: totalViews ?? null,
         },
         ["total_views"],
       );
