@@ -46,7 +46,7 @@ const actions = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
   z.object({ action: z.literal("sync"), accountId: z.uuid() }),
   // "delete_post" is the older name for removing a reel; both keep a tombstone.
-  z.object({ action: z.enum(["remove_post", "delete_post"]), id: z.uuid(), reason: z.string().max(300).optional() }),
+  z.object({ action: z.enum(["remove_post", "delete_post"]), id: z.uuid(), reason: z.string().max(300).optional(), silent: z.boolean().optional() }),
   z.object({ action: z.literal("restore_post"), id: z.uuid() }),
   z.object({ action: z.literal("status"), accountId: z.uuid(), status: z.enum(["active", "paused", "unlinked"]) }),
 ]);
@@ -80,7 +80,7 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
       return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });
     case "remove_post":
     case "delete_post":
-      return NextResponse.json(await removePost(actor.user.id, body.id, body.reason), { headers: NO_STORE_HEADERS });
+      return NextResponse.json(await removePost(actor.user.id, body.id, body.reason, body.silent), { headers: NO_STORE_HEADERS });
     case "restore_post":
       return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
     case "status":

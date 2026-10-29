@@ -52,7 +52,7 @@ Reels count from the day their account was linked, in India time (`lib/reelTrack
 
 ## Removing a reel
 
-Apply `202610290002_reel_removal.sql`. In the admin reel list, ✕ asks for confirmation and an optional team-only reason, then removes the reel from Reelencer. Removal keeps the row as a tombstone (`removed_at`, `removed_by`, `removal_reason`) instead of deleting it, so that:
+Apply `202610290002_reel_removal.sql` and `202610290003_silent_reel_removal.sql`; until they're applied, removing shows that the database update is missing. In the admin reel list, each reel's **Remove** button (or selecting several reels and choosing **Remove** in the selection bar) opens a confirmation. It shows what will stop counting and takes an optional team-only reason, with quick picks such as Duplicate or Not for this gig. The reel is then removed from Reelencer. The notice that follows has **Undo**, and the always-visible **Removed** tab lists removed reels with their reason; restore them one at a time or in bulk. Removal keeps the row as a tombstone (`removed_at`, `removed_by`, `removal_reason`) instead of deleting it, so that:
 
 - **Creators never see it.** It's dropped from every creator response and from the creator's cached data, so it disappears from Linked, charts, totals, top reel, earnings and posting progress.
 - **It never counts.**
@@ -60,6 +60,9 @@ Apply `202610290002_reel_removal.sql`. In the admin reel list, ✕ asks for conf
   - View quotes and claims leave it out.
   - Pending claims that cite it can no longer be approved as they are; the admin is told how many there are.
   - The admin overview's reel activity and review queue, admin totals and the account list's "to review" counts skip it.
+- **Two ways to remove.** The dialog asks how; the choice is remembered per admin.
+  - **Tell the creator** emails them that the reel was removed, with the reason. Resubmitting the link says the team removed it and why.
+  - **Silent** leaves no clue. There's no email, and the creator's live-update ping is skipped (the database only pings for a removal that isn't silent, and never for changes to a removed reel). Resubmitting the link gets the same "already added" answer as an ordinary duplicate. The reason stays team-only, and removed reels are marked Silent or Creator told in the Removed tab.
 - **It can't come back.**
   - Sync still recognises the reel, so it never re-discovers it or refreshes its numbers.
   - A creator resubmitting the link is refused.

@@ -430,6 +430,18 @@ function AccountDetail({
     }
   };
 
+  // Remove and restore report errors back to the reel list, which shows them beside the reel (and runs them in bulk).
+  const reelAction = async <T,>(id: string, body: Record<string, unknown>): Promise<T | { error: string }> => {
+    setBusy(id);
+    try {
+      return await adminPost<T>(body);
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : "The change couldn't be saved." };
+    } finally {
+      setBusy((current) => (current === id ? null : current));
+    }
+  };
+
   return (
     <article className={`${cardClass} overflow-hidden`}>
       <header className="flex flex-wrap items-start gap-3 border-b border-[#eef0ec] px-4 py-4 sm:px-5">
@@ -593,21 +605,17 @@ function AccountDetail({
               busyId={busy}
               onReview={review}
               onEdit={(post) => setPostEditor({ post })}
-              onRemove={async (post, reason) => {
-                let pending: number | null = null;
-                await run<{ post: SocialPost; pendingClaims: number }>(post.id, { action: "remove_post", id: post.id, reason: reason.trim() || undefined }, (payload) => {
-                  replacePost(payload.post);
-                  pending = payload.pendingClaims ?? 0;
-                });
-                return pending;
+              onRemove={async (post, reason, silent) => {
+                const outcome = await reelAction<{ post: SocialPost; pendingClaims: number; mailStatus: { sent: boolean } | null }>(post.id, { action: "remove_post", id: post.id, reason: reason.trim() || undefined, silent });
+                if ("error" in outcome) return outcome;
+                replacePost(outcome.post);
+                return { pendingClaims: outcome.pendingClaims ?? 0, emailed: outcome.mailStatus?.sent ?? false };
               }}
               onRestore={async (post) => {
-                let ok = false;
-                await run<{ post: SocialPost }>(post.id, { action: "restore_post", id: post.id }, (payload) => {
-                  replacePost(payload.post);
-                  ok = true;
-                });
-                return ok;
+                const outcome = await reelAction<{ post: SocialPost }>(post.id, { action: "restore_post", id: post.id });
+                if ("error" in outcome) return outcome;
+                replacePost(outcome.post);
+                return { ok: true as const };
               }}
             />
           ) : !postEditor ? (

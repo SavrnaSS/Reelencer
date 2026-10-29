@@ -58,7 +58,7 @@ const toPost = (r: Row): SocialPost => ({
   reviewedAt: str(r.reviewed_at),
   createdAt: String(r.created_at ?? r.updated_at),
   source: r.source === "api" || r.source === "screenshot" || r.source === "profile" ? r.source : "manual",
-  ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason) } : {}),
+  ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason), ...(r.removal_silent ? { removedSilently: true } : {}) } : {}),
 });
 
 const toSync = (r: Row, config: SyncConfig): SyncState => {
@@ -70,7 +70,9 @@ const toSync = (r: Row, config: SyncConfig): SyncState => {
 };
 
 /** Postgres "undefined column": the review migration (202610080002) hasn't been applied yet. */
+// Postgres reports an unknown column as 42703; PostgREST rejects it from its schema cache as PGRST204.
 const MISSING_COLUMN = "42703";
+const missingColumn = (code?: string) => code === MISSING_COLUMN || code === "PGRST204";
 
 /**
  * Self-healing link step: approvals link accounts as they happen, but an approval made before the migration was
@@ -334,22 +336,25 @@ export async function upsertPost(actorId: string, input: PostInput) {
  * can't bring it back; removed reels are always 'rejected', so they're never approved, waiting or paid, and creators
  * never receive them. Reports pending view claims that cite the reel, since those can no longer be approved.
  */
-export async function removePost(actorId: string, id: string, reason?: string) {
+export async function removePost(actorId: string, id: string, reason?: string, silent = false) {
   const sb = supabaseAdmin();
   const now = new Date().toISOString();
   const { data, error } = await sb
     .from("social_account_posts")
-    .update({ status: "rejected", removed_at: now, removed_by: actorId, removal_reason: reason?.trim() ?? "", review_note: "", reviewed_at: now, updated_at: now })
+    .update({ status: "rejected", removed_at: now, removed_by: actorId, removal_reason: reason?.trim() ?? "", removal_silent: silent, review_note: "", reviewed_at: now, updated_at: now })
     .eq("id", id)
     .select("*")
     .maybeSingle();
-  if (error?.code === MISSING_COLUMN) throw new ApiError(503, "Run the latest database migration to remove reels.", "schema_outdated");
+  if (missingColumn(error?.code)) throw new ApiError(503, "Reel removal needs the database updates 202610290002_reel_removal.sql and 202610290003_silent_reel_removal.sql. Apply them in Supabase, then try again.", "schema_outdated");
   databaseError(error);
   if (!data) throw new ApiError(404, "Reel not found.");
   const { data: claimRows, error: claimError } = await sb.from("view_payout_claim_items").select("claim_id,view_payout_claims!inner(status)").eq("post_id", id).eq("view_payout_claims.status", "Pending");
   // Older databases without view claims simply have none pending.
   const pendingClaims = claimError ? 0 : new Set((claimRows ?? []).map((row) => String(row.claim_id))).size;
-  return { post: toPost(data as Row), pendingClaims };
+  const post = toPost(data as Row);
+  // A silent removal leaves no trace for the creator, so only the announced kind sends an email.
+  const mailStatus = silent ? null : await notifyReelRemoved(sb, String(data.account_id), post, reason);
+  return { post, pendingClaims, mailStatus };
 }
 
 /** Brings a removed reel back. It returns to review rather than to its old state, so it's checked again. */
@@ -357,7 +362,7 @@ export async function restorePost(id: string) {
   const now = new Date().toISOString();
   const { data, error } = await supabaseAdmin()
     .from("social_account_posts")
-    .update({ removed_at: null, removed_by: null, removal_reason: "", status: "submitted", review_note: "", reviewed_at: null, updated_at: now })
+    .update({ removed_at: null, removed_by: null, removal_reason: "", removal_silent: false, status: "submitted", review_note: "", reviewed_at: null, updated_at: now })
     .eq("id", id)
     .not("removed_at", "is", null)
     .select("*")
@@ -368,6 +373,7 @@ export async function restorePost(id: string) {
 }
 
 const REMOVED_MESSAGE = "The team removed this reel, so it can't be added again.";
+const DUPLICATE_MESSAGE = "This reel has already been added.";
 
 export async function setAccountStatus(accountId: string, status: SocialAccountStatus) {
   const sb = supabaseAdmin();
@@ -415,7 +421,11 @@ export async function submitCreatorReel(aliases: string[], input: { accountId: s
   const findExisting = (posts: Row[]) => posts.find(post => String(post.url) === url || (!!externalId && (post.external_id === externalId || externalPostId(String(post.url)) === externalId)));
   const posts = await loadPosts();
   const existing = findExisting(posts);
-  if (existing?.removed_at) throw new ApiError(409, REMOVED_MESSAGE, "reel_removed");
+  if (existing?.removed_at) {
+    // Silently removed: answer exactly like a link that's already been added, so nothing hints at a removal.
+    if (existing.removal_silent) throw new ApiError(409, DUPLICATE_MESSAGE, "conflict");
+    throw new ApiError(409, existing.removal_reason ? `${REMOVED_MESSAGE} Reason: ${String(existing.removal_reason)}` : REMOVED_MESSAGE, "reel_removed");
+  }
   if (!existing && posts.filter(post => post.status === "submitted").length >= MAX_PENDING_REELS) throw new ApiError(429, "You have a lot of reels waiting for review. Try again once the team catches up.");
 
   let fetched: ProfilePost | undefined;
@@ -473,7 +483,7 @@ export async function submitCreatorReel(aliases: string[], input: { accountId: s
     // Automatic discovery or another tab may have inserted it during the public read.
     const concurrent = findExisting(await loadPosts());
     if (concurrent) return refreshExisting(concurrent);
-    throw new ApiError(409, "This reel has already been added.", "conflict");
+    throw new ApiError(409, DUPLICATE_MESSAGE, "conflict");
   }
   if (error?.code === MISSING_COLUMN) throw new ApiError(503, "Reel submissions aren't switched on yet.", "schema_outdated");
   databaseError(error);
@@ -536,6 +546,34 @@ async function notifyReelRejected(sb: Sb, accountId: string, post: SocialPost, n
       sections: [
         { label: "Reel", value: post.caption ? `${post.caption} (${post.url})` : post.url },
         { label: "Team note", value: note?.trim() || "Open your accounts page for details." },
+      ],
+      ctaLabel: "Open your accounts",
+      ctaHref: `${emailBaseUrl()}/dashboard?section=accounts`,
+    });
+  } catch (error) {
+    return { sent: false, reason: error instanceof Error ? error.message : "Notification failed." };
+  }
+}
+
+async function notifyReelRemoved(sb: Sb, accountId: string, post: SocialPost, reason?: string): Promise<MailStatus> {
+  try {
+    const { data: account } = await sb.from("linked_social_accounts").select("application_id,handle").eq("id", accountId).maybeSingle();
+    if (!account) return { sent: false, reason: "Account not found." };
+    const { data: application } = await sb.from("gig_applications").select("*").eq("id", String(account.application_id)).maybeSingle();
+    if (!application) return { sent: false, reason: "Application not found." };
+    const { to, context } = await resolveNotificationContext(sb, application as Row);
+    return await sendLifecycleNotification(to, context, {
+      eyebrow: "Reel Removed",
+      tone: "warning",
+      title: "A reel was removed from your account",
+      intro: `The team removed a reel on @${String(account.handle)} from ${context?.gigTitle ?? "your gig"}. It no longer counts towards views or pay, and it can't be added again.`,
+      highlights: [
+        { label: "Account", value: `@${String(account.handle)}` },
+        { label: "Status", value: "Removed" },
+      ],
+      sections: [
+        { label: "Reel", value: post.caption ? `${post.caption} (${post.url})` : post.url },
+        { label: "Reason", value: reason?.trim() || "Message the team if you have questions." },
       ],
       ctaLabel: "Open your accounts",
       ctaHref: `${emailBaseUrl()}/dashboard?section=accounts`,

@@ -38,6 +38,8 @@ export const ICONS = {
   rows: "M3.5 5h13M3.5 10h13M3.5 15h13",
   cards: "M3.5 3.5h13v5.5h-13zM3.5 11h13v5.5h-13z",
   send: "M3.5 10 16.5 4l-4 12.5-3-5.5-6-1Z",
+  trash: "M4 6h12M8 6V4.5h4V6M5.8 6l.8 10h6.8l.8-10M8.6 9v4.5M11.4 9v4.5",
+  undo: "M7.5 5.5 4 9l3.5 3.5M4 9h8a4 4 0 0 1 0 8H9.5",
 };
 
 export const Icon = ({ d, className = "h-4 w-4" }: { d: string; className?: string }) => (

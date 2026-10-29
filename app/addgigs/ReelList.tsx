@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { reelTracking, trackingStartLabel, type ReelTracking } from "@/lib/reelTracking";
 import { formatCompact, type LinkedSocialAccount, type SocialPost } from "@/lib/socialAnalytics";
-import { ConfirmDialog, ICONS, Icon, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, fieldClass, formatDate, formatRelative, runPool } from "./adminUi";
+import { BulkBar, ConfirmDialog, ICONS, Icon, SelectAllCheckbox, Spinner, StatusChip, btnBase, btnGhost, btnIcon, btnPrimary, bulkBtn, fieldClass, formatDate, formatRelative, runPool, usePersistedState, type BulkProgress } from "./adminUi";
 
 // Admin: an account's reels with the tracking window made visible. Reels count from the day the account was linked
 // (lib/reelTracking.ts); earlier ones sit in their own "Before linking" view and can't be approved. Removed reels
@@ -21,6 +21,18 @@ const sourceOf = (post: SocialPost): Exclude<SourceView, "all"> => (post.submitt
 const time = (value?: string) => Date.parse(value ?? "") || 0;
 
 type Row = { post: SocialPost; tracking: ReelTracking; removed: boolean };
+type Failure = { error: string };
+type Notice = { text: string; tone: "ok" | "warn"; undo?: SocialPost[] };
+type RemovalMode = "notify" | "silent";
+
+const MODES: Array<{ id: RemovalMode; label: string; icon: string; body: string }> = [
+  { id: "notify", label: "Tell the creator", icon: ICONS.mail, body: "They get an email with your reason. Resubmitting the link says it was removed." },
+  { id: "silent", label: "Silent", icon: ICONS.eyeOff, body: "No email or live update. Resubmitting the link looks like an ordinary duplicate." },
+];
+
+const REASONS = ["Duplicate", "Not for this gig", "Wrong account", "Reposted content", "Breaks the brief"];
+const btnRemove = `${btnBase} h-8 border border-[#f0c6c1] bg-[#fff] px-2.5 text-[12px] text-[#b42318] hover:bg-[#fdf0ef]`;
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 
 export default function ReelList({
   account,
@@ -36,9 +48,9 @@ export default function ReelList({
   busyId: string | null;
   onReview: (post: SocialPost, status: "approved" | "rejected", note?: string) => Promise<boolean>;
   onEdit: (post: SocialPost) => void;
-  /** Resolves with how many pending view claims cite the reel, or null when removing failed. */
-  onRemove: (post: SocialPost, reason: string) => Promise<number | null>;
-  onRestore: (post: SocialPost) => Promise<boolean>;
+  /** Resolves with how many pending view claims cite the reel, or why removing failed. */
+  onRemove: (post: SocialPost, reason: string, silent: boolean) => Promise<{ pendingClaims: number; emailed: boolean } | Failure>;
+  onRestore: (post: SocialPost) => Promise<{ ok: true } | Failure>;
 }) {
   const [status, setStatus] = useState<StatusView>("tracked");
   const [source, setSource] = useState<SourceView>("all");
@@ -48,8 +60,12 @@ export default function ReelList({
   const [shown, setShown] = useState(PAGE);
   const [rejecting, setRejecting] = useState<{ id: string; note: string } | null>(null);
   const [bulk, setBulk] = useState<{ confirm: boolean; done: number; total: number; running: boolean } | null>(null);
-  const [removing, setRemoving] = useState<{ post: SocialPost; reason: string; busy: boolean } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<{ posts: SocialPost[]; reason: string; busy: boolean; done: number; error: string | null } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [progress, setProgress] = useState<BulkProgress>(null);
+  // Remembered per admin, so a team that always removes quietly isn't asked to switch every time.
+  const [mode, setMode] = usePersistedState<RemovalMode>("reelencer.reelRemovalMode", "notify", ["notify", "silent"]);
 
   const since = trackingStartLabel(account.linkedAt);
   const rows: Row[] = useMemo(() => account.posts.map((post) => ({ post, tracking: reelTracking(post.postedAt, account.linkedAt), removed: !!post.removedAt })), [account.posts, account.linkedAt]);
@@ -126,21 +142,83 @@ export default function ReelList({
     { id: "rejected", label: "Rejected" },
     { id: "undated", label: "No date", hideEmpty: true },
     { id: "before_link", label: "Before linking", hideEmpty: true },
-    { id: "removed", label: "Removed", hideEmpty: true },
+    { id: "removed", label: "Removed" },
   ];
+
+  const pageRows = visible.slice(0, shown);
+  const selectedPosts = visible.filter((row) => selected.has(row.post.id)).map((row) => row.post);
+  const selectedApprovable = visible.filter((row) => selected.has(row.post.id) && row.post.status === "submitted" && row.tracking !== "before_link" && !row.removed).map((row) => row.post);
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allOnPage = pageRows.length > 0 && pageRows.every((row) => selected.has(row.post.id));
+  const changeView = (apply: () => void) => {
+    apply();
+    setShown(PAGE);
+    setSelected(new Set());
+  };
+
+  const startRemove = (posts: SocialPost[]) => setRemoving({ posts, reason: "", busy: false, done: 0, error: null });
 
   const confirmRemove = async () => {
     if (!removing) return;
-    setRemoving({ ...removing, busy: true });
-    const pending = await onRemove(removing.post, removing.reason);
-    if (pending === null) return setRemoving((current) => (current ? { ...current, busy: false } : current));
+    const { posts, reason } = removing;
+    setRemoving({ ...removing, busy: true, done: 0, error: null });
+    const silent = mode === "silent";
+    const results = await runPool(posts, 3, (post) => onRemove(post, reason, silent), (done) => setRemoving((current) => (current ? { ...current, done } : current)));
+    const failed = results.filter((result): result is Failure => "error" in result);
+    const removed = posts.filter((_, index) => !("error" in results[index]));
+    const pending = results.reduce((total, result) => total + ("pendingClaims" in result ? result.pendingClaims : 0), 0);
+    const emailed = results.filter((result) => "emailed" in result && result.emailed).length;
+    if (!removed.length) return setRemoving((current) => (current ? { ...current, busy: false, error: failed[0]?.error ?? "The reel couldn't be removed." } : current));
     setRemoving(null);
-    setNotice(
-      pending
-        ? `Reel removed. It's in ${pending} pending view ${pending === 1 ? "claim" : "claims"}, which can no longer be approved as is. Reject or review ${pending === 1 ? "that claim" : "those claims"}.`
-        : "Reel removed. It's gone from the creator's Linked page and isn't counted anywhere.",
-    );
+    setSelected(new Set());
+    const what = removed.length === 1 ? "Reel removed" : `${removed.length} reels removed`;
+    const parts = silent
+      ? [`${what} silently. @${account.handle} gets no email or live update, and resubmitting the link looks like an ordinary duplicate.`]
+      : [`${what}. Hidden from @${account.handle}'s Linked page and no longer counted anywhere.`, emailed === removed.length ? "The creator was emailed." : emailed ? `${emailed} of ${removed.length} emails to the creator were sent.` : "The email to the creator couldn't be sent."];
+    if (pending) parts.push(`${plural(pending, "pending view claim")} cited ${removed.length === 1 ? "it" : "them"} and can no longer be approved as is: reject or review ${pending === 1 ? "that claim" : "those claims"}${silent ? ", keeping the note general so the reel isn't mentioned" : ""}.`);
+    if (failed.length) parts.push(`${plural(failed.length, "reel")} couldn't be removed: ${failed[0].error}`);
+    setNotice({ text: parts.join(" "), tone: pending || failed.length || (!silent && emailed < removed.length) ? "warn" : "ok", undo: removed });
   };
+
+  const restore = async (posts: SocialPost[]) => {
+    setNotice(null);
+    setProgress({ label: posts.length === 1 ? "Restoring reel" : "Restoring reels", done: 0, total: posts.length });
+    const results = await runPool(posts, 3, (post) => onRestore(post), (done) => setProgress((current) => (current ? { ...current, done } : current)));
+    setProgress(null);
+    setSelected(new Set());
+    const failed = results.filter((result): result is Failure => "error" in result);
+    const restored = posts.length - failed.length;
+    setNotice({
+      text: [restored ? `${restored === 1 ? "Reel" : `${restored} reels`} restored to To review, so ${restored === 1 ? "it's" : "they're"} checked again before counting.` : "", failed.length ? `${plural(failed.length, "reel")} couldn't be restored: ${failed[0].error}` : ""].filter(Boolean).join(" "),
+      tone: failed.length ? "warn" : "ok",
+    });
+  };
+
+  const approveSelected = async () => {
+    const targets = selectedApprovable;
+    setProgress({ label: "Approving reels", done: 0, total: targets.length });
+    await runPool(targets, 3, (post) => onReview(post, "approved"), (done) => setProgress((current) => (current ? { ...current, done } : current)));
+    setProgress(null);
+    setSelected(new Set());
+  };
+
+  // What removing takes away, so the dialog can say it before it happens.
+  const impact = useMemo(() => {
+    if (!removing) return null;
+    const counted = removing.posts.filter((post) => reelTracking(post.postedAt, account.linkedAt) !== "before_link");
+    return {
+      approved: counted.filter((post) => post.status === "approved").length,
+      approvedViews: counted.filter((post) => post.status === "approved").reduce((total, post) => total + (post.views ?? 0), 0),
+      waiting: counted.filter((post) => post.status === "submitted").length,
+      views: removing.posts.reduce((total, post) => total + (post.views ?? 0), 0),
+    };
+  }, [removing, account.linkedAt]);
 
   if (!account.posts.length) return null;
 
@@ -157,11 +235,23 @@ export default function ReelList({
       ) : null}
 
       {notice ? (
-        <div role="status" className="flex items-start justify-between gap-3 rounded-[12px] border border-[#e3e5e1] bg-[#fafbf9] px-3 py-2.5 text-[12.5px] leading-5 text-[#3b443e]">
-          <span>{notice}</span>
-          <button type="button" className="shrink-0 font-semibold text-[#6b746e] hover:text-[#1a201c]" onClick={() => setNotice(null)}>
-            Dismiss
-          </button>
+        <div
+          role="status"
+          className={`flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-[12px] border px-3 py-2.5 text-[12.5px] leading-5 ${notice.tone === "warn" ? "border-[#f3dcae] bg-[#fffaf0] text-[#6b4a00]" : "border-[#d8e8dc] bg-[#f3f9f4] text-[#2c4a37]"}`}
+        >
+          <Icon d={notice.tone === "warn" ? ICONS.alert : ICONS.check} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1 basis-52">{notice.text}</span>
+          <span className="ml-auto flex shrink-0 gap-3">
+            {notice.undo?.length ? (
+              <button type="button" className="inline-flex items-center gap-1 font-semibold text-[#2b5d4a] hover:underline" disabled={!!progress} onClick={() => void restore(notice.undo ?? [])}>
+                <Icon d={ICONS.undo} className="h-3.5 w-3.5" />
+                Undo
+              </button>
+            ) : null}
+            <button type="button" className="font-semibold text-[#6b746e] hover:text-[#1a201c]" onClick={() => setNotice(null)}>
+              Dismiss
+            </button>
+          </span>
         </div>
       ) : null}
 
@@ -179,8 +269,7 @@ export default function ReelList({
                 role="tab"
                 aria-selected={active}
                 onClick={(event) => {
-                  setStatus(tab.id);
-                  setShown(PAGE);
+                  changeView(() => setStatus(tab.id));
                   event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
                 }}
                 className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[999px] px-3 text-[12px] font-semibold transition ${
@@ -188,7 +277,8 @@ export default function ReelList({
                 }`}
               >
                 {tab.label}
-                <span className={`rounded-[999px] px-1.5 text-[10.5px] tabular-nums ${active ? "bg-[#fff]/20" : warn ? "bg-[#fdecc8] text-[#9a5b00]" : "bg-[#fff] text-[#6b746e]"}`}>{counts[tab.id]}</span>
+                {tab.id === "removed" ? <Icon d={ICONS.trash} className="h-3.5 w-3.5" /> : null}
+                <span className={`rounded-[999px] px-1.5 text-[10.5px] tabular-nums ${active ? "bg-[#fff]/20" : warn ? "bg-[#fdecc8] text-[#9a5b00]" : tab.id === "removed" && counts.removed ? "bg-[#fdf0ef] text-[#b42318]" : "bg-[#fff] text-[#6b746e]"}`}>{counts[tab.id]}</span>
               </button>
             );
           })}
@@ -199,16 +289,16 @@ export default function ReelList({
         <label className="relative block min-w-0">
           <span className="sr-only">Search reels</span>
           <Icon d={ICONS.search} className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8a928c]" />
-          <input value={query} onChange={(e) => { setQuery(e.target.value); setShown(PAGE); }} placeholder="Search caption or link" className={`${fieldClass} h-9 w-full pl-8`} />
+          <input value={query} onChange={(e) => changeView(() => setQuery(e.target.value))} placeholder="Search caption or link" className={`${fieldClass} h-9 w-full pl-8`} />
         </label>
         <div className="grid grid-cols-2 gap-2 sm:contents">
-          <select aria-label="Source" value={source} onChange={(e) => { setSource(e.target.value as SourceView); setShown(PAGE); }} className={`${fieldClass} h-9 min-w-0 text-[12.5px]`}>
+          <select aria-label="Source" value={source} onChange={(e) => changeView(() => setSource(e.target.value as SourceView))} className={`${fieldClass} h-9 min-w-0 text-[12.5px]`}>
             <option value="all">Any source</option>
             <option value="sync">Found by sync</option>
             <option value="creator">Sent by creator</option>
             <option value="team">Added by team</option>
           </select>
-          <select aria-label="Posted" value={period} onChange={(e) => { setPeriod(e.target.value as PeriodView); setShown(PAGE); }} className={`${fieldClass} h-9 min-w-0 text-[12.5px]`}>
+          <select aria-label="Posted" value={period} onChange={(e) => changeView(() => setPeriod(e.target.value as PeriodView))} className={`${fieldClass} h-9 min-w-0 text-[12.5px]`}>
             <option value="all">Any date</option>
             <option value="7">Last 7 days</option>
             <option value="30">Last 30 days</option>
@@ -226,11 +316,19 @@ export default function ReelList({
 
       {/* Totals for what's shown, and bulk actions */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[12px] text-[#6b746e]">
-        <span className="tabular-nums">
-          {visible.length} {visible.length === 1 ? "reel" : "reels"} · ▶ {formatCompact(totals.views)} · ♥ {formatCompact(totals.likes)}
+        <span className="flex flex-wrap items-center gap-x-1 tabular-nums">
+          {pageRows.length ? (
+            <SelectAllCheckbox
+              checked={allOnPage}
+              indeterminate={pageRows.some((row) => selected.has(row.post.id))}
+              label="Select all reels shown"
+              onChange={() => setSelected(allOnPage ? new Set() : new Set(pageRows.map((row) => row.post.id)))}
+            />
+          ) : null}
+          <span className="ml-1">{visible.length} {visible.length === 1 ? "reel" : "reels"}</span> · ▶ {formatCompact(totals.views)} · ♥ {formatCompact(totals.likes)}
           {status !== "before_link" && totals.approvedViews ? <span className="text-[#1f5131]"> · {formatCompact(totals.approvedViews)} approved views</span> : null}
           {filtersOn ? (
-            <button type="button" className="ml-2 font-semibold text-[#2b5d4a] hover:underline" onClick={() => { setSource("all"); setPeriod("all"); setQuery(""); }}>
+            <button type="button" className="ml-2 font-semibold text-[#2b5d4a] hover:underline" onClick={() => changeView(() => { setSource("all"); setPeriod("all"); setQuery(""); })}>
               Clear filters
             </button>
           ) : null}
@@ -253,11 +351,13 @@ export default function ReelList({
 
       {visible.length ? (
         <ul className="divide-y divide-[#eef0ec] overflow-hidden rounded-[12px] border border-[#e3e5e1]">
-          {visible.slice(0, shown).map(({ post, tracking, removed }) => {
+          {pageRows.map(({ post, tracking, removed }) => {
             const before = tracking === "before_link" || removed;
             const busy = busyId === post.id;
+            const picked = selected.has(post.id);
             return (
-              <li key={post.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3.5 py-2.5 ${before ? "bg-[#f7f8f6]" : post.status === "submitted" ? "bg-[#fffaf0]" : ""}`}>
+              <li key={post.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 pl-3 pr-3.5 ${picked ? "bg-[#eef6f0]" : before ? "bg-[#f7f8f6]" : post.status === "submitted" ? "bg-[#fffaf0]" : ""}`}>
+                <input type="checkbox" checked={picked} onChange={() => toggle(post.id)} aria-label={`Select ${post.caption || post.url}`} className="h-4 w-4 shrink-0 cursor-pointer self-start rounded sm:mt-0.5 sm:self-center" />
                 <div className={`min-w-0 flex-1 basis-56 ${before ? "opacity-70" : ""}`}>
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <a href={post.url} target="_blank" rel="noreferrer" className="min-w-0 max-w-full truncate text-[13px] font-semibold text-[#1a201c] underline-offset-2 hover:underline">
@@ -272,9 +372,17 @@ export default function ReelList({
                     {post.submittedByWorker ? ` · sent by creator ${formatRelative(post.createdAt)}` : sourceOf(post) === "sync" ? ` · found by sync, updated ${formatRelative(post.updatedAt)}` : ` · updated ${formatRelative(post.updatedAt)}`}
                   </div>
                   {removed ? (
-                    <div className="mt-0.5 text-[11.5px] text-[#6b746e]">
-                      Removed {formatRelative(post.removedAt)}
-                      {post.removalReason ? `: ${post.removalReason}` : ""}. Hidden from the creator and not counted.
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-[#6b746e]">
+                      <span className="inline-flex items-center gap-1 font-semibold text-[#b42318]">
+                        <Icon d={ICONS.trash} className="h-3.5 w-3.5" />
+                        Removed {formatRelative(post.removedAt)}
+                      </span>
+                      {post.removalReason ? <span className="rounded-[6px] bg-[#fdf0ef] px-1.5 py-px text-[#8a2a20]">{post.removalReason}</span> : null}
+                      <span className="inline-flex items-center gap-1 rounded-[6px] bg-[#f1f3f0] px-1.5 py-px font-semibold text-[#4b544e]" title={post.removedSilently ? "The creator was never told" : "The creator was emailed"}>
+                        <Icon d={post.removedSilently ? ICONS.eyeOff : ICONS.mail} className="h-3 w-3" />
+                        {post.removedSilently ? "Silent" : "Creator told"}
+                      </span>
+                      <span>Hidden from the creator and not counted.</span>
                     </div>
                   ) : before ? (
                     <div className="mt-0.5 text-[11.5px] text-[#6b746e]">Not tracked: posted before {since}. Its views don&apos;t count towards pay.</div>
@@ -288,7 +396,7 @@ export default function ReelList({
                 </div>
                 {post.status === "submitted" && !before ? (
                   <div className="flex w-full gap-1.5 sm:w-auto">
-                    <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy || !!bulk?.running} onClick={() => void onReview(post, "approved")}>
+                    <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy || !!bulk?.running || !!progress} onClick={() => void onReview(post, "approved")}>
                       {busy ? <Spinner /> : <Icon d={ICONS.check} className="h-3.5 w-3.5" />}
                       Approve
                     </button>
@@ -324,8 +432,8 @@ export default function ReelList({
                 ) : null}
                 <div className="flex gap-1">
                   {removed ? (
-                    <button type="button" className={`${btnGhost} h-8 px-2.5 text-[12px]`} disabled={busy} onClick={() => void onRestore(post).then((ok) => ok && setNotice("Reel restored. It's back in To review."))}>
-                      {busy ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.refresh} className="h-3.5 w-3.5" />}
+                    <button type="button" className={`${btnGhost} h-8 px-2.5 text-[12px]`} disabled={busy || !!progress} onClick={() => void restore([post])}>
+                      {busy ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.undo} className="h-3.5 w-3.5" />}
                       Restore
                     </button>
                   ) : (
@@ -335,8 +443,9 @@ export default function ReelList({
                           <Icon d={ICONS.refresh} />
                         </button>
                       ) : null}
-                      <button type="button" className={btnIcon} disabled={busy} onClick={() => setRemoving({ post, reason: "", busy: false })} aria-label="Remove reel" title="Remove from Reelencer">
-                        <Icon d={ICONS.x} />
+                      <button type="button" className={btnRemove} disabled={busy || !!progress} onClick={() => startRemove([post])} title="Remove from Reelencer: hidden from the creator and not counted anywhere">
+                        <Icon d={ICONS.trash} className="h-3.5 w-3.5" />
+                        Remove
                       </button>
                     </>
                   )}
@@ -347,7 +456,7 @@ export default function ReelList({
         </ul>
       ) : (
         <p className="rounded-[12px] border border-dashed border-[#e3e5e1] px-3.5 py-3 text-[12.5px] text-[#7a827c]">
-          {status === "submitted" && !filtersOn ? "Nothing waiting for review." : "No reels match these filters."}
+          {filtersOn ? "No reels match these filters." : status === "submitted" ? "Nothing waiting for review." : status === "removed" ? "No removed reels. Reels you remove wait here, hidden from the creator and not counted, until you restore them." : "No reels here yet."}
         </p>
       )}
 
@@ -357,33 +466,126 @@ export default function ReelList({
         </button>
       ) : null}
 
-      {removing ? (
+      {removing && impact ? (
         <ConfirmDialog
-          title="Remove this reel?"
+          title={removing.posts.length === 1 ? "Remove this reel?" : `Remove ${removing.posts.length} reels?`}
           body={
-            <>
-              It disappears from @{account.handle}&apos;s Linked page and stops counting everywhere: views, earnings, claims and review queues. Sync won&apos;t add it again and the creator can&apos;t resubmit it. You can restore it from the Removed tab.
-            </>
+            removing.posts.length === 1 ? (
+              <span className="line-clamp-2 break-all font-medium text-[#3b443e]">{removing.posts[0].caption || removing.posts[0].url}</span>
+            ) : (
+              <>From @{account.handle}, totalling ▶ {formatCompact(impact.views)} views.</>
+            )
           }
-          confirmLabel="Remove reel"
+          confirmLabel={removing.busy ? (removing.posts.length > 1 ? `Removing ${removing.done}/${removing.posts.length}` : "Removing") : mode === "silent" ? "Remove silently" : "Remove and notify"}
           tone="danger"
-          icon={ICONS.x}
+          icon={mode === "silent" ? ICONS.eyeOff : ICONS.trash}
           busy={removing.busy}
           onCancel={() => setRemoving(null)}
           onConfirm={() => void confirmRemove()}
         >
-          <label className="mt-3 block text-[12px] font-semibold text-[#3b443e]">
-            Reason <span className="font-normal text-[#8a928c]">(optional, team only)</span>
+          <div role="radiogroup" aria-label="How to remove" className="mt-3 grid grid-cols-2 gap-2">
+            {MODES.map((option) => {
+              const on = mode === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  disabled={removing.busy}
+                  onClick={() => setMode(option.id)}
+                  className={`flex min-w-0 flex-col items-start gap-1 rounded-[12px] border px-3 py-2.5 text-left transition ${on ? "border-[#b42318] bg-[#fdf0ef] ring-1 ring-[#b42318]" : "border-[#e3e5e1] bg-[#fff] hover:bg-[#f7f8f6]"}`}
+                >
+                  <span className={`inline-flex items-center gap-1.5 text-[13px] font-semibold ${on ? "text-[#b42318]" : "text-[#1a201c]"}`}>
+                    <Icon d={option.icon} className="h-4 w-4" />
+                    {option.label}
+                  </span>
+                  <span className="text-[11.5px] leading-4 text-[#616a64]">{option.body}</span>
+                </button>
+              );
+            })}
+          </div>
+          <ul className="mt-3 space-y-1.5 rounded-[12px] bg-[#f7f8f6] px-3 py-2.5 text-[12.5px] leading-5 text-[#3b443e]">
+            {[
+              `Disappears from @${account.handle}'s Linked page: reel list, charts, totals and earnings.`,
+              impact.approvedViews
+                ? `${formatCompact(impact.approvedViews)} approved views stop counting towards pay, quotes and claims.`
+                : impact.waiting
+                  ? `Leaves the review queue${impact.waiting > 1 ? ` (${impact.waiting} waiting)` : ""} and never counts towards pay or claims.`
+                  : "Never counts towards pay, quotes or claims.",
+              mode === "silent"
+                ? "The creator isn't told: no email, no live update, and nothing on their page says it was removed."
+                : `@${account.handle} is emailed that it was removed${removing.reason.trim() ? ", with your reason" : ""}.`,
+              "Sync won't add it back and the creator can't resubmit the link.",
+              "Kept in the Removed tab with your reason. Restore sends it back to review.",
+            ].map((line) => (
+              <li key={line} className="flex gap-2">
+                <Icon d={ICONS.check} className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#b42318]" />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3">
+            <div className="text-[12px] font-semibold text-[#3b443e]">
+              Reason <span className="font-normal text-[#8a928c]">{mode === "silent" ? "(optional, team only)" : "(optional, shared with the creator)"}</span>
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {REASONS.map((reason) => {
+                const on = removing.reason === reason;
+                return (
+                  <button
+                    key={reason}
+                    type="button"
+                    aria-pressed={on}
+                    disabled={removing.busy}
+                    onClick={() => setRemoving({ ...removing, reason: on ? "" : reason })}
+                    className={`h-7 rounded-[999px] px-2.5 text-[12px] font-semibold transition ${on ? "bg-[#b42318] text-[#fff]" : "bg-[#f3f4f2] text-[#4b544e] hover:bg-[#e9ebe8]"}`}
+                  >
+                    {reason}
+                  </button>
+                );
+              })}
+            </div>
             <input
               value={removing.reason}
               maxLength={300}
+              disabled={removing.busy}
+              aria-label="Removal reason"
               onChange={(e) => setRemoving({ ...removing, reason: e.target.value })}
-              placeholder="e.g. Duplicate, not for this gig, reposted content"
-              className={`${fieldClass} mt-1 h-9 w-full`}
+              placeholder="Or write your own reason"
+              className={`${fieldClass} mt-2 h-9 w-full`}
             />
-          </label>
+          </div>
+          {removing.error ? (
+            <p role="alert" className="mt-3 flex gap-2 rounded-[10px] bg-[#fdf0ef] px-3 py-2 text-[12.5px] leading-5 text-[#b42318]">
+              <Icon d={ICONS.alert} className="mt-0.5 h-4 w-4 shrink-0" />
+              {removing.error}
+            </p>
+          ) : null}
         </ConfirmDialog>
       ) : null}
+
+      <BulkBar count={removing ? 0 : selectedPosts.length} total={visible.length} onSelectAll={() => setSelected(new Set(visible.map((row) => row.post.id)))} onClear={() => setSelected(new Set())} progress={progress}>
+        {status === "removed" ? (
+          <button type="button" className={bulkBtn.primary} onClick={() => void restore(selectedPosts)}>
+            <Icon d={ICONS.undo} className="h-4 w-4" />
+            Restore {selectedPosts.length}
+          </button>
+        ) : (
+          <>
+            {selectedApprovable.length ? (
+              <button type="button" className={bulkBtn.primary} onClick={() => void approveSelected()}>
+                <Icon d={ICONS.check} className="h-4 w-4" />
+                Approve {selectedApprovable.length}
+              </button>
+            ) : null}
+            <button type="button" className={bulkBtn.danger} onClick={() => startRemove(selectedPosts)}>
+              <Icon d={ICONS.trash} className="h-4 w-4" />
+              Remove {selectedPosts.length}
+            </button>
+          </>
+        )}
+      </BulkBar>
 
       {bulk?.confirm ? (
         <ConfirmDialog

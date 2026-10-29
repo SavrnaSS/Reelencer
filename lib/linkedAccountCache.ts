@@ -46,7 +46,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
         }),
         posts: account.posts.map(post => {
           if (!record(post)) throw new Error("Invalid account post.");
-          return pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason"]);
+          return pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason", "removedSilently"]);
         }),
       };
     }),

@@ -51,6 +51,8 @@ export type SocialPost = {
   /** Removed by the team: kept only so it can't come back; never shown to creators or counted. Admins only. */
   removedAt?: string;
   removalReason?: string;
+  /** Removed silently: the creator was never told (no email, no live update, a neutral answer on resubmitting). */
+  removedSilently?: boolean;
 };
 
 export type SocialPostStatus = "submitted" | "approved" | "rejected";
