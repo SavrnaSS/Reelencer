@@ -36,6 +36,9 @@ Existing-account reminder emails contain a Supabase single-use sign-in link that
 | `npm run check` | Route types, TypeScript, backend tests and backend lint |
 | `npm test` | API authorization and PostgreSQL transaction regression tests |
 | `npm run db:migrate` | Apply all pending migrations atomically with checksums |
+| `npm run db:migrate -- --status` | List applied and pending migrations without changing anything |
+| `npm run db:migrate -- --baseline-through <name>` | Record migrations up to `<name>` as applied without running them (for a database migrated by hand) |
+| `npm run db:migrate -- --only <name>[,<name>]` | Apply only the named pending migrations |
 | `npm run check:backend` | Read-only environment, schema and storage readiness checks |
 | `npm run admin:check` | Inspect admin configuration and account registration without changing credentials |
 | `npm run admin:sync` | Explicitly provision/update the administrator from `.env` |
