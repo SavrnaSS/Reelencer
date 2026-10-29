@@ -387,20 +387,14 @@ function AccountDetail({
     latestAccount.current = next;
     onChange(next);
   };
-  const review = async (post: SocialPost, status: "approved" | "rejected", note?: string) => {
-    setBusy(post.id);
-    setError(null);
+  // The reel list shows the outcome beside the reel itself (and runs approvals in bulk), so errors go back to it.
+  const review = async (post: SocialPost, status: "approved" | "rejected", note?: string): Promise<{ ok: true } | { error: string }> => {
     try {
       const { post: updated } = await adminPost<{ post: SocialPost }>({ action: "review_post", id: post.id, status, note });
-      const next = { ...latestAccount.current, posts: latestAccount.current.posts.map((p) => (p.id === post.id ? updated : p)) };
-      latestAccount.current = next;
-      onChange(next);
-      return true;
+      replacePost(updated);
+      return { ok: true };
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The review couldn't be saved.");
-      return false;
-    } finally {
-      setBusy((current) => (current === post.id ? null : current));
+      return { error: e instanceof Error ? e.message : "The review couldn't be saved." };
     }
   };
   const [busy, setBusy] = useState<string | null>(null);

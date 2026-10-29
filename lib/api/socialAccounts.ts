@@ -505,7 +505,8 @@ export async function withdrawCreatorReel(aliases: string[], postId: string) {
 export async function reviewPost(postId: string, status: "approved" | "rejected", note?: string) {
   const sb = supabaseAdmin();
   if (status === "approved") {
-    const { data: current, error: readError } = await sb.from("social_account_posts").select("account_id,posted_at,removed_at").eq("id", postId).maybeSingle();
+    // "*" rather than named columns, so approving still works on a database without the removal columns yet.
+    const { data: current, error: readError } = await sb.from("social_account_posts").select("*").eq("id", postId).maybeSingle();
     databaseError(readError);
     if (!current) throw new ApiError(404, "Reel not found.");
     if (current.removed_at) throw new ApiError(409, "This reel was removed. Restore it before reviewing it.", "reel_removed");

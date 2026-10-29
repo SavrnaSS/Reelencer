@@ -46,7 +46,7 @@ export default function ReelList({
   account: LinkedSocialAccount;
   now: number;
   busyId: string | null;
-  onReview: (post: SocialPost, status: "approved" | "rejected", note?: string) => Promise<boolean>;
+  onReview: (post: SocialPost, status: "approved" | "rejected", note?: string) => Promise<{ ok: true } | Failure>;
   onEdit: (post: SocialPost) => void;
   /** Resolves with how many pending view claims cite the reel, or why removing failed. */
   onRemove: (post: SocialPost, reason: string, silent: boolean) => Promise<{ pendingClaims: number; emailed: boolean } | Failure>;
@@ -64,6 +64,10 @@ export default function ReelList({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [progress, setProgress] = useState<BulkProgress>(null);
+  // Reviews show at once and roll back if saving fails; the failure is shown on the reel with a retry.
+  const [optimistic, setOptimistic] = useState<Record<string, "approved" | "rejected">>({});
+  const [working, setWorking] = useState<Set<string>>(() => new Set());
+  const [rowErrors, setRowErrors] = useState<Record<string, { message: string; retry: () => void }>>({});
   // Remembered per admin, so a team that always removes quietly isn't asked to switch every time.
   const [mode, setMode] = usePersistedState<RemovalMode>("reelencer.reelRemovalMode", "notify", ["notify", "silent"]);
 
@@ -128,10 +132,40 @@ export default function ReelList({
     URL.revokeObjectURL(href);
   };
 
+  const review = async (post: SocialPost, status: "approved" | "rejected", note?: string) => {
+    const without = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => id !== post.id)) as Record<string, T>;
+    setOptimistic((current) => ({ ...current, [post.id]: status }));
+    setWorking((current) => new Set(current).add(post.id));
+    setRowErrors(without);
+    const result = await onReview(post, status, note);
+    setOptimistic(without);
+    setWorking((current) => {
+      const next = new Set(current);
+      next.delete(post.id);
+      return next;
+    });
+    if ("error" in result) {
+      setRowErrors((current) => ({ ...current, [post.id]: { message: `Couldn't ${status === "approved" ? "approve" : "reject"}: ${result.error}`, retry: () => void review(post, status, note) } }));
+      return false;
+    }
+    return true;
+  };
+
+  const approveMany = async (targets: SocialPost[], report: (done: number) => void) => {
+    const results = await runPool(targets, 3, (post) => review(post, "approved"), report);
+    const failed = results.filter((ok) => !ok).length;
+    setNotice(
+      failed
+        ? { text: `${plural(targets.length - failed, "reel")} approved. ${plural(failed, "reel")} couldn't be approved; ${failed === 1 ? "its" : "each"} reason is shown on the reel, with Retry.`, tone: "warn" }
+        : { text: `${plural(targets.length, "reel")} approved. ${targets.length === 1 ? "Its" : "Their"} views now count towards the creator's pay.`, tone: "ok" },
+    );
+    return results;
+  };
+
   const approveAll = async () => {
     const targets = reviewable;
     setBulk({ confirm: false, done: 0, total: targets.length, running: true });
-    await runPool(targets, 3, (post) => onReview(post, "approved"), (done) => setBulk((current) => (current ? { ...current, done } : current)));
+    await approveMany(targets, (done) => setBulk((current) => (current ? { ...current, done } : current)));
     setBulk(null);
   };
 
@@ -203,9 +237,10 @@ export default function ReelList({
   const approveSelected = async () => {
     const targets = selectedApprovable;
     setProgress({ label: "Approving reels", done: 0, total: targets.length });
-    await runPool(targets, 3, (post) => onReview(post, "approved"), (done) => setProgress((current) => (current ? { ...current, done } : current)));
+    const results = await approveMany(targets, (done) => setProgress((current) => (current ? { ...current, done } : current)));
     setProgress(null);
-    setSelected(new Set());
+    // Reels that failed stay selected, ready to retry.
+    setSelected(new Set(targets.filter((_, index) => !results[index]).map((post) => post.id)));
   };
 
   // What removing takes away, so the dialog can say it before it happens.
@@ -353,10 +388,12 @@ export default function ReelList({
         <ul className="divide-y divide-[#eef0ec] overflow-hidden rounded-[12px] border border-[#e3e5e1]">
           {pageRows.map(({ post, tracking, removed }) => {
             const before = tracking === "before_link" || removed;
-            const busy = busyId === post.id;
+            const busy = busyId === post.id || working.has(post.id);
+            const shownStatus = (optimistic[post.id] as SocialPost["status"] | undefined) ?? post.status;
+            const rowError = rowErrors[post.id];
             const picked = selected.has(post.id);
             return (
-              <li key={post.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 pl-3 pr-3.5 ${picked ? "bg-[#eef6f0]" : before ? "bg-[#f7f8f6]" : post.status === "submitted" ? "bg-[#fffaf0]" : ""}`}>
+              <li key={post.id} className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 pl-3 pr-3.5 ${picked ? "bg-[#eef6f0]" : before ? "bg-[#f7f8f6]" : shownStatus === "submitted" ? "bg-[#fffaf0]" : ""}`}>
                 <input type="checkbox" checked={picked} onChange={() => toggle(post.id)} aria-label={`Select ${post.caption || post.url}`} className="h-4 w-4 shrink-0 cursor-pointer self-start rounded sm:mt-0.5 sm:self-center" />
                 <div className={`min-w-0 flex-1 basis-56 ${before ? "opacity-70" : ""}`}>
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -364,7 +401,13 @@ export default function ReelList({
                       {post.caption || post.url}
                     </a>
                     {sourceOf(post) === "sync" ? <StatusChip label="Auto" tone="info" /> : sourceOf(post) === "creator" ? <StatusChip label="Creator" tone="neutral" /> : null}
-                    {removed ? <StatusChip label="Removed" tone="danger" /> : before ? <StatusChip label="Before linking" tone="neutral" /> : post.status !== "approved" ? <StatusChip label={post.status === "submitted" ? "To review" : "Rejected"} tone={post.status === "submitted" ? "warning" : "danger"} /> : <StatusChip label="Approved" tone="success" />}
+                    {removed ? <StatusChip label="Removed" tone="danger" /> : before ? <StatusChip label="Before linking" tone="neutral" /> : shownStatus !== "approved" ? <StatusChip label={shownStatus === "submitted" ? "To review" : "Rejected"} tone={shownStatus === "submitted" ? "warning" : "danger"} /> : <StatusChip label="Approved" tone="success" />}
+                    {working.has(post.id) ? (
+                      <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#6b746e]" role="status">
+                        <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" />
+                        Saving
+                      </span>
+                    ) : null}
                     {tracking === "undated" ? <StatusChip label="No date" tone="warning" /> : null}
                   </div>
                   <div className="text-[11.5px] text-[#8a928c]">
@@ -387,22 +430,36 @@ export default function ReelList({
                   ) : before ? (
                     <div className="mt-0.5 text-[11.5px] text-[#6b746e]">Not tracked: posted before {since}. Its views don&apos;t count towards pay.</div>
                   ) : null}
-                  {!before && post.status === "rejected" && post.reviewNote ? <div className="mt-0.5 truncate text-[11.5px] text-[#b42318]">Note: {post.reviewNote}</div> : null}
+                  {!before && shownStatus === "rejected" && post.reviewNote ? <div className="mt-0.5 truncate text-[11.5px] text-[#b42318]">Note: {post.reviewNote}</div> : null}
                 </div>
                 <div className={`gap-3 text-[12px] tabular-nums text-[#3b443e] ${post.views === undefined && post.likes === undefined && post.comments === undefined ? "hidden" : "flex"} ${before ? "opacity-60" : ""}`}>
                   <span title="Views">▶ {formatCompact(post.views)}</span>
                   <span title="Likes">♥ {formatCompact(post.likes)}</span>
                   <span title="Comments">💬 {formatCompact(post.comments)}</span>
                 </div>
-                {post.status === "submitted" && !before ? (
+                {shownStatus === "submitted" && !before ? (
                   <div className="flex w-full gap-1.5 sm:w-auto">
-                    <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy || !!bulk?.running || !!progress} onClick={() => void onReview(post, "approved")}>
+                    <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy || !!bulk?.running || !!progress} onClick={() => void review(post, "approved")}>
                       {busy ? <Spinner /> : <Icon d={ICONS.check} className="h-3.5 w-3.5" />}
                       Approve
                     </button>
                     <button type="button" className={`${btnGhost} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy} onClick={() => setRejecting({ id: post.id, note: "" })}>
                       Reject
                     </button>
+                  </div>
+                ) : null}
+                {rowError ? (
+                  <div role="alert" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] bg-[#fdf0ef] px-3 py-2 text-[12px] leading-5 text-[#b42318]">
+                    <Icon d={ICONS.alert} className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 basis-48">{rowError.message}</span>
+                    <span className="flex gap-3 font-semibold">
+                      <button type="button" className="hover:underline" disabled={busy} onClick={rowError.retry}>
+                        Retry
+                      </button>
+                      <button type="button" className="text-[#8a2a20]/70 hover:text-[#8a2a20]" onClick={() => setRowErrors((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== post.id)))}>
+                        Dismiss
+                      </button>
+                    </span>
                   </div>
                 ) : null}
                 {rejecting?.id === post.id ? (
@@ -423,7 +480,11 @@ export default function ReelList({
                         type="button"
                         className={`${btnPrimary} h-9 flex-1 bg-[#b42318] hover:bg-[#9a1e14]`}
                         disabled={!rejecting.note.trim() || busy}
-                        onClick={() => void onReview(post, "rejected", rejecting.note).then((ok) => ok && setRejecting(null))}
+                        onClick={() => {
+                          const note = rejecting.note;
+                          setRejecting(null);
+                          void review(post, "rejected", note);
+                        }}
                       >
                         Reject reel
                       </button>
