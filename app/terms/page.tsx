@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LEGAL, legalPartyLabel } from "@/lib/legal";
 import { publicPageMetadata } from "@/lib/site";
+import { formatAmount } from "@/lib/money";
+import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
 import { Bullets, ContactCard, Glyph, LegalPage, MailLink, Note, Section, type IconName } from "@/app/_components/legal/LegalPage";
 
 export const metadata: Metadata = publicPageMetadata({
@@ -11,7 +13,8 @@ export const metadata: Metadata = publicPageMetadata({
 });
 
 // Keep the effective date in step with any change to these terms.
-const EFFECTIVE = { iso: "2026-09-28", label: "28 September 2026" };
+const EFFECTIVE = { iso: "2026-10-30", label: "30 October 2026" };
+const PAYOUT_MINIMUM = formatAmount(MIN_PAYOUT_REQUEST_INR);
 
 const SECTIONS = [
   { id: "agreement", title: "Agreeing to these terms" },
@@ -31,7 +34,7 @@ const SECTIONS = [
 ];
 
 const HIGHLIGHTS: Array<{ icon: IconName; title: string; body: string }> = [
-  { icon: "coin", title: "Paid for approved work", body: "Request a payout to your UPI once you have ₹1,000 approved." },
+  { icon: "coin", title: "Paid for approved work", body: `Request a payout to your UPI once you have ${PAYOUT_MINIMUM} approved.` },
   { icon: "check", title: "Real views only", body: "Views are reviewed. Bought or bot views are excluded from pay." },
   { icon: "film", title: "Your content stays yours", body: "You keep ownership and give us a licence to use it for the gig." },
   { icon: "trash", title: "Leave any time", body: "Close your account whenever you like, with a 7-day restore window." },
@@ -159,7 +162,7 @@ export default function TermsPage() {
         <ol className="grid gap-2.5 sm:grid-cols-2 sm:gap-3">
           {[
             ["Approved earnings", "Approved work and approved view claims add up in Payouts."],
-            ["Request a payout", "Once you have at least ₹1,000 approved, request a payout from Payouts."],
+            ["Request a payout", `Once you have at least ${PAYOUT_MINIMUM} approved, request a payout from Payouts.`],
             ["Processing", "Our team checks the request against your verified details and sends the payment."],
             ["Paid", "The money is sent to your UPI ID and the payout is marked paid with its payment reference."],
           ].map(([title, body], index) => (
@@ -175,7 +178,7 @@ export default function TermsPage() {
         <div className="rounded-xl border border-[#d8e8dc] bg-[#f3f9f4] p-4">
           <div className="text-[13.5px] font-semibold text-[#173d2a]">To request a payout, you need:</div>
           <ul className="mt-2 grid gap-1.5 text-[13.5px] leading-6 text-[#2c4a37] sm:grid-cols-2">
-            {["At least ₹1,000 in approved earnings", "Approved identity verification (KYC)", "A UPI ID verified by our team", "No other payout already in progress"].map((item) => (
+            {[`At least ${PAYOUT_MINIMUM} in approved earnings`, "Approved identity verification (KYC)", "A UPI ID verified by our team", "No other payout already in progress"].map((item) => (
               <li key={item} className="flex gap-2">
                 <Glyph name="check" className="mt-[3px] h-4 w-4 shrink-0 text-[#2e7d4f]" />
                 {item}

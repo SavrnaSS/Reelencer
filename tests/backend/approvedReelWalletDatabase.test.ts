@@ -30,6 +30,7 @@ before(async () => {
   const ends = transactions.indexOf("create or replace function public.submit_gig_credentials(", starts);
   assert.ok(starts >= 0 && ends > starts);
   await db.exec(transactions.slice(starts, ends));
+  await db.exec(await readFile("supabase/migrations/202610300007_withdrawal_minimum_500.sql", "utf8"));
   for (const name of [
     "202610080001_linked_social_accounts.sql", "202610080002_social_post_review.sql",
     "202610080003_social_auto_sync.sql", "202610080006_instagram_profile_sync.sql", "202610080007_view_payout_claims.sql",

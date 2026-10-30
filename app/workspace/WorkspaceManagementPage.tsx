@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus } from "@/lib/payoutReadiness";
+import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
 import { FIND_GIGS_HREF, findGigHref } from "@/lib/routes";
 import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, parseWorkDate, workDurationMinutes, type WorkTiming } from "@/lib/workDates";
 
@@ -248,8 +249,6 @@ const AUTH_DEMO = {
   WORKER_DEFAULT_PASSWORD: "worker",
   WORKER_EMAIL_DOMAIN: "igops.com",
 } as const;
-
-const MIN_PAYOUT_REQUEST_INR = 1000;
 
 /** ===================== Utils ===================== */
 function cx(...parts: Array<string | false | null | undefined>) {

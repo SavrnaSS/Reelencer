@@ -1,3 +1,5 @@
+import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public code = "request_failed") {
     super(message);
@@ -23,7 +25,7 @@ export function databaseError(error: { code?: string; message?: string } | null)
       active_batch: [409, "A payout request is already in progress."],
       kyc_required: [400, "Approved identity verification is required."],
       upi_required: [400, "A verified UPI account is required."],
-      minimum_amount: [400, "At least ₹1,000 in eligible earnings is required."],
+      minimum_amount: [400, `At least ₹${MIN_PAYOUT_REQUEST_INR.toLocaleString("en-IN")} in eligible earnings is required.`],
       invalid_view_rate: [400, "This gig needs a valid INR rate per 1,000 views before earnings can be claimed."],
       no_claimable_views: [409, "No new payable views are available. Approved reels need measured view counts."],
       claim_account_inactive: [409, "This account must be active to submit an earnings claim."],

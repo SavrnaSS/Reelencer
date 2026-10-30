@@ -198,6 +198,32 @@ test('payout transitions require admin, approval and a payment reference; paid i
   assert.equal(await scalar<boolean>('select verified as value from public.upi_configs where worker_id=$1',[worker]),false);
 });
 
+test('withdrawals reject INR 499.99 and reserve INR 500 exactly once', async () => {
+  // Roll back the fixture so unrelated wallet and directory assertions keep their data.
+  await db.exec('begin');
+  try {
+    const owner = '55555555-5555-4555-8555-555555555555';
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'minimum@example.test',now())", [owner]);
+    await db.query('select public.bootstrap_worker($1)', [owner]);
+    await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'approved','Test','1990-01-01','123','Test','ID','123','test','test')", [owner]);
+    await db.query("select public.save_upi_config($1,'minimum@bank','Weekly','Fri')", [owner]);
+    await db.query("select public.verify_upi_config($1,$2,'minimum@bank',true)", [admin, owner]);
+    const credit = await scalar<string>("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values('WI-MINIMUM',$1,'Approved credit',499.99,'Approved') returning id as value", [owner]);
+    await db.exec('savepoint below_minimum');
+    await assert.rejects(db.query('select public.request_payout($1)', [owner]), /minimum_amount/);
+    await db.exec('rollback to savepoint below_minimum');
+    assert.equal(await scalar<number>('select count(*)::int as value from public.payout_batches where worker_id=$1', [owner]), 0);
+    await db.query('update public.work_items set reward_inr=500 where id=$1', [credit]);
+    const requests = await Promise.all([1, 2].map(() => scalar<{ batchId: string }>('select public.request_payout($1) as value', [owner])));
+    assert.equal(requests[0].batchId, requests[1].batchId);
+    assert.equal(await scalar<number>('select count(*)::int as value from public.payout_items where batch_id=$1', [requests[0].batchId]), 1);
+    assert.equal(Number(await scalar<string>('select sum(amount_inr) as value from public.payout_items where batch_id=$1', [requests[0].batchId])), 500);
+    assert.equal(await scalar<string>('select upi_id_snapshot as value from public.payout_batches where id=$1', [requests[0].batchId]), 'minimum@bank');
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
 test('payout, wallet, UPI and KYC changes signal only the owner, without row contents', async () => {
   await db.exec('truncate realtime.messages');
   await db.query("update public.worker_kyc set status='pending' where user_id=$1",[worker]);

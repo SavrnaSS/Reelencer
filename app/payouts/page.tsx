@@ -7,6 +7,7 @@ import { BrandLogo } from "@/app/_components/BrandLogo";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
 import { formatAmount as formatINR } from "@/lib/money";
+import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
 import { usePayoutIdentity } from "@/lib/usePayoutIdentity";
 import { summarizePayoutBatches } from "@/lib/creatorEarnings";
@@ -79,8 +80,6 @@ type PayoutBatch = {
   items: PayoutItem[];
   notes: string[];
 };
-
-const MIN_PAYOUT_REQUEST_INR = 1000;
 
 const DEFAULT_UPI: UpiConfig = {
   upiId: "",
