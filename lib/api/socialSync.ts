@@ -181,13 +181,17 @@ export const mergeSyncedCount = (saved: unknown, measured: number | undefined) =
  * writes. Before that migration is applied, falls back to the same rule applied here (not atomic with edits).
  */
 async function applySyncedMetrics(sb: Sb, known: Row, media: ExternalPost, source: "api" | "profile", now: Date) {
-  const { error } = await sb.rpc("apply_synced_post_metrics", {
+  const { data, error } = await sb.rpc("apply_synced_post_metrics", {
     p_post: String(known.id), p_views: media.views ?? null, p_likes: media.likes ?? null, p_comments: media.comments ?? null,
     p_source: media.viewsSource ?? source, p_at: now.toISOString(), p_posted_at: media.postedAt ?? null, p_caption: media.caption ?? null,
   });
-  if (!error) return;
+  if (!error) {
+    // This row may have been pinned, edited or removed while the platform request was in flight.
+    // The locked database result is authoritative for the snapshot as well as the reel itself.
+    return data === null ? null : { views: n((data as Row).views) };
+  }
   if (error.code !== "PGRST202" && error.code !== "42883") throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
-  const views = mergeSyncedCount(known.views, media.views);
+  const views = known.views_pinned === true ? undefined : mergeSyncedCount(known.views, media.views);
   const likes = mergeSyncedCount(known.likes, media.likes);
   const comments = mergeSyncedCount(known.comments, media.comments);
   const { error: legacyError } = await sb
@@ -202,6 +206,7 @@ async function applySyncedMetrics(sb: Sb, known: Row, media: ExternalPost, sourc
     })
     .eq("id", String(known.id));
   if (legacyError) throw new Error(`Couldn't update a synced post (${legacyError.code ?? "unknown"}).`);
+  return { views: views ?? n(known.views) };
 }
 
 /**
@@ -261,10 +266,13 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), windowStart, { refreshInteractions });
     const source = fetched.source ?? "api";
     const lastApi = previous?.source === source ? previous : null;
+    const byCanonical = new Map<string, Row>();
     const byExternal = new Map<string, Row>();
     for (const post of posts) {
-      const key = String(post.external_id || "") || externalPostId(String(post.url));
-      if (key) byExternal.set(key, post);
+      const canonical = externalPostId(String(post.url));
+      if (canonical) byCanonical.set(canonical, post);
+      const external = String(post.external_id || "");
+      if (external) byExternal.set(external, post);
     }
 
     // Interactions and views gained on tracked reels since the last sync. Account-wide totals (a YouTube channel's
@@ -274,7 +282,8 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     let viewsMeasured = false;
     const latestViews = new Map(posts.filter(inWindow).map((post) => [String(post.id), post.views == null ? undefined : Number(post.views)]));
     for (const media of fetched.media) {
-      const known = byExternal.get(media.externalId);
+      // Older records can carry an API ID or stale alias. A matching permalink wins over that alias.
+      const known = byCanonical.get(media.externalId) ?? byExternal.get(media.externalId);
       if (known && !inWindow(known)) continue;
       if (known && !known.posted_at && media.postedAt && reelTracking(media.postedAt, String(account.linked_at)) === "before_link") {
         // Its date is only known now and it predates linking: record the date and close it if it was waiting.
@@ -290,16 +299,18 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
         continue;
       }
       if (known) {
+        const effective = await applySyncedMetrics(sb, known, media, source, now);
+        if (effective === null) {
+          latestViews.delete(String(known.id));
+          continue;
+        }
         interactionsGained += Math.max(0, (media.likes ?? 0) - Number(known.likes ?? 0)) + Math.max(0, (media.comments ?? 0) - Number(known.comments ?? 0));
         if (media.views !== undefined) {
           viewsMeasured = true;
-          const views = mergeSyncedCount(known.views, media.views);
-          if (views !== undefined) {
-            if (known.views != null) viewsGained += views - Number(known.views);
-            latestViews.set(String(known.id), views);
-          }
+          if (effective.views !== undefined && known.views != null) viewsGained += Math.max(0, effective.views - Number(known.views));
         }
-        await applySyncedMetrics(sb, known, media, source, now);
+        if (effective.views === undefined) latestViews.delete(String(known.id));
+        else latestViews.set(String(known.id), effective.views);
       } else if (media.postedAt && windowStart !== undefined && Date.parse(media.postedAt) >= windowStart && (accountPlatformFor(String(account.platform)).id !== "instagram" || media.url.includes('/reel/'))) {
         // Posted for the gig after linking: track it automatically, pending the team's review for pay.
         if (media.views !== undefined) {

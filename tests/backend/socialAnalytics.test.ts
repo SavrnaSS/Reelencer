@@ -17,6 +17,7 @@ import {
   postingCadence,
   reelEarnings,
   reelViewSummary,
+  reelMeasurementSummary,
   type SocialPost,
   type SocialSnapshot,
 } from '../../lib/socialAnalytics';
@@ -79,6 +80,20 @@ const post = (daysAgo: number, views: number, status: SocialPost['status'] = 'ap
   postedAt: new Date(now - daysAgo * DAY).toISOString(),
   views,
   status,
+});
+
+test('reel measurement coverage uses actual view times and excludes removed or pre-link reels', () => {
+  const linkedAt = '2026-10-01T12:00:00Z';
+  const summary = reelMeasurementSummary([
+    { ...reel, id: 'fresh', views: 2003, postedAt: '2026-10-02T12:00:00Z', viewsCapturedAt: '2026-10-08T11:00:00Z' },
+    { ...reel, id: 'pinned', views: 913, viewsPinned: true, postedAt: '2026-10-02T12:00:00Z', viewsCapturedAt: '2026-10-07T11:00:00Z' },
+    { ...reel, id: 'unknown', postedAt: '2026-10-03T12:00:00Z' },
+    { ...reel, id: 'zero', views: 0, viewsCapturedAt: 'bad timestamp' },
+    { ...reel, id: 'removed', views: 9999, removedAt: '2026-10-04T12:00:00Z' },
+    { ...reel, id: 'old', views: 9999, postedAt: '2026-09-30T12:00:00Z' },
+  ], linkedAt);
+  assert.deepEqual(summary, { total: 4, measured: 3, awaiting: 1, undated: 1, pinned: 1, oldestMeasuredAt: undefined, latestMeasuredAt: '2026-10-08T11:00:00.000Z' });
+  assert.deepEqual(reelMeasurementSummary([], linkedAt), { total: 0, measured: 0, awaiting: 0, undated: 0, pinned: 0, oldestMeasuredAt: undefined, latestMeasuredAt: undefined });
 });
 
 test('posting cadence ignores rejected reels', () => {

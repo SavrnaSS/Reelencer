@@ -115,7 +115,7 @@ test("tracked reel pages fill metrics even when the profile exposes only counts"
   const profile = await fetchInstagramProfile('creator.name', ['https://www.instagram.com/reel/ABC/?igsh=x', 'http://localhost/secret', 'https://evil.test/reel/ABC/']);
   assert.equal(profile.media[0].views, 9000);
   assert.equal(profile.media[0].likes, 500);
-  assert.equal(urls.filter((url) => url.includes('/reel/')).length, 1);
+  assert.deepEqual(urls.filter(url => url.includes('/reel/')), ['https://www.instagram.com/reel/ABC/embed/', 'https://www.instagram.com/reel/ABC/']);
   assert.ok(urls.includes('https://www.instagram.com/creator.name/embed/'));
 });
 
@@ -135,7 +135,8 @@ test("serialized embedded payloads expose reel play counters", () => {
 test("malformed view counters do not mask a valid play counter or turn zero into missing", () => {
   const post = { shortcode: 'ABC', user: { username: 'creator.name' }, video_view_count: 'hidden', play_count: 1234 };
   assert.equal(extractInstagramPost(html(post), 'creator.name', 'ABC')?.views, 1234);
-  assert.equal(extractInstagramPost(html({ ...post, video_view_count: 0 }), 'creator.name', 'ABC')?.views, 0);
+  assert.equal(extractInstagramPost(html({ ...post, video_view_count: 0 }), 'creator.name', 'ABC')?.views, 1234);
+  assert.equal(extractInstagramPost(html({ ...post, video_view_count: 0, play_count: undefined }), 'creator.name', 'ABC')?.views, 0);
 });
 
 test("discovers verified Reels-tab payloads even without links or profile counts", async () => {
@@ -178,7 +179,7 @@ test("embed-first reads recover real views within the existing request budget", 
   }) as typeof fetch;
   const profile = await fetchInstagramProfile("creator.name", ["https://www.instagram.com/reel/ABC/"]);
   assert.equal(profile.media[0].views, 0);
-  assert.deepEqual(urls.filter((url) => url.includes("/reel/")), ["https://www.instagram.com/reel/ABC/embed/"]);
+  assert.deepEqual(urls.filter((url) => url.includes("/reel/")), ["https://www.instagram.com/reel/ABC/embed/", "https://www.instagram.com/reel/ABC/"]);
   assert.ok(urls.includes("https://www.instagram.com/creator.name/embed/"));
 });
 
@@ -229,7 +230,8 @@ test("new reels from the profile embed get reserved read slots with six existing
   }) as typeof fetch;
   const result = await fetchInstagramProfile('creator.name', known.map(code => `https://www.instagram.com/reel/${code}/`), { publishedAfter: (published - 100) * 1000 });
   const reads = requested.filter(url => url.includes('/reel/'));
-  assert.equal(reads.length, 6);
+  assert.equal(reads.length, 10, 'new discoveries use one embed; each of four tracked reels also checks its primary page');
+  assert.equal(new Set(reads.map(url => new URL(url).pathname.split('/')[2])).size, 6, 'the six-reel cap stays intact');
   assert.deepEqual(reads.slice(0,2), ['https://www.instagram.com/reel/NEW1/embed/', 'https://www.instagram.com/reel/NEW2/embed/']);
   assert.equal(result.media.find(post => post.externalId === 'ig:NEW1')?.postedAt, new Date(published * 1000).toISOString());
   assert.equal(result.media.find(post => post.externalId === 'ig:NEW1')?.views, 10);
@@ -330,7 +332,7 @@ test("a submitted link fetches verified metrics directly and fills its real publ
     return new Response(page, { headers: { 'content-type': 'text/html' } });
   }) as typeof fetch;
   const result = await fetchInstagramReel('creator.name', 'https://m.instagram.com/p/DIRECT/?igsh=share');
-  assert.deepEqual(urls, ['https://www.instagram.com/reel/DIRECT/embed/', 'https://www.instagram.com/reel/DIRECT/']);
+  assert.deepEqual(urls, ['https://www.instagram.com/reel/DIRECT/embed/', 'https://www.instagram.com/reel/DIRECT/', 'https://www.instagram.com/creator.name/reels/']);
   assert.equal(result?.views, 0);
   assert.equal(result?.likes, 0);
   assert.equal(result?.comments, 2);
@@ -348,9 +350,148 @@ test("submitted reel reads reject foreign URLs, ignore another author's counts a
   await assert.rejects(fetchInstagramReel('creator.name', 'https://evil.test/reel/DIRECT/'), /valid Instagram reel link/);
   assert.equal(reads, 0);
   assert.equal(await fetchInstagramReel('creator.name', 'https://www.instagram.com/reel/DIRECT/'), undefined);
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   reads = 0;
   globalThis.fetch = (async () => { reads++; return new Response(null, { status: 429 }); }) as typeof fetch;
   await assert.rejects(fetchInstagramReel('creator.name', 'https://www.instagram.com/reel/DIRECT/'), /limited/);
   assert.equal(reads, 1);
+});
+
+test("a newer valid play counter is not masked by a lagging legacy view counter", () => {
+  const post = { shortcode: 'CURRENT', user: { username: 'creator.name' }, video_view_count: 913, play_count: 2003 };
+  assert.equal(extractInstagramPost(html(post), 'creator.name', 'CURRENT')?.views, 2003);
+  assert.equal(extractInstagramPost(html({ ...post, video_view_count: 2003, play_count: 913 }), 'creator.name', 'CURRENT')?.views, 2003);
+  assert.equal(extractInstagramPost(html({ ...post, video_view_count: 'hidden', play_count: undefined }), 'creator.name', 'CURRENT')?.views, undefined);
+});
+
+test("all exact-author shortcode payloads and JSON-LD counters are reconciled without accepting recommendations", () => {
+  const raw = (code: string, author: string, views: number) => html({ shortcode: code, owner: { username: author }, video_view_count: views });
+  const structured = (code: string, author: string, views: number) => html({ '@type': 'VideoObject', url: `https://www.instagram.com/reel/${code}/`, author: { url: `https://www.instagram.com/${author}/` }, interactionStatistic: [
+    { interactionType: { '@type': 'WatchAction' }, userInteractionCount: views },
+  ] });
+  const page = raw('CURRENT', 'creator.name', 913) + structured('CURRENT', 'creator.name', 2003) + raw('CURRENT', 'another.creator', 90000) + structured('OTHER', 'creator.name', 80000);
+  assert.equal(extractInstagramPost(page, 'creator.name', 'CURRENT')?.views, 2003, 'JSON-LD is read even when an earlier payload already has views');
+  assert.equal(extractInstagramPost(page + raw('CURRENT', 'creator.name', 2010), 'creator.name', 'CURRENT')?.views, 2010, 'later exact-owned payloads are considered');
+  assert.equal(extractInstagramPost(page, 'creator.name', 'MISSING'), undefined);
+  assert.equal(extractInstagramPost(page, 'creator.name', '.*'), undefined);
+});
+
+test("a profile merges duplicate owned media instead of retaining only the first stale reading", () => {
+  const stale = { shortcode: 'CURRENT', is_video: true, owner: { username: 'creator.name' }, video_view_count: 913 };
+  const page = html({ ...base, edge_owner_to_timeline_media: { count: 2, edges: [{ node: stale }, { node: { ...stale, video_view_count: 2003 } }] } });
+  const profile = extractInstagramProfile(page, 'creator.name');
+  assert.equal(profile.media.length, 1);
+  assert.equal(profile.media[0].views, 2003);
+  assert.equal(profile.media[0].url, 'https://www.instagram.com/reel/CURRENT/');
+});
+
+test("modern Reels-tab owner IDs are bound to the requested profile and foreign or unproven owners stay excluded", () => {
+  const profile = { ...base, id: '17841410000000001', pk: '1234567', follower_count: 209, is_private: false };
+  const node = { code: 'CURRENT', product_type: 'clips', user: { pk: '1234567', id: '17841410000000001' }, play_count: 2003, like_count: 40 };
+  const page = html({ data: { profile, feed: { xig_user_by_username: { pk: '1234567', polaris_clips_connection: { edges: [
+    { node },
+    { node: { ...node, code: 'FOREIGN', user: { pk: '9999999' }, play_count: 999999 } },
+    { node: { ...node, code: 'CONFLICT', user: { pk: '1234567', username: 'other.creator' }, play_count: 999999 } },
+    { node: { ...node, code: 'UNKNOWN', user: {}, play_count: 999999 } },
+  ] } } } } });
+  const result = extractInstagramProfile(page, 'creator.name');
+  assert.deepEqual(result.media.map(post => [post.externalId, post.views]), [['ig:CURRENT', 2003]]);
+  assert.equal(extractInstagramPost(page, 'creator.name', 'CURRENT')?.views, 2003);
+  assert.equal(extractInstagramPost(page, 'creator.name', 'FOREIGN'), undefined);
+  assert.equal(extractInstagramPost(page, 'other.creator', 'CURRENT'), undefined);
+});
+
+test("numeric owner proofs reject unsafe JSON numbers and malformed IDs without rejecting exact digit strings", () => {
+  const page = (identity: unknown) => html({ profile: { ...base, id: identity }, reel: { code: 'CURRENT', product_type: 'clips', user: { id: identity }, play_count: 2003 } });
+  for (const identity of [Number.MAX_SAFE_INTEGER + 1, 0, '0', -1, 'not-an-id', '1e18', {}, true]) {
+    assert.equal(extractInstagramPost(page(identity), 'creator.name', 'CURRENT'), undefined);
+    assert.equal(extractInstagramProfile(page(identity), 'creator.name').media.length, 0);
+  }
+  assert.equal(extractInstagramPost(page('17841410000000001'), 'creator.name', 'CURRENT')?.views, 2003);
+  assert.equal(extractInstagramPost(page(1234567), 'creator.name', 'CURRENT')?.views, 2003);
+});
+
+test("newer numeric-owner Reels-tab views survive a lagging embed and primary reel page", async () => {
+  const urls: string[] = [];
+  const published = Math.floor(Date.now() / 1000) - 60;
+  const identity = { ...base, id: '17841410000000001', pk: '1234567', follower_count: 209, is_private: false };
+  const named = { code: 'CURRENT', user: { username: 'creator.name', id: identity.id }, product_type: 'clips', taken_at: published };
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input); urls.push(url);
+    assert.equal(init?.cache, 'no-store');
+    assert.equal(init?.redirect, 'manual');
+    const page = url.endsWith('/creator.name/') ? html({ ...identity, edge_owner_to_timeline_media: { count: 1, edges: [{ node: named }] } })
+      : url.endsWith('/creator.name/reels/') ? html({ data: { xig_user_by_username: { pk: identity.pk, polaris_clips_connection: { edges: [
+        { node: { ...named, user: { pk: identity.pk, id: identity.id }, play_count: 2003, like_count: 40 } },
+        { node: { ...named, code: 'SUGGESTED', user: { pk: '999999' }, play_count: 999999 } },
+      ] } } } })
+        : url.includes('/reel/') ? embedPage({ shortcode: 'CURRENT', owner: { username: 'creator.name' }, video_view_count: 918, like_count: 39 }) : '';
+    return new Response(page, { headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+  const profile = await fetchInstagramProfile('creator.name', ['https://www.instagram.com/reel/CURRENT/']);
+  assert.equal(profile.media.length, 1);
+  assert.equal(profile.media[0].views, 2003);
+  assert.equal(profile.media[0].likes, 40);
+  assert.equal(profile.media[0].postedAt, new Date(published * 1000).toISOString());
+  assert.ok(urls.includes('https://www.instagram.com/reel/CURRENT/'));
+  assert.equal(urls.some(url => url.includes('SUGGESTED')), false);
+});
+
+test("every scheduled tracked-reel read checks the primary page even while the embed has a valid dated count", async () => {
+  const urls: string[] = [];
+  const published = Math.floor(Date.now() / 1000) - 60;
+  let current = 2003;
+  globalThis.fetch = (async input => {
+    const url = String(input); urls.push(url);
+    const page = url.includes('/reel/') ? embedPage({ shortcode: 'CURRENT', is_video: true, owner: { username: 'creator.name' }, video_view_count: url.endsWith('/embed/') ? 913 : current, taken_at: published }) : profileCountsOnly;
+    return new Response(page, { headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+  const tracked = ['https://www.instagram.com/reel/CURRENT/'];
+  assert.equal((await fetchInstagramProfile('creator.name', tracked, { refreshInteractions: false })).media[0].views, 2003);
+  current = 2011;
+  assert.equal((await fetchInstagramProfile('creator.name', tracked, { refreshInteractions: false })).media[0].views, 2011);
+  assert.equal(urls.filter(url => url === tracked[0]).length, 2);
+});
+
+test("direct reel reads reconcile a valid dated embed with the newer full page and retain it on page failure", async () => {
+  const published = Math.floor(Date.now() / 1000) - 60;
+  let failed = false;
+  const urls: string[] = [];
+  globalThis.fetch = (async input => {
+    const url = String(input); urls.push(url);
+    if (failed && !url.endsWith('/embed/')) return new Response(null, { status: 503 });
+    return new Response(embedPage({ shortcode: 'CURRENT', owner: { username: 'creator.name' }, video_view_count: url.endsWith('/embed/') ? 913 : 2003, taken_at: published }), { headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+  const url = 'https://www.instagram.com/reel/CURRENT/';
+  assert.equal((await fetchInstagramReel('creator.name', url))?.views, 2003);
+  failed = true;
+  assert.equal((await fetchInstagramReel('creator.name', url))?.views, 913);
+  assert.equal(urls.length, 6);
+});
+
+test("direct public reel lookup reads current Reels-tab plays when embed views lag and the primary page omits views", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async input => {
+    const url = String(input); urls.push(url);
+    const page = url.endsWith('/creator.name/reels/') ? html({ data: {
+      profile: { ...base, id: '17841410000000001', pk: '1234567', follower_count: 209 },
+      xig_user_by_username: { pk: '1234567', polaris_clips_connection: { edges: [{ node: { code: 'CURRENT', product_type: 'clips', user: { pk: '1234567' }, play_count: 2003, like_count: 40 } }] } },
+    } })
+      : embedPage({ shortcode: 'CURRENT', owner: { username: 'creator.name' }, like_count: 39, ...(url.endsWith('/embed/') ? { video_view_count: 913 } : {}) });
+    return new Response(page, { headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+  const reading = await fetchInstagramReel('creator.name', 'https://www.instagram.com/reel/CURRENT/');
+  assert.equal(reading?.views, 2003);
+  assert.equal(reading?.likes, 40);
+  assert.equal(urls.length, 3);
+});
+
+test("direct reel primary-page rate limits preserve a valid embed and stop before Reels-tab reads", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async input => {
+    const url = String(input); urls.push(url);
+    return url.endsWith('/embed/') ? new Response(embedPage({ shortcode: 'CURRENT', owner: { username: 'creator.name' }, video_view_count: 913 }), { headers: { 'content-type': 'text/html' } }) : new Response(null, { status: 429 });
+  }) as typeof fetch;
+  assert.equal((await fetchInstagramReel('creator.name', 'https://www.instagram.com/reel/CURRENT/'))?.views, 913);
+  assert.deepEqual(urls, ['https://www.instagram.com/reel/CURRENT/embed/', 'https://www.instagram.com/reel/CURRENT/']);
 });

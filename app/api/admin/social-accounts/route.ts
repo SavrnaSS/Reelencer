@@ -4,7 +4,7 @@ import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
-import { deleteSnapshot, removePost, restorePost, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { deleteSnapshot, removePost, restorePost, resumePostViews, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
 import { reportMissingAccountProfile, restoreAccountProfile } from "@/lib/api/accountProfileRecovery";
 
 // Admin writes for linked accounts: insight check-ins, per-reel results, pause/unlink.
@@ -41,7 +41,9 @@ const actions = z.discriminatedUnion("action", [
     shares: count,
     saves: count,
     status: z.enum(["approved", "rejected"]).optional(),
+    pinViews: z.boolean().optional(),
   }),
+  z.object({ action: z.literal("resume_views"), id: z.uuid() }),
   z.object({ action: z.literal("review_post"), id: z.uuid(), status: z.enum(["approved", "rejected"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
   z.object({ action: z.literal("sync"), accountId: z.uuid() }),
@@ -83,6 +85,8 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
       return NextResponse.json(await removePost(actor.user.id, body.id, body.reason, body.silent), { headers: NO_STORE_HEADERS });
     case "restore_post":
       return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
+    case "resume_views":
+      return NextResponse.json({ post: await resumePostViews(actor.user.id, body.id) }, { headers: NO_STORE_HEADERS });
     case "status":
       await setAccountStatus(body.accountId, body.status);
       return NextResponse.json({ ok: true }, { headers: NO_STORE_HEADERS });

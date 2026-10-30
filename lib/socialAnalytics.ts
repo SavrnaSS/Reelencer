@@ -35,6 +35,11 @@ export type SocialPost = {
   /** Last time this view count was measured; independent of other metric updates. */
   viewsCapturedAt?: string;
   viewsSource?: SocialPost["source"];
+  /** The team entered this view count by hand; sync leaves it alone until live tracking is resumed. */
+  viewsPinned?: boolean;
+  /** Instagram's latest public view count, recorded by sync even while the team's number is pinned. */
+  syncedViews?: number;
+  syncedViewsAt?: string;
   reach?: number;
   likes?: number;
   comments?: number;
@@ -57,6 +62,22 @@ export type SocialPost = {
   /** Actual credits and frozen consumed view intervals; absent while wallet evidence is unavailable. */
   walletCredit?: SocialPostWalletCredit;
 };
+
+/** Per-reel measurements are independent of the last successful profile check. */
+export function reelMeasurementSummary(posts: readonly SocialPost[], linkedAt: string) {
+  const tracked = countedReels(posts, linkedAt);
+  const measured = tracked.filter(post => typeof post.views === "number" && Number.isFinite(post.views) && post.views >= 0);
+  const times = measured.map(post => Date.parse(post.viewsCapturedAt ?? "")).filter(Number.isFinite);
+  return {
+    total: tracked.length,
+    measured: measured.length,
+    awaiting: tracked.length - measured.length,
+    undated: measured.length - times.length,
+    pinned: measured.filter(post => post.viewsPinned).length,
+    oldestMeasuredAt: times.length > 0 && times.length === measured.length ? new Date(Math.min(...times)).toISOString() : undefined,
+    latestMeasuredAt: times.length ? new Date(Math.max(...times)).toISOString() : undefined,
+  };
+}
 
 export type SocialPostStatus = "submitted" | "approved" | "rejected";
 

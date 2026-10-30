@@ -17,6 +17,7 @@ let owner: string;
 let discoveredDuringRead: boolean;
 let writes: { method: string; body: Row }[];
 let reads: string[];
+let reelsTabViews: number | undefined;
 
 beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://backend.example.test";
@@ -28,6 +29,7 @@ beforeEach(() => {
   discoveredDuringRead = false;
   writes = [];
   reads = [];
+  reelsTabViews = undefined;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.origin === "https://www.instagram.com") {
@@ -35,7 +37,7 @@ beforeEach(() => {
       if (blocked) return new Response(null, { status: 429 });
       if (discoveredDuringRead && !posts.length) posts.push(storedPost({ status: "approved", submitted_by_worker: false }));
       return new Response(`<script type="application/json">${JSON.stringify({ shortcode: "NEW", owner: { username: owner }, is_video: true,
-        taken_at: Math.floor(Date.now() / 1000) - 90, video_view_count: 0, like_count: 5, comment_count: 2, caption: { text: "Caption from Instagram" },
+        taken_at: Math.floor(Date.now() / 1000) - 90, video_view_count: url.pathname === "/creator/reels/" ? reelsTabViews ?? 0 : 0, like_count: 5, comment_count: 2, caption: { text: "Caption from Instagram" },
       })}</script>`, { headers: { "content-type": "text/html" } });
     }
     assert.equal(url.origin, "https://backend.example.test", "Tests must never contact a real service");
@@ -96,11 +98,23 @@ test("submitting a reel fetches its public metrics and saves one canonical pendi
   assert.equal(payload.post.status, "submitted");
   assert.equal(payload.alreadyAdded, false);
   assert.match(payload.message, /latest public stats/);
-  assert.deepEqual(reads, ["https://www.instagram.com/reel/NEW/embed/"]);
+  assert.deepEqual(reads, ["https://www.instagram.com/reel/NEW/embed/", "https://www.instagram.com/reel/NEW/", "https://www.instagram.com/creator/reels/"]);
   const retry = await submit("https://m.instagram.com/p/NEW/?utm_source=share");
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).alreadyAdded, true);
   assert.equal(posts.length, 1);
+});
+
+test("creator submissions save current Reels-tab views when the embed and reel page lag", async () => {
+  reelsTabViews = 2003;
+  const response = await submit();
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.post.views, 2003);
+  assert.equal(payload.post.status, "submitted", "fresh metrics never approve the submission");
+  assert.equal(payload.post.viewsSource, "profile");
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 3, "direct reads remain bounded");
 });
 
 test("blocked reads still save a reel for review and never replace stored numbers on retry", async () => {

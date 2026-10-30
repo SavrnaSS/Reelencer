@@ -26,6 +26,7 @@ import {
   metricSeries,
   parseMetricInput,
   reelEarnings,
+  reelMeasurementSummary,
   type LinkedSocialAccount,
   type SnapshotMetric,
   type SocialAccountStatus,
@@ -285,6 +286,10 @@ function PostEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const parsed = Object.fromEntries(POST_FIELDS.map((k) => [k, parseMetricInput(values[k] ?? "")]));
+  // A view count the team types is pinned by default; untouched views keep the reel's current setting.
+  const [pinChoice, setPinChoice] = useState<boolean | null>(null);
+  const viewsChanged = parsed.views !== editing?.views;
+  const pinViews = pinChoice ?? (editing && !viewsChanged ? !!editing.viewsPinned : true);
   const invalid = POST_FIELDS.some((k) => (values[k] ?? "").trim() && parsed[k] === undefined) || !/^https:\/\/\S+$/i.test(url.trim());
 
   const save = async () => {
@@ -299,6 +304,7 @@ function PostEditor({
         caption: caption.trim() || undefined,
         postedAt: postedAt ? new Date(`${postedAt}T12:00:00`).toISOString() : undefined,
         ...Object.fromEntries(Object.entries(parsed).filter(([, v]) => v !== undefined)),
+        ...(parsed.views !== undefined ? { pinViews } : {}),
       });
       onSaved(post);
     } catch (e) {
@@ -348,6 +354,26 @@ function PostEditor({
           <NumberField key={k} label={k[0].toUpperCase() + k.slice(1)} value={values[k] ?? ""} onChange={(v) => setValues((prev) => ({ ...prev, [k]: v }))} />
         ))}
       </div>
+      {parsed.views !== undefined ? (
+        <label className={`mt-2.5 flex cursor-pointer items-start gap-2.5 rounded-[10px] px-3 py-2.5 ring-1 ring-inset transition ${pinViews ? "bg-[#eef4fc] ring-[#cfe0f5]" : "bg-white ring-[#e3e5e1]"}`}>
+          <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 accent-[#1f5fa8]" checked={pinViews} onChange={(e) => setPinChoice(e.target.checked)} />
+          <span className="min-w-0 text-[12px] leading-5 text-[#3b443e]">
+            <span className="flex items-center gap-1 font-semibold text-[#1a201c]">
+              <Icon d={ICONS.lock} className="h-3.5 w-3.5" />
+              Pin this view count
+            </span>
+            {pinViews
+              ? "Automatic sync won't change it, up or down, until you resume live tracking."
+              : "Automatic sync takes over as soon as Instagram's public count is higher."}
+            {editing?.syncedViews !== undefined ? (
+              <span className="mt-0.5 block text-[11.5px] text-[#6b746e]">
+                Instagram shows <span className="font-semibold tabular-nums text-[#3b443e]">{editing.syncedViews.toLocaleString("en-IN")}</span> publicly
+                {parsed.views !== editing.syncedViews ? ` (${parsed.views! > editing.syncedViews ? "+" : "−"}${Math.abs(parsed.views! - editing.syncedViews).toLocaleString("en-IN")} vs yours)` : " (same as yours)"}
+              </span>
+            ) : null}
+          </span>
+        </label>
+      ) : null}
       {error ? <p className="mt-2 text-[12px] text-[#b42318]">{error}</p> : null}
       <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className={btnGhost} onClick={onCancel} disabled={saving}>
@@ -406,6 +432,7 @@ function AccountDetail({
     return { value: measured.length ? measured.reduce((sum, post) => sum + (post[key] ?? 0), 0) : undefined, count: measured.length };
   };
   const reelViews = observedTotal("views");
+  const viewMeasurements = reelMeasurementSummary(account.posts, account.linkedAt);
   const reelLikes = observedTotal("likes");
   const earnings = reelEarnings(account);
   const due = isDue(account, now);
@@ -527,7 +554,7 @@ function AccountDetail({
             {[
               { label: "Followers", value: formatCompact(followers.value), sub: followers.change !== undefined ? `${followers.change >= 0 ? "+" : ""}${formatCompact(followers.change)} vs prev` : "" },
               ...(platform.id === "instagram" ? [
-                { label: "Tracked reel views", value: formatCompact(reelViews.value), sub: reelViews.count ? `Public counts from ${reelViews.count} tracked posts` : account.posts.length ? "Instagram has not exposed views for these reels" : "Instagram has not exposed reel links; add one below" },
+                { label: "Tracked reel views", value: formatCompact(reelViews.value), sub: reelViews.count ? `Counts from ${reelViews.count} tracked reel${reelViews.count === 1 ? "" : "s"}${viewMeasurements.pinned ? ` · ${viewMeasurements.pinned} pinned by team` : ""}` : account.posts.length ? "Instagram has not exposed views for these reels" : "Instagram has not exposed reel links; add one below" },
                 { label: "Tracked reel likes", value: formatCompact(reelLikes.value), sub: reelLikes.count ? `Public counts from ${reelLikes.count} tracked posts` : "Read when exposed on public reel pages" },
               ] : []),
               { label: "Reach", value: formatCompact(latest?.reach), sub: "" },
@@ -545,6 +572,13 @@ function AccountDetail({
               </div>
             ))}
           </dl>
+          {platform.id === "instagram" && viewMeasurements.total > 0 ? <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-5 text-[#616a64]" aria-label="Reel view measurements">
+            <span>{viewMeasurements.measured} of {viewMeasurements.total} reels have view counts</span>
+            {viewMeasurements.oldestMeasuredAt ? <time dateTime={viewMeasurements.oldestMeasuredAt} title="Oldest view measurement among the tracked reels">Views measured {formatDateTime(viewMeasurements.oldestMeasuredAt)}</time> : null}
+            {viewMeasurements.awaiting ? <span className="font-medium text-[#8a5300]">{viewMeasurements.awaiting} awaiting public counts</span> : null}
+            {viewMeasurements.undated ? <span>{viewMeasurements.undated} count{viewMeasurements.undated === 1 ? " has" : "s have"} no measurement time</span> : null}
+            {viewMeasurements.pinned ? <span className="font-medium text-[#1f5fa8]">{viewMeasurements.pinned} team-set count{viewMeasurements.pinned === 1 ? "" : "s"}; live tracking paused</span> : null}
+          </div> : null}
           {platform.id === "instagram" && latest?.note ? <p className="mt-2 text-[11.5px] leading-5 text-[#616a64]">{latest.note}</p> : null}
           {account.snapshots.length > 1 ? (
             <div className="mt-3">
@@ -607,6 +641,12 @@ function AccountDetail({
               }}
               onRestore={async (post) => {
                 const outcome = await reelAction<{ post: SocialPost }>(post.id, { action: "restore_post", id: post.id });
+                if ("error" in outcome) return outcome;
+                replacePost(outcome.post);
+                return { ok: true as const };
+              }}
+              onResumeViews={async (post) => {
+                const outcome = await reelAction<{ post: SocialPost }>(post.id, { action: "resume_views", id: post.id });
                 if ("error" in outcome) return outcome;
                 replacePost(outcome.post);
                 return { ok: true as const };

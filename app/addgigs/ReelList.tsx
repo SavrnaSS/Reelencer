@@ -42,6 +42,7 @@ export default function ReelList({
   onEdit,
   onRemove,
   onRestore,
+  onResumeViews,
 }: {
   account: LinkedSocialAccount;
   now: number;
@@ -51,6 +52,8 @@ export default function ReelList({
   /** Resolves with how many pending view claims cite the reel, or why removing failed. */
   onRemove: (post: SocialPost, reason: string, silent: boolean) => Promise<{ pendingClaims: number; emailed: boolean } | Failure>;
   onRestore: (post: SocialPost) => Promise<{ ok: true } | Failure>;
+  /** Unpins a team-entered view count and switches back to Instagram's public count. */
+  onResumeViews: (post: SocialPost) => Promise<{ ok: true } | Failure>;
 }) {
   const [status, setStatus] = useState<StatusView>("tracked");
   const [source, setSource] = useState<SourceView>("all");
@@ -149,6 +152,19 @@ export default function ReelList({
       return false;
     }
     return true;
+  };
+
+  const resumeViews = async (post: SocialPost) => {
+    const without = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([id]) => id !== post.id)) as Record<string, T>;
+    setWorking((current) => new Set(current).add(post.id));
+    setRowErrors(without);
+    const result = await onResumeViews(post);
+    setWorking((current) => {
+      const next = new Set(current);
+      next.delete(post.id);
+      return next;
+    });
+    if ("error" in result) setRowErrors((current) => ({ ...current, [post.id]: { message: `Couldn't resume live views: ${result.error}`, retry: () => void resumeViews(post) } }));
   };
 
   const approveMany = async (targets: SocialPost[], report: (done: number) => void) => {
@@ -440,10 +456,38 @@ export default function ReelList({
                   ) : before ? (
                     <div className="mt-0.5 text-[11.5px] text-[#6b746e]">Not tracked: posted before {since}. Its views don&apos;t count towards pay.</div>
                   ) : null}
+                  {post.viewsPinned && !removed ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[#6b746e]">
+                      <span className="inline-flex items-center gap-1 rounded-[6px] bg-[#eef4fc] px-1.5 py-px font-semibold text-[#1f5fa8]" title="The team's number. Automatic sync won't change it until live tracking is resumed.">
+                        <Icon d={ICONS.lock} className="h-3 w-3" />
+                        Views pinned
+                      </span>
+                      <span>
+                        {post.syncedViews !== undefined ? (
+                          <>
+                            Instagram shows <span className="font-semibold tabular-nums text-[#3b443e]">{formatCompact(post.syncedViews)}</span> publicly
+                            {post.syncedViewsAt ? <span title={new Date(post.syncedViewsAt).toLocaleString("en-IN")}> · {formatRelative(post.syncedViewsAt).toLowerCase()}</span> : null}
+                          </>
+                        ) : (
+                          "No public count read yet"
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 font-semibold text-[#2b5d4a] transition hover:bg-[#eef3ea] disabled:opacity-50"
+                        disabled={busy || !!progress}
+                        onClick={() => void resumeViews(post)}
+                        title={post.syncedViews !== undefined ? `Use Instagram's public count (${post.syncedViews.toLocaleString("en-IN")}) and keep it updating automatically` : "Let automatic sync update this count again"}
+                      >
+                        <Icon d={ICONS.refresh} className="h-3 w-3" />
+                        Resume live
+                      </button>
+                    </div>
+                  ) : null}
                   {!before && shownStatus === "rejected" && post.reviewNote ? <div className="mt-0.5 truncate text-[11.5px] text-[#b42318]">Note: {post.reviewNote}</div> : null}
                 </div>
                 <div className={`gap-3 text-[12px] tabular-nums text-[#3b443e] ${post.views === undefined && post.likes === undefined && post.comments === undefined ? "hidden" : "flex"} ${before ? "opacity-60" : ""}`}>
-                  <span title="Views">▶ {formatCompact(post.views)}</span>
+                  <span title={post.viewsPinned ? "Views (pinned by the team)" : "Views"} className={post.viewsPinned ? "font-semibold text-[#1f5fa8]" : undefined}>▶ {formatCompact(post.views)}</span>
                   <span title="Likes">♥ {formatCompact(post.likes)}</span>
                   <span title="Comments">💬 {formatCompact(post.comments)}</span>
                 </div>

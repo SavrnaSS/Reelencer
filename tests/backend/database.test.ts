@@ -677,3 +677,32 @@ test('trusted-IP enforcement allows first verified login before profile bootstra
   await assert.rejects(db.query("select public.record_worker_access($1,'4.2.2.2')",[unconfirmed]),/account_inactive/);
   await assert.rejects(db.query("select public.record_worker_access('ffffffff-ffff-4fff-8fff-ffffffffffff','4.2.2.2')"),/account_inactive/);
 });
+
+test('a team-pinned view count survives sync, records the public count beside it, and resumes live in one step', async () => {
+  const code = await scalar<string>('select worker_code as value from public.profiles where id=$1', [worker]);
+  const account = await liveAccount(code, 'pinned-views');
+  const url = 'https://www.instagram.com/reel/PINNED1/';
+  const save = (input: Record<string, unknown>) => scalar<{ post: { id: string; views: number; views_pinned: boolean; views_source: string } }>('select public.save_social_post_with_wallet($1,$2) as value', [admin, { account_id: account, url, ...input }]);
+  const sync = (id: string, views: number) => db.query("select public.apply_synced_post_metrics($1,$2,null,null,'profile',now())", [id, views]);
+  const row = (id: string) => db.query<{ views: number; views_pinned: boolean; views_source: string; synced_views: number }>('select views,views_pinned,views_source,synced_views from public.social_account_posts where id=$1', [id]).then(r => r.rows[0]);
+
+  const { post } = await save({ views: 901, views_pinned: true });
+  assert.equal(post.views_pinned, true);
+  await sync(post.id, 1200);
+  assert.deepEqual(await row(post.id), { views: 901, views_pinned: true, views_source: 'manual', synced_views: 1200 }, 'a higher public count never replaces a pinned one');
+  await sync(post.id, 400);
+  assert.equal((await row(post.id)).views, 901, 'nor does a lower one');
+
+  // Saving again without views_pinned keeps the pin; an invalid pin value is rejected.
+  await save({ views: 901, caption: 'Fixed caption' });
+  assert.equal((await row(post.id)).views_pinned, true);
+  await assert.rejects(save({ views: 901, views_pinned: 'yes' }), /invalid_input/);
+
+  await assert.rejects(db.query('select public.resume_social_post_live_views($1,$2)', [worker, post.id]), /forbidden/);
+  await db.query('select public.resume_social_post_live_views($1,$2)', [admin, post.id]);
+  assert.deepEqual(await row(post.id), { views: 400, views_pinned: false, views_source: 'profile', synced_views: 400 }, 'resuming takes the latest public count');
+  await sync(post.id, 1300);
+  assert.equal((await row(post.id)).views, 1300, 'live tracking continues after resuming');
+  assert.equal(await scalar<number>("select count(*)::int as value from public.audit_events where action='social_post_views_resumed' and resource_id=$1", [post.id]), 1);
+  assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.resume_social_post_live_views(uuid,uuid)','execute') as value"), false);
+});

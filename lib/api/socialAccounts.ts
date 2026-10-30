@@ -46,6 +46,9 @@ const toPost = (r: Row): SocialPost => ({
   views: num(r.views),
   viewsCapturedAt: str(r.views_captured_at),
   viewsSource: ["manual", "profile", "api", "screenshot"].includes(String(r.views_source)) ? r.views_source as SocialPost["source"] : undefined,
+  ...(r.views_pinned === true ? { viewsPinned: true } : {}),
+  syncedViews: num(r.synced_views),
+  syncedViewsAt: str(r.synced_views_at),
   reach: num(r.reach),
   likes: num(r.likes),
   comments: num(r.comments),
@@ -310,6 +313,8 @@ export type PostInput = {
   comments?: number;
   shares?: number;
   saves?: number;
+  /** Changed views are pinned (sync leaves them alone) unless this is false. */
+  pinViews?: boolean;
 };
 
 /** Adds a reel, or updates its numbers when the same link is entered again. */
@@ -319,7 +324,8 @@ export async function upsertPost(actorId: string, input: PostInput) {
   const postedAt = input.postedAt ? new Date(input.postedAt) : null;
   if (postedAt && Number.isNaN(postedAt.getTime())) throw new ApiError(400, "Invalid post date.", "invalid_input");
   if (postedAt) assertInWindow(postedAt.toISOString(), account);
-  const { data: current } = await sb.from("social_account_posts").select("removed_at,views,views_captured_at,views_source").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
+  // select("*") so this still works before the pinned-views migration adds its columns.
+  const { data: current } = await sb.from("social_account_posts").select("*").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
   if (current?.removed_at) throw new ApiError(409, "This reel was removed. Restore it from the Removed tab instead.", "reel_removed");
   // Saving the form without touching views (e.g. fixing a caption) keeps the existing reading's time and source.
   const viewsUnchanged = input.views !== undefined && current?.views != null && Number(current.views) === input.views && !!current.views_captured_at;
@@ -332,6 +338,9 @@ export async function upsertPost(actorId: string, input: PostInput) {
       views_source: input.views === undefined ? null : viewsUnchanged ? String(current?.views_source || "manual") : "manual",
       reach: input.reach ?? null, likes: input.likes ?? null, comments: input.comments ?? null,
       shares: input.shares ?? null, saves: input.saves ?? null,
+      // A number the team typed is the source of truth: pinned (sync can't replace it) unless they opt out. An
+      // explicit choice always applies; otherwise untouched views keep their pin, and clearing the views clears it.
+      ...(input.views === undefined ? { views_pinned: false } : input.pinViews !== undefined ? { views_pinned: input.pinViews } : viewsUnchanged ? {} : { views_pinned: true }),
       ...(input.status ? { status: input.status } : {}),
     },
   });
@@ -379,6 +388,17 @@ export async function removePost(actorId: string, id: string, reason?: string, s
   // A silent removal leaves no trace for the creator, so only the announced kind sends an email.
   const mailStatus = silent ? null : await notifyReelRemoved(sb, String(data.account_id), post, reason);
   return { post, pendingClaims, mailStatus };
+}
+
+/** Unpins a reel's views and switches back to Instagram's latest public count. */
+export async function resumePostViews(actorId: string, id: string) {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("resume_social_post_live_views", { p_actor: actorId, p_post: id });
+  if (["PGRST202", "42883"].includes(error?.code ?? "")) throw new ApiError(503, "Live view tracking needs the latest database update.", "schema_outdated");
+  if (error?.message === "not_found") throw new ApiError(404, "Reel not found.");
+  if (error?.message === "reel_removed") throw new ApiError(409, "This reel was removed. Restore it first.", "reel_removed");
+  databaseError(error);
+  return hydratedWalletPost(sb, data.post as Row);
 }
 
 /** Brings a removed reel back. It returns to review rather than to its old state, so it's checked again. */

@@ -6,7 +6,7 @@ import { externalPostId, followerEngagementRate } from '../../lib/socialAnalytic
 type Row = Record<string, unknown>;
 
 /** Minimal stand-in for the Supabase query builder: filters by eq(), records writes. */
-function fakeDb(tables: Record<string, Row[]>) {
+function fakeDb(tables: Record<string, Row[]>, syncedMetrics?: (args: Row) => { data: Row | null; error: null }) {
   const writes: { table: string; op: 'insert' | 'update'; payload: Row; filters: [string, unknown][] }[] = [];
   const from = (table: string) => {
     let op: 'select' | 'update' = 'select';
@@ -32,7 +32,7 @@ function fakeDb(tables: Record<string, Row[]>) {
   };
   // The monotonic merge function is covered against Postgres in syncedReelMetrics.test.ts; here it reports
   // itself missing, so these tests exercise the in-app fallback and can inspect the written values.
-  const rpc = async (name: string, args: Row) => name === 'apply_synced_post_metrics' ? { data: null, error: { code: 'PGRST202' } } : ({ data: args.p_account_id ? [{ id: args.p_account_id, sync_lock_token: 'test-lease', last_sync_attempt_at: new Date().toISOString() }] : [], error: null });
+  const rpc = async (name: string, args: Row) => name === 'apply_synced_post_metrics' ? syncedMetrics?.(args) ?? { data: null, error: { code: 'PGRST202' } } : ({ data: args.p_account_id ? [{ id: args.p_account_id, sync_lock_token: 'test-lease', last_sync_attempt_at: new Date().toISOString() }] : [], error: null });
   return { sb: { from, rpc } as never, writes };
 }
 
@@ -460,4 +460,69 @@ test('a submitted reel waiting for counts is checked before older measured reels
   const update = writes.find(write => write.table === 'social_account_posts' && write.filters.some(([key, value]) => key === 'id' && value === 'waiting'));
   assert.equal(update?.payload.views, 25);
   assert.equal('status' in (update?.payload ?? {}), false);
+});
+
+function publicReelReading(code = 'ABC', views = 2003) {
+  globalThis.fetch = (async input => {
+    const url = String(input);
+    const html = url.includes('/reel/')
+      ? url.includes(`/reel/${code}/`) ? `<script type="application/json">${JSON.stringify({ shortcode: code, owner: { username: 'creator' }, is_video: true, video_view_count: views, like_count: 39 })}</script>` : '<html></html>'
+      : '<meta name="description" content="123 Followers, 4 Following, 1 Posts (@creator)">';
+    return new Response(html, { headers: { 'content-type': 'text/html' } });
+  }) as typeof fetch;
+}
+
+test('canonical reel URLs refresh legacy external IDs without rediscovering the reel', async () => {
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [
+    { id: 'legacy', account_id: 'legacy-id', url: 'https://www.instagram.com/reel/ABC/', external_id: 'old-api-id', status: 'approved', views: 913 },
+  ] });
+  publicReelReading();
+  assert.equal((await syncAccount(sb, { id: 'legacy-id', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}))).status, 'ok');
+  const update = writes.find(write => write.table === 'social_account_posts' && write.op === 'update');
+  assert.equal(update?.filters.some(([key, value]) => key === 'id' && value === 'legacy'), true);
+  assert.equal(update?.payload.views, 2003);
+  assert.equal(writes.some(write => write.table === 'social_account_posts' && write.op === 'insert'), false);
+  assert.equal(writes.find(write => write.table === 'social_account_snapshots')?.payload.total_views, 2003);
+});
+
+test('canonical permalink ownership wins over another saved external alias', async () => {
+  const { sb, writes } = fakeDb({ social_account_snapshots: [], social_account_posts: [
+    { id: 'correct', account_id: 'alias-priority', url: 'https://www.instagram.com/reel/ABC/', status: 'approved', views: 913 },
+    { id: 'wrong-alias', account_id: 'alias-priority', url: 'https://www.instagram.com/reel/OTHER/', external_id: 'ig:ABC', status: 'approved', views: 25 },
+  ] });
+  publicReelReading();
+  assert.equal((await syncAccount(sb, { id: 'alias-priority', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}))).status, 'ok');
+  const updates = writes.filter(write => write.table === 'social_account_posts' && write.op === 'update');
+  assert.equal(updates.some(write => write.filters.some(([key, value]) => key === 'id' && value === 'correct') && write.payload.views === 2003), true);
+  assert.equal(updates.some(write => write.filters.some(([key, value]) => key === 'id' && value === 'wrong-alias')), false);
+});
+
+test('account snapshots use the effective atomic view count when a reel is pinned during the platform read', async () => {
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [{ account_id: 'atomic-pin', source: 'profile', captured_at: new Date(Date.now() - 86_400_000).toISOString(), total_views: 913 }],
+    social_account_posts: [{ id: 'pinned-mid-sync', account_id: 'atomic-pin', url: 'https://www.instagram.com/reel/ABC/', status: 'approved', views: 913 }],
+  }, args => {
+    assert.equal(args.p_post, 'pinned-mid-sync');
+    assert.equal(args.p_views, 2003);
+    return { data: { views: 913, changed: true, pinned: true }, error: null };
+  });
+  publicReelReading();
+  assert.equal((await syncAccount(sb, { id: 'atomic-pin', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}))).status, 'ok');
+  const snapshot = writes.find(write => write.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.total_views, 913);
+  assert.equal(snapshot.impressions, 0);
+  assert.equal(writes.some(write => write.table === 'social_account_posts'), false);
+});
+
+test('a reel removed during the platform read contributes no stale views to the new snapshot', async () => {
+  const { sb, writes } = fakeDb({
+    social_account_snapshots: [],
+    social_account_posts: [{ id: 'removed-mid-sync', account_id: 'atomic-remove', url: 'https://www.instagram.com/reel/ABC/', status: 'approved', views: 913 }],
+  }, () => ({ data: null, error: null }));
+  publicReelReading();
+  assert.equal((await syncAccount(sb, { id: 'atomic-remove', platform: 'Instagram', handle: 'creator', status: 'active' }, cfg({}))).status, 'ok');
+  const snapshot = writes.find(write => write.table === 'social_account_snapshots')!.payload;
+  assert.equal(snapshot.total_views, null);
+  assert.equal(snapshot.impressions, null);
+  assert.equal(writes.some(write => write.table === 'social_account_posts'), false);
 });

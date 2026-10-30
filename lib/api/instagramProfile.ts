@@ -19,8 +19,35 @@ function count(value: unknown): number | undefined {
   const result = Number(match[1]) * ({ k: 1e3, m: 1e6, b: 1e9 }[match[2]?.toLowerCase()] ?? 1);
   return Number.isSafeInteger(Math.round(result)) ? Math.round(result) : undefined;
 }
+function highestCount(values: unknown[]): number | undefined {
+  const readable = values.map(count).filter((value): value is number => value !== undefined);
+  return readable.length ? Math.max(...readable) : undefined;
+}
 const row = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (all, n) => Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : all);
+
+function isRequestedProfile(value: Row, handle: string): boolean {
+  return String(value.username ?? "").toLowerCase() === handle && Boolean(value.edge_followed_by || value.follower_count !== undefined || value.edge_owner_to_timeline_media || value.is_private !== undefined);
+}
+
+/** Reels-tab nodes omit usernames, but their numeric owner must match the requested profile's id or pk. */
+function numericOwnerId(value: unknown): string | undefined {
+  if (typeof value !== "string" && (typeof value !== "number" || !Number.isSafeInteger(value))) return undefined;
+  const id = String(value);
+  return /^[1-9]\d{0,39}$/.test(id) ? id : undefined;
+}
+
+function profileOwnerIds(objects: Row[], handle: string): Set<string> {
+  return new Set(objects.filter(object => isRequestedProfile(object, handle)).flatMap(object => [object.id, object.pk])
+    .map(numericOwnerId).filter((value): value is string => value !== undefined));
+}
+
+function belongsToProfile(post: Row, handle: string, ownerIds: ReadonlySet<string>): boolean {
+  const owner = row(post.owner ?? post.user);
+  // An explicit foreign author must never be rescued by an id or by a known shortcode.
+  if (owner.username) return String(owner.username).toLowerCase() === handle;
+  return [owner.id, owner.pk].some(value => { const id = numericOwnerId(value); return id !== undefined && ownerIds.has(id); });
+}
 
 function embeddedObjects(html: string): Row[] {
   const objects: Row[] = [];
@@ -59,7 +86,8 @@ function mediaFromObject(post: Row, code: string): ProfilePost {
       externalId: `ig:${code}`, url: `https://www.instagram.com/${post.is_video === true || post.product_type === "clips" ? "reel" : "p"}/${code}/`,
       caption: typeof caption === "string" ? caption.split("\n")[0].slice(0, 300) : undefined,
       postedAt: date && Number.isFinite(date.getTime()) && date.getTime() <= Date.now() ? date.toISOString() : undefined,
-      views: [post.video_view_count, post.video_play_count, post.play_count, post.ig_play_count, post.view_count, row(post.clips_metadata).play_count].map(count).find((value) => value !== undefined),
+      // Instagram can include a lagging legacy view counter beside a newer play counter.
+      views: highestCount([post.video_view_count, post.video_play_count, post.play_count, post.ig_play_count, post.view_count, row(post.clips_metadata).play_count]),
       likes: post.like_and_view_counts_disabled === true ? undefined : count(row(post.edge_liked_by).count ?? row(post.edge_media_preview_like).count ?? post.like_count),
       comments: count(row(post.edge_media_to_comment).count ?? post.comment_count),
     };
@@ -69,7 +97,8 @@ function mediaFromObject(post: Row, code: string): ProfilePost {
 export function extractInstagramProfile(html: string, input: string): InstagramProfile {
   const handle = normalizeInstagramHandle(input);
   const objects = embeddedObjects(html);
-  const profile = objects.find((o) => String(o.username ?? "").toLowerCase() === handle && (o.edge_followed_by || o.follower_count !== undefined || o.edge_owner_to_timeline_media || o.is_private !== undefined));
+  const profile = objects.find(object => isRequestedProfile(object, handle));
+  const ownerIds = profileOwnerIds(objects, handle);
   const result: InstagramProfile = {
     externalId: profile?.id ? String(profile.id) : undefined,
     followers: count(row(profile?.edge_followed_by).count ?? profile?.follower_count),
@@ -100,16 +129,20 @@ export function extractInstagramProfile(html: string, input: string): InstagramP
     return result;
   }
   const edges = row(profile?.edge_owner_to_timeline_media).edges;
-  const candidates = Array.isArray(edges) ? edges.map((edge) => row(row(edge).node)) : objects.filter((o) => String(row(o.owner ?? o.user).username ?? "").toLowerCase() === handle);
-  const seen = new Set<string>();
+  const candidates = [...(Array.isArray(edges) ? edges.map((edge) => row(row(edge).node)) : []), ...objects.filter(object => belongsToProfile(object, handle, ownerIds))];
+  const seen = new Map<string, ProfilePost>();
   for (const post of candidates) {
     const owner = row(post.owner ?? post.user);
-    if (owner.username && String(owner.username).toLowerCase() !== handle) continue;
+    if (Object.keys(owner).length && !belongsToProfile(post, handle, ownerIds)) continue;
     const code = String(post.shortcode ?? post.code ?? "");
-    if (!/^[\w-]{1,100}$/.test(code) || seen.has(code)) continue;
-    seen.add(code);
-    result.media.push(mediaFromObject(post, code));
-    if (result.media.length >= 25) break;
+    if (!/^[\w-]{1,100}$/.test(code)) continue;
+    const existing = seen.get(code);
+    if (existing) Object.assign(existing, mergeReelReadings(existing, mediaFromObject(post, code)));
+    else if (result.media.length < 25) {
+      const media = mediaFromObject(post, code);
+      seen.set(code, media);
+      result.media.push(media);
+    }
   }
   return result;
 }
@@ -152,32 +185,36 @@ async function readPage(path: string, signal: AbortSignal): Promise<string> {
 /** A post must match both the requested shortcode and its author before metrics are accepted. */
 export function extractInstagramPost(html: string, input: string, code: string): ProfilePost | undefined {
   const handle = normalizeInstagramHandle(input);
+  if (!/^[\w-]{1,100}$/.test(code)) return undefined;
   const objects = embeddedObjects(html);
-  const post = objects.find((o) => String(o.shortcode ?? o.code ?? "") === code && String(row(o.owner ?? o.user).username ?? "").toLowerCase() === handle);
-  if (post) return mediaFromObject(post, code);
+  const ownerIds = profileOwnerIds(objects, handle);
+  let result: ProfilePost | undefined;
+  for (const post of objects) {
+    if (String(post.shortcode ?? post.code ?? "") === code && belongsToProfile(post, handle, ownerIds)) result = mergeReelReadings(result, mediaFromObject(post, code));
+  }
   // JSON-LD embeds the publisher and InteractionCounter records on some public reel pages.
   for (const object of objects) {
-    const url = String(object.url ?? object['@id'] ?? "");
-    if (!new RegExp(`^https://(?:www\\.)?instagram\\.com/(?:reel|p)/${code}/?(?:[?#].*)?$`).test(url)) continue;
+    const path = postPath(String(object.url ?? object['@id'] ?? ""));
+    if (path?.split('/')[2] !== code) continue;
     const authors = Array.isArray(object.author) ? object.author : [object.author];
     if (!authors.some((author) => {
       const a = row(author);
       return String(a.alternateName ?? "").replace(/^@/, "").toLowerCase() === handle || String(a.url ?? a['@id'] ?? "").replace(/\/$/, "").toLowerCase() === `https://www.instagram.com/${handle}` || String(a.url ?? "").replace(/\/$/, "").toLowerCase() === `https://instagram.com/${handle}`;
     })) continue;
-    const media: ProfilePost = { externalId: `ig:${code}`, url };
+    const media: ProfilePost = { externalId: `ig:${code}`, url: `https://www.instagram.com${path}` };
     const interactions = Array.isArray(object.interactionStatistic) ? object.interactionStatistic : [object.interactionStatistic];
     for (const interaction of interactions) {
       const i = row(interaction);
       const type = String(row(i.interactionType)['@type'] ?? i.interactionType ?? "").split(/[/:]/).at(-1);
       const value = count(i.userInteractionCount);
-      if (type === "WatchAction" || type === "ViewAction") media.views = value;
-      if (type === "LikeAction") media.likes = value;
-      if (type === "CommentAction") media.comments = value;
+      if (type === "WatchAction" || type === "ViewAction") media.views = highestCount([media.views, value]);
+      if (type === "LikeAction") media.likes = highestCount([media.likes, value]);
+      if (type === "CommentAction") media.comments = highestCount([media.comments, value]);
     }
     const date = typeof object.uploadDate === "string" ? new Date(object.uploadDate) : undefined;
     if (date && Number.isFinite(date.getTime()) && date.getTime() <= Date.now()) media.postedAt = date.toISOString();
     if (typeof object.caption === "string") media.caption = object.caption.slice(0, 300);
-    if ([media.views, media.likes, media.comments].some((v) => v !== undefined)) return media;
+    if ([media.views, media.likes, media.comments].some((v) => v !== undefined)) result = mergeReelReadings(result, media);
   }
   const metadata: Record<string, string> = {};
   for (const tag of html.matchAll(/<meta\b[^>]*>/gi)) {
@@ -194,9 +231,13 @@ export function extractInstagramPost(html: string, input: string, code: string):
     media.likes = count(description.match(/^([\d,.]+\s*[kmb]?)\s+likes\b/i)?.[1]);
     media.comments = count(description.match(/,\s*([\d,.]+\s*[kmb]?)\s+comments\b/i)?.[1]);
     media.views = count(description.match(/(?:^|,\s*)([\d,.]+\s*[kmb]?)\s+(?:views|plays)\b/i)?.[1]);
-    if ([media.views, media.likes, media.comments].some((v) => v !== undefined)) return media;
+    if ([media.views, media.likes, media.comments].some((v) => v !== undefined)) {
+      // Metadata may be rounded; exact structured counters take precedence when present.
+      for (const key of ["views", "likes", "comments"] as const) if (result?.[key] !== undefined) media[key] = result[key];
+      result = mergeReelReadings(result, media);
+    }
   }
-  return undefined;
+  return result;
 }
 
 function postPath(input: string): string | undefined {
@@ -218,6 +259,7 @@ const stopsReads = (error: unknown) => /limited|redirected/i.test(error instance
 export function mergeReelReadings(base: ProfilePost | undefined, next: ProfilePost | undefined): ProfilePost | undefined {
   if (!base || !next) return base ?? next;
   const merged = { ...base, ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)) } as ProfilePost;
+  if (base.url.includes('/reel/') && !next.url.includes('/reel/')) merged.url = base.url;
   for (const key of ["views", "likes", "comments"] as const) {
     const values = [base[key], next[key]].filter((value): value is number => value !== undefined);
     if (values.length) merged[key] = Math.max(...values);
@@ -232,21 +274,30 @@ export async function fetchInstagramReel(input: string, url: string, options: { 
   const path = new URL(canonical).pathname;
   const code = path.split("/")[2];
   const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
-  let embedded: ProfilePost | undefined;
+  const read = (page: string) => readPage(page, AbortSignal.any([signal, AbortSignal.timeout(2500)]));
+  let result: ProfilePost | undefined;
+  let lastError: unknown;
   try {
-    embedded = extractInstagramPost(await readPage(`${path}embed/`, signal), handle, code);
-    if (embedded?.views !== undefined && embedded.postedAt) return { ...embedded, url: canonical };
+    result = extractInstagramPost(await read(`${path}embed/`), handle, code);
   } catch (error) {
     if (signal.aborted || stopsReads(error)) throw error;
+    lastError = error;
   }
-  if (signal.aborted) return embedded ? { ...embedded, url: canonical } : undefined;
-  try {
-    const primary = extractInstagramPost(await readPage(path, signal), handle, code);
-    if (primary) return { ...mergeReelReadings(embedded, primary)!, url: canonical };
-  } catch (error) {
-    if (!embedded) throw error;
+  // The public Reels tab often exposes current plays while the embed lags and the reel page only exposes likes.
+  // Bound this direct lookup to these three pages; scheduled profile sync reads the Reels tab once per account.
+  for (const page of [path, `/${handle}/reels/`]) {
+    if (signal.aborted) break;
+    try { result = mergeReelReadings(result, extractInstagramPost(await read(page), handle, code)); }
+    catch (error) {
+      lastError = error;
+      if (stopsReads(error)) {
+        if (!result) throw error;
+        break;
+      }
+    }
   }
-  return embedded ? { ...embedded, url: canonical } : undefined;
+  if (!result && lastError) throw lastError;
+  return result ? { ...result, url: canonical } : undefined;
 }
 
 export async function fetchInstagramProfile(input: string, trackedUrls: string[] = [], options: { publishedAfter?: number; signal?: AbortSignal; refreshInteractions?: boolean } = {}): Promise<InstagramProfile> {
@@ -279,12 +330,15 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
     else if (profile.media.length < 50) profile.media.push(media);
   };
   const discovered: string[] = [];
+  const ownerIds = profileOwnerIds(embeddedObjects(html), handle);
   const collect = (page: string) => {
+    const objects = embeddedObjects(page);
+    for (const id of profileOwnerIds(objects, handle)) ownerIds.add(id);
     // Profile embeds expose a dated timeline even when the main page hides its feed.
     try { for (const media of extractInstagramProfile(page, handle).media) mergeMedia(media); }
     catch { /* Reels pages may contain media without profile counts. */ }
-    for (const object of embeddedObjects(page)) {
-      if (String(row(object.owner ?? object.user).username ?? "").toLowerCase() !== handle) continue;
+    for (const object of objects) {
+      if (!belongsToProfile(object, handle, ownerIds)) continue;
       const code = String(object.shortcode ?? object.code ?? "");
       if (/^[\w-]{1,100}$/.test(code)) mergeMedia(mediaFromObject(object, code));
     }
@@ -323,9 +377,8 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
     if (!known.includes(rotating)) known[known.length - 1] = rotating;
   }
   const paths = [...fresh, ...known];
-  // Embeds carry views but can lag on likes and comments. When asked (the sync does so about every 30 minutes),
-  // one tracked reel also gets its full page read, in rotation, so interactions catch up within the read budget.
-  const detailCode = options.refreshInteractions && trackedPaths.length ? trackedPaths[Math.floor(Date.now() / 1_800_000) % trackedPaths.length].split('/')[2] : undefined;
+  // A tracked reel's embed can lag even when it exposes a valid count. Recheck its primary page on every sync,
+  // within the same shared eight-second budget and six-reel cap. Discovery can stop at a complete embed.
   let checked = 0, unavailable = 0;
   for (let index = 0; index < paths.length && !signal.aborted && !blocked; index += 2) {
     const results = await Promise.all(paths.slice(index, index + 2).map(async (path) => {
@@ -334,7 +387,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
       try {
         embedded = extractInstagramPost(await readPage(`${path}embed/`, signal), handle, code);
         const date = profile.media.find((post) => post.externalId === `ig:${code}`)?.postedAt;
-        if (embedded?.views !== undefined && code !== detailCode && (trackedCodes.has(code) || embedded.postedAt || date)) return embedded;
+        if (embedded?.views !== undefined && !trackedCodes.has(code) && (embedded.postedAt || date)) return embedded;
       } catch (error) {
         // A rate limit or login wall should not fan out into more requests.
         if (stopsReads(error)) blocked = true;
