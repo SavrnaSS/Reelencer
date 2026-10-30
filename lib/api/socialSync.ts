@@ -89,12 +89,13 @@ async function fetchYouTube(handle: string, config: SyncConfig): Promise<Fetched
   };
 }
 
-type Provider = { configured: (config: SyncConfig) => boolean; fetch: (handle: string, config: SyncConfig, trackedUrls?: string[], publishedAfter?: number) => Promise<Fetched> };
+type FetchOptions = { refreshInteractions?: boolean };
+type Provider = { configured: (config: SyncConfig) => boolean; fetch: (handle: string, config: SyncConfig, trackedUrls?: string[], publishedAfter?: number, options?: FetchOptions) => Promise<Fetched> };
 
 function providerFor(platform: string): Provider | null {
   const id = accountPlatformFor(platform).id;
   if (id === "youtube") return { configured: (c) => !!c.youtubeApiKey, fetch: fetchYouTube };
-  if (id === "instagram") return { configured: () => true, fetch: async (handle, config, urls, publishedAfter) => {
+  if (id === "instagram") return { configured: () => true, fetch: async (handle, config, urls, publishedAfter, options) => {
     const signal = AbortSignal.timeout(10_000);
     let apiError: unknown;
     if (config.metaAccessToken && config.metaIgBusinessId) {
@@ -125,7 +126,7 @@ function providerFor(platform: string): Provider | null {
       }
     }
     try {
-      const profile = await fetchInstagramProfile(handle, urls, { publishedAfter, signal });
+      const profile = await fetchInstagramProfile(handle, urls, { publishedAfter, signal, refreshInteractions: options?.refreshInteractions });
       if (apiError) profile.note += " The API connection was unavailable; public profile fallback was used.";
       return { ...profile, source: "profile", provider: "profile" };
     } catch (error) { throw apiError instanceof SocialSyncError && apiError.code === "credentials" ? apiError : error; }
@@ -254,7 +255,10 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
       const needsNumbers = (post: Row) => post.status === "submitted" && post.views == null;
       return Number(needsNumbers(b)) - Number(needsNumbers(a)) || Date.parse(String(a.views_captured_at ?? a.updated_at ?? "1970-01-01")) - Date.parse(String(b.views_captured_at ?? b.updated_at ?? "1970-01-01"));
     });
-    const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), windowStart);
+    // The first sync in each 30-minute window also re-reads one reel's full page for likes and comments.
+    const lastSynced = Date.parse(String(account.last_synced_at ?? ""));
+    const refreshInteractions = !Number.isFinite(lastSynced) || Math.floor(lastSynced / 1_800_000) !== Math.floor(now.getTime() / 1_800_000);
+    const fetched = await provider.fetch(String(account.handle), config, tracked.map((post) => String(post.url ?? "")), windowStart, { refreshInteractions });
     const source = fetched.source ?? "api";
     const lastApi = previous?.source === source ? previous : null;
     const byExternal = new Map<string, Row>();

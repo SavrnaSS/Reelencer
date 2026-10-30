@@ -73,3 +73,11 @@ test("an account checked on a quiet schedule still reads as up to date", () => {
   const sync = storedSyncState({ status: "active", sync_status: "ok", last_synced_at: new Date(now - 10 * 60_000).toISOString(), next_sync_at: new Date(now + 5 * 60_000).toISOString() });
   assert.equal(syncPresentation({ status: "active", platform: "Instagram", sync }, now).label, "Up to date");
 });
+
+test("embed and reel-page readings keep the higher count of each metric", async () => {
+  const { mergeReelReadings } = await import("../../lib/api/instagramProfile");
+  const embed = { externalId: "ig:A", url: "https://www.instagram.com/reel/A/", views: 907, likes: 39, comments: 1 };
+  const page = { externalId: "ig:A", url: "https://www.instagram.com/reel/A/", likes: 38, comments: 2, caption: "Hi" };
+  assert.deepEqual(mergeReelReadings(embed, page), { ...embed, caption: "Hi", likes: 39, comments: 2 });
+  assert.equal(mergeReelReadings(undefined, page), page);
+});

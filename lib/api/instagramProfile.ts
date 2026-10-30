@@ -211,6 +211,20 @@ function postPath(input: string): string | undefined {
 const stopsReads = (error: unknown) => /limited|redirected/i.test(error instanceof Error ? error.message : "");
 
 /** Fetch a submitted reel directly; its owner and shortcode must match before any numbers are accepted. */
+/**
+ * Combines two public readings of one reel. Embeds and reel pages count differently (an embed can show 1 comment
+ * while the page shows 2), so each count keeps the higher reading; other fields take the newer defined value.
+ */
+export function mergeReelReadings(base: ProfilePost | undefined, next: ProfilePost | undefined): ProfilePost | undefined {
+  if (!base || !next) return base ?? next;
+  const merged = { ...base, ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)) } as ProfilePost;
+  for (const key of ["views", "likes", "comments"] as const) {
+    const values = [base[key], next[key]].filter((value): value is number => value !== undefined);
+    if (values.length) merged[key] = Math.max(...values);
+  }
+  return merged;
+}
+
 export async function fetchInstagramReel(input: string, url: string, options: { signal?: AbortSignal } = {}): Promise<ProfilePost | undefined> {
   const handle = normalizeInstagramHandle(input);
   const canonical = canonicalInstagramReelUrl(url);
@@ -228,14 +242,14 @@ export async function fetchInstagramReel(input: string, url: string, options: { 
   if (signal.aborted) return embedded ? { ...embedded, url: canonical } : undefined;
   try {
     const primary = extractInstagramPost(await readPage(path, signal), handle, code);
-    if (primary) return { ...embedded, ...Object.fromEntries(Object.entries(primary).filter(([, value]) => value !== undefined)), url: canonical } as ProfilePost;
+    if (primary) return { ...mergeReelReadings(embedded, primary)!, url: canonical };
   } catch (error) {
     if (!embedded) throw error;
   }
   return embedded ? { ...embedded, url: canonical } : undefined;
 }
 
-export async function fetchInstagramProfile(input: string, trackedUrls: string[] = [], options: { publishedAfter?: number; signal?: AbortSignal } = {}): Promise<InstagramProfile> {
+export async function fetchInstagramProfile(input: string, trackedUrls: string[] = [], options: { publishedAfter?: number; signal?: AbortSignal; refreshInteractions?: boolean } = {}): Promise<InstagramProfile> {
   const handle = normalizeInstagramHandle(input);
   // All page reads share one time budget so background refresh cannot fan out indefinitely.
   const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
@@ -261,9 +275,8 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
   if (profile.note.includes("account is private")) return profile;
   const mergeMedia = (media: ProfilePost) => {
     const existing = profile.media.find((post) => post.externalId === media.externalId);
-    if (existing) {
-      for (const [key, value] of Object.entries(media)) if (value !== undefined) Object.assign(existing, { [key]: value });
-    } else if (profile.media.length < 50) profile.media.push(media);
+    if (existing) Object.assign(existing, mergeReelReadings(existing, media));
+    else if (profile.media.length < 50) profile.media.push(media);
   };
   const discovered: string[] = [];
   const collect = (page: string) => {
@@ -310,6 +323,9 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
     if (!known.includes(rotating)) known[known.length - 1] = rotating;
   }
   const paths = [...fresh, ...known];
+  // Embeds carry views but can lag on likes and comments. When asked (the sync does so about every 30 minutes),
+  // one tracked reel also gets its full page read, in rotation, so interactions catch up within the read budget.
+  const detailCode = options.refreshInteractions && trackedPaths.length ? trackedPaths[Math.floor(Date.now() / 1_800_000) % trackedPaths.length].split('/')[2] : undefined;
   let checked = 0, unavailable = 0;
   for (let index = 0; index < paths.length && !signal.aborted && !blocked; index += 2) {
     const results = await Promise.all(paths.slice(index, index + 2).map(async (path) => {
@@ -318,7 +334,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
       try {
         embedded = extractInstagramPost(await readPage(`${path}embed/`, signal), handle, code);
         const date = profile.media.find((post) => post.externalId === `ig:${code}`)?.postedAt;
-        if (embedded?.views !== undefined && (trackedCodes.has(code) || embedded.postedAt || date)) return embedded;
+        if (embedded?.views !== undefined && code !== detailCode && (trackedCodes.has(code) || embedded.postedAt || date)) return embedded;
       } catch (error) {
         // A rate limit or login wall should not fan out into more requests.
         if (stopsReads(error)) blocked = true;
@@ -327,7 +343,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
       if (signal.aborted) return embedded;
       try {
         const primary = extractInstagramPost(await readPage(path, signal), handle, code);
-        return primary ? { ...embedded, ...Object.fromEntries(Object.entries(primary).filter(([, value]) => value !== undefined)) } as ProfilePost : embedded;
+        return mergeReelReadings(embedded, primary);
       } catch (error) { if (stopsReads(error)) blocked = true; return embedded; }
     }));
     for (const [offset, media] of results.entries()) {
