@@ -22,10 +22,7 @@ export const PUT = withApi({ auth: "user" }, async req => {
   const { payoutSchedule, payoutDay } = parsed.data;
   if (payoutSchedule === "Weekly" ? !["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].includes(payoutDay) : !/^(?:[1-9]|1\d|2[0-8])$/.test(payoutDay)) throw new ApiError(400, "Choose a valid payout day (monthly: 1–28).");
   const sb = supabaseAdmin();
-  const { error } = await sb.rpc("save_upi_config", { p_worker: actor.user.id, p_upi: parsed.data.upiId, p_schedule: payoutSchedule, p_day: payoutDay });
+  const { data, error } = await sb.rpc("save_upi_config", { p_worker: actor.user.id, p_upi: parsed.data.upiId, p_schedule: payoutSchedule, p_day: payoutDay });
   databaseError(error);
-  // "Saved 5m ago" on the creator's card; the save function itself doesn't touch updated_at.
-  const { data, error: stampError } = await sb.from("upi_configs").update({ updated_at: new Date().toISOString() }).eq("worker_id", actor.user.id).select("*").maybeSingle();
-  databaseError(stampError);
   return NextResponse.json(response(data));
 });

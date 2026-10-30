@@ -6,6 +6,7 @@ import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
 import { ACTIVITY_PERIODS, activityChange, activityCsv, isAdminActivity, type ActivityDay, type ActivityKind, type ActivityPeriod, type AdminActivity, type AdminOverviewCounts } from "@/lib/adminOverview";
 import type { AdminSection } from "@/lib/adminNavigation";
+import AdminUpiQueue from "./AdminUpiQueue";
 import styles from "./AdminOverview.module.css";
 
 const number = (value: number) => value.toLocaleString("en-IN");
@@ -137,7 +138,7 @@ export default function AdminOverview({ adminId, counts, countsUpdatedAt, onCoun
   const totals = counts && countsUpdatedAt && countsUpdatedAt > (resource.updatedAt ?? 0) ? counts : data?.counts ?? counts;
   const summary = data?.summary;
   const previous = data?.previous;
-  const refreshAll = () => { onRefreshCounts(); void refresh({ afterCurrent: true }); };
+  const refreshAll = () => { onRefreshCounts(); window.dispatchEvent(new Event("admin-overview-refresh")); };
   const attention = data?.queues;
   const queues: Array<{ label: string; description: string; count: number | undefined; icon: Glyph; section: AdminSection }> = [
     { label: "Applications", description: "Awaiting a hiring decision", count: attention?.applications, icon: "application", section: "applications" },
@@ -182,6 +183,7 @@ export default function AdminOverview({ adminId, counts, countsUpdatedAt, onCoun
         <span className={styles.statDescription}>{stat.description}</span>
       </button>)}
     </div>
+    <AdminUpiQueue adminId={adminId} onOpenCreator={code => onNavigate("Workers", code || undefined)} />
     <div className={styles.mainGrid}>
       <section className={`${styles.card} ${styles.activityCard}`} aria-labelledby="admin-activity-title">
         <div className={styles.cardHeading}><div><h3 id="admin-activity-title">User activity</h3><p>{data ? `${dateLabel(data.period.start)} – ${dateLabel(data.period.end, true)}` : `Last ${period} days`}<span className={styles.dotSeparator}>·</span>Daily activity in IST</p></div><button type="button" className={styles.exportButton} aria-label="Export CSV" onClick={exportData} disabled={!data}><Glyph name="download" /><span>Export CSV</span></button></div>

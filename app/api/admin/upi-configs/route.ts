@@ -4,32 +4,49 @@ import { ApiError, databaseError } from "@/lib/api/errors";
 import { resolveWorkerUserId } from "@/lib/api/work";
 import { json, requireAdminFromBearer, supabaseAdmin } from "../_utils";
 import { getDevAdminUpiConfigs } from "../_devData";
+import { loadAdminPendingUpiQueue } from "@/lib/adminUpiQueue";
 
 async function handleGET(req: Request) {
   const guard = await requireAdminFromBearer(req);
   if (!guard.ok) return json(guard.status, { ok: false, error: guard.error });
-  if (guard.devBypass) return json(200, { ok: true, upiConfigs: getDevAdminUpiConfigs() });
+  const params = new URL(req.url).searchParams;
+  const pending = params.get("status") === "pending";
+  if (params.has("status") && !pending) throw new ApiError(400, "Choose a valid UPI verification status.", "invalid_input");
+  const rawLimit = params.get("limit") ?? "5";
+  if (pending && !/^(?:[1-9]|1\d|20)$/.test(rawLimit)) throw new ApiError(400, "Choose a queue limit between 1 and 20.", "invalid_input");
+  const limit = Number(rawLimit);
+  if (guard.devBypass) {
+    const configs = getDevAdminUpiConfigs();
+    const pendingConfigs = configs.filter(config => !config.verified);
+    return json(200, pending
+      ? { ok: true, pendingCount: pendingConfigs.length, upiConfigs: pendingConfigs.slice(0, limit).map(config => ({ ...config, workerName: config.workerCode })) }
+      : { ok: true, upiConfigs: configs });
+  }
 
   const sb = supabaseAdmin();
+  if (pending) return json(200, { ok: true, ...await loadAdminPendingUpiQueue(sb, limit) });
   const upiRes = await sb
     .from("upi_configs")
-    .select("worker_id,upi_id,verified,verified_at,payout_schedule,payout_day");
+    .select("worker_id,upi_id,verified,verified_at,updated_at,payout_schedule,payout_day");
   if (upiRes.error) return json(500, { ok: false, error: upiRes.error.message });
 
   const workerIds = Array.from(new Set((upiRes.data ?? []).map((u) => String(u.worker_id ?? "")).filter(Boolean)));
   const profilesRes = workerIds.length
-    ? await sb.from("profiles").select("id,worker_code").in("id", workerIds)
+    ? await sb.from("profiles").select("id,worker_code,display_name").in("id", workerIds)
     : { data: [] };
-  const codeById = new Map<string, string>((profilesRes.data ?? []).map((p) => [String(p.id), String(p.worker_code ?? p.id)]));
+  databaseError("error" in profilesRes ? profilesRes.error : null);
+  const profileById = new Map((profilesRes.data ?? []).map(p => [String(p.id), p]));
 
   return json(200, {
     ok: true,
     upiConfigs: (upiRes.data ?? []).map((u) => ({
       workerId: String(u.worker_id ?? ""),
-      workerCode: codeById.get(String(u.worker_id ?? "")),
+      workerCode: profileById.get(String(u.worker_id ?? ""))?.worker_code ?? undefined,
+      workerName: profileById.get(String(u.worker_id ?? ""))?.display_name ?? undefined,
       upiId: String(u.upi_id ?? ""),
       verified: !!u.verified,
       verifiedAt: u.verified_at ?? undefined,
+      updatedAt: u.updated_at ?? undefined,
       payoutSchedule: u.payout_schedule ?? undefined,
       payoutDay: u.payout_day ?? undefined,
     })),

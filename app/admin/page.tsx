@@ -21,6 +21,7 @@ import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
 import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
+import { invalidateAdminUpiQueue } from "@/lib/adminUpiCache";
 import { currentWorkerRecords, workerAccessStatus } from "@/lib/adminWorkerDirectory";
 import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
 import { ADMIN_OVERVIEW_CACHE_KEY, isAdminOverviewCounts, type AdminOverviewCounts } from "@/lib/adminOverview";
@@ -1399,6 +1400,8 @@ function AdminConsole({ adminId }: { adminId: string }) {
   // content-free signal on the admin-only "admin:live" topic and we re-read just what changed.
   const devBypass = mounted && hasDevAdminBypassSession();
   const adminLive = useAdminLive(mounted && !devBypass, (kinds: Set<AdminLiveKind> | null) => {
+    // Overview's queue owns its refresh. Invalidating here would abort that panel's new read.
+    if (activeSection !== "Overview" && (!kinds || kinds.has("upi_configs") || kinds.has("worker_moderation") || kinds.has("worker_deletion_jobs"))) invalidateAdminUpiQueue(adminId);
     if (!kinds || ["linked_social_accounts", "payout_batches", "view_payout_claims"].some(kind => kinds.has(kind as AdminLiveKind))) {
       void refreshOverviewCounts({ afterCurrent: true });
     }
@@ -2103,13 +2106,14 @@ function AdminConsole({ adminId }: { adminId: string }) {
       method: "PATCH", body: JSON.stringify({ workerId: upi.workerId, upiId: upi.upiId, verified: true }),
     });
     if (res?.ok) {
+      invalidateAdminUpiQueue(adminId);
       setUpiConfigs((prev) => prev.map((u) => (u.workerId === upi.workerId && u.upiId === upi.upiId ? { ...u, verified: true, verifiedAt: new Date().toISOString() } : u)));
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       setToast({ message: `UPI ${upi.upiId} verified. The creator sees it instantly.`, tone: "success" });
       toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
       void loadUpiConfigs();
     } else setToast({ message: res?.error || "UPI verification failed", tone: "danger" });
-  }, [loadUpiConfigs]);
+  }, [adminId, loadUpiConfigs]);
 
   const markPayoutPaid = useCallback(async (batchId: string) => {
     const batch = payoutBatchesAdmin.find((b) => b.id === batchId);
