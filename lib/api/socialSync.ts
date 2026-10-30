@@ -7,7 +7,7 @@ import { externalPostId, type SyncState } from "@/lib/socialAnalytics";
 import { BEFORE_LINK_NOTE, reelTracking, trackingStart } from "@/lib/reelTracking";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveSyncConfig, type SyncConfig } from "@/lib/api/integrations";
-import { classifySyncError, ProfileNotFoundError, retryDelayMs, SocialSyncError, storedSyncState, syncInterval } from "@/lib/socialSyncSchedule";
+import { adaptiveSyncInterval, classifySyncError, ProfileNotFoundError, retryDelayMs, SocialSyncError, storedSyncState } from "@/lib/socialSyncSchedule";
 import { PROFILE_MISSING_CONFIRM_MS, recordMissingProfile } from "@/lib/accountProfileHealth";
 
 // Official API readers share the same durable queue as Instagram's public profile fallback.
@@ -171,6 +171,38 @@ async function insertTolerant(sb: Sb, table: string, row: Row, newColumns: strin
   if (error && error.code !== "23505") throw new Error(`Couldn't save synced data (${error.code ?? "unknown"}).`);
 }
 
+/** Counts never go down from a sync: a lower public reading leaves a higher saved (often manual) number alone. */
+export const mergeSyncedCount = (saved: unknown, measured: number | undefined) =>
+  measured === undefined ? undefined : saved == null || measured >= Number(saved) ? measured : undefined;
+
+/**
+ * Writes one reel's synced numbers through the database's monotonic merge (202610300004), which also skips no-op
+ * writes. Before that migration is applied, falls back to the same rule applied here (not atomic with edits).
+ */
+async function applySyncedMetrics(sb: Sb, known: Row, media: ExternalPost, source: "api" | "profile", now: Date) {
+  const { error } = await sb.rpc("apply_synced_post_metrics", {
+    p_post: String(known.id), p_views: media.views ?? null, p_likes: media.likes ?? null, p_comments: media.comments ?? null,
+    p_source: media.viewsSource ?? source, p_at: now.toISOString(), p_posted_at: media.postedAt ?? null, p_caption: media.caption ?? null,
+  });
+  if (!error) return;
+  if (error.code !== "PGRST202" && error.code !== "42883") throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
+  const views = mergeSyncedCount(known.views, media.views);
+  const likes = mergeSyncedCount(known.likes, media.likes);
+  const comments = mergeSyncedCount(known.comments, media.comments);
+  const { error: legacyError } = await sb
+    .from("social_account_posts")
+    .update({
+      ...(views !== undefined ? { views, views_captured_at: now.toISOString(), views_source: media.viewsSource ?? source } : {}),
+      ...(likes !== undefined ? { likes } : {}),
+      ...(comments !== undefined ? { comments } : {}),
+      ...(!known.posted_at && media.postedAt ? { posted_at: media.postedAt } : {}),
+      ...(!known.caption && media.caption ? { caption: media.caption } : {}),
+      updated_at: now.toISOString(),
+    })
+    .eq("id", String(known.id));
+  if (legacyError) throw new Error(`Couldn't update a synced post (${legacyError.code ?? "unknown"}).`);
+}
+
 /**
  * Pulls fresh numbers for one account: one snapshot (period figures are the change since the previous sync) and
  * per-post updates. New posts published after linking are added for review, so pay still needs a human decision.
@@ -257,21 +289,13 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
         interactionsGained += Math.max(0, (media.likes ?? 0) - Number(known.likes ?? 0)) + Math.max(0, (media.comments ?? 0) - Number(known.comments ?? 0));
         if (media.views !== undefined) {
           viewsMeasured = true;
-          if (known.views != null) viewsGained += Math.max(0, media.views - Number(known.views));
-          latestViews.set(String(known.id), media.views);
+          const views = mergeSyncedCount(known.views, media.views);
+          if (views !== undefined) {
+            if (known.views != null) viewsGained += views - Number(known.views);
+            latestViews.set(String(known.id), views);
+          }
         }
-        const { error } = await sb
-          .from("social_account_posts")
-          .update({
-            ...(media.views !== undefined ? { views: media.views, views_captured_at: now.toISOString(), views_source: media.viewsSource ?? source } : {}),
-            ...(media.likes !== undefined ? { likes: media.likes } : {}),
-            ...(media.comments !== undefined ? { comments: media.comments } : {}),
-            ...(!known.posted_at && media.postedAt ? { posted_at: media.postedAt } : {}),
-            ...(!known.caption && media.caption ? { caption: media.caption } : {}),
-            updated_at: now.toISOString(),
-          })
-          .eq("id", String(known.id));
-        if (error) throw new Error(`Couldn't update a synced post (${error.code ?? "unknown"}).`);
+        await applySyncedMetrics(sb, known, media, source, now);
       } else if (media.postedAt && windowStart !== undefined && Date.parse(media.postedAt) >= windowStart && (accountPlatformFor(String(account.platform)).id !== "instagram" || media.url.includes('/reel/'))) {
         // Posted for the gig after linking: track it automatically, pending the team's review for pay.
         if (media.views !== undefined) {
@@ -330,7 +354,8 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
 
     const finished = Date.now();
     const values = { sync_status: "ok", last_synced_at: new Date(finished).toISOString(), sync_error: "", sync_error_code: "", sync_failures: 0,
-      next_sync_at: new Date(finished + syncInterval(String(account.platform))).toISOString(),
+      // Fresh reels gain views fastest, so accounts with one are checked more often (see adaptiveSyncInterval).
+      next_sync_at: new Date(finished + adaptiveSyncInterval(String(account.platform), newestTrackedPost(posts, fetched.media, inWindow), finished)).toISOString(),
       sync_provider: fetched.provider ?? "youtube", sync_locked_until: null, sync_lock_token: null,
       ...("profile_health" in account ? { profile_health: { status: "healthy", checkedAt: new Date(finished).toISOString(), missingChecks: 0 } } : {}),
       ...(fetched.externalId ? { external_id: fetched.externalId } : {}) };
@@ -355,6 +380,15 @@ async function performSyncAccount(sb: Sb, account: Row, configOverride?: SyncCon
     await updateAccount(sb, id, values, String(account.sync_lock_token));
     return storedSyncState({ ...account, ...values });
   }
+}
+
+/** Newest posting time among the account's tracked reels, including any just discovered. */
+function newestTrackedPost(posts: Row[], media: ExternalPost[], inWindow: (post: Row) => boolean) {
+  const times = [
+    ...posts.filter(inWindow).map((post) => Date.parse(String(post.posted_at ?? ""))),
+    ...media.map((item) => Date.parse(String(item.postedAt ?? ""))),
+  ].filter(Number.isFinite);
+  return times.length ? Math.max(...times) : undefined;
 }
 
 /** Determine refresh cadence separately from how frequently clients poll the saved data. */

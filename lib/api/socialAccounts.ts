@@ -319,15 +319,17 @@ export async function upsertPost(actorId: string, input: PostInput) {
   const postedAt = input.postedAt ? new Date(input.postedAt) : null;
   if (postedAt && Number.isNaN(postedAt.getTime())) throw new ApiError(400, "Invalid post date.", "invalid_input");
   if (postedAt) assertInWindow(postedAt.toISOString(), account);
-  const { data: current } = await sb.from("social_account_posts").select("removed_at").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
+  const { data: current } = await sb.from("social_account_posts").select("removed_at,views,views_captured_at,views_source").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
   if (current?.removed_at) throw new ApiError(409, "This reel was removed. Restore it from the Removed tab instead.", "reel_removed");
+  // Saving the form without touching views (e.g. fixing a caption) keeps the existing reading's time and source.
+  const viewsUnchanged = input.views !== undefined && current?.views != null && Number(current.views) === input.views && !!current.views_captured_at;
   const { data, error } = await sb.rpc("save_social_post_with_wallet", {
     p_actor: actorId,
     p_input: {
       account_id: input.accountId, url: input.url.trim(), caption: input.caption?.trim() ?? "",
       posted_at: postedAt?.toISOString() ?? null, views: input.views ?? null,
-      views_captured_at: input.views !== undefined ? new Date().toISOString() : null,
-      views_source: input.views !== undefined ? "manual" : null,
+      views_captured_at: input.views === undefined ? null : viewsUnchanged ? String(current?.views_captured_at) : new Date().toISOString(),
+      views_source: input.views === undefined ? null : viewsUnchanged ? String(current?.views_source || "manual") : "manual",
       reach: input.reach ?? null, likes: input.likes ?? null, comments: input.comments ?? null,
       shares: input.shares ?? null, saves: input.saves ?? null,
       ...(input.status ? { status: input.status } : {}),

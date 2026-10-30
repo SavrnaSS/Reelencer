@@ -30,7 +30,9 @@ function fakeDb(tables: Record<string, Row[]>) {
     };
     return q;
   };
-  const rpc = async (_name: string, args: Row) => ({ data: args.p_account_id ? [{ id: args.p_account_id, sync_lock_token: 'test-lease', last_sync_attempt_at: new Date().toISOString() }] : [], error: null });
+  // The monotonic merge function is covered against Postgres in syncedReelMetrics.test.ts; here it reports
+  // itself missing, so these tests exercise the in-app fallback and can inspect the written values.
+  const rpc = async (name: string, args: Row) => name === 'apply_synced_post_metrics' ? { data: null, error: { code: 'PGRST202' } } : ({ data: args.p_account_id ? [{ id: args.p_account_id, sync_lock_token: 'test-lease', last_sync_attempt_at: new Date().toISOString() }] : [], error: null });
   return { sb: { from, rpc } as never, writes };
 }
 

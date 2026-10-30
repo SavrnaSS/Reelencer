@@ -412,7 +412,17 @@ export default function ReelList({
                   </div>
                   <div className="text-[11.5px] text-[#8a928c]">
                     {post.postedAt ? `Posted ${formatDate(post.postedAt)}` : "Posting date unknown"}
-                    {post.submittedByWorker ? ` · sent by creator ${formatRelative(post.createdAt)}` : sourceOf(post) === "sync" ? ` · found by sync, updated ${formatRelative(post.updatedAt)}` : ` · updated ${formatRelative(post.updatedAt)}`}
+                    {post.submittedByWorker ? ` · sent by creator ${formatRelative(post.createdAt)}` : sourceOf(post) === "sync" ? " · found by sync" : " · added by team"}
+                    {post.views !== undefined && post.viewsCapturedAt ? (
+                      <span title={new Date(post.viewsCapturedAt).toLocaleString("en-IN")}>
+                        {" · "}
+                        <span className={post.viewsSource === "manual" ? "font-semibold text-[#6b746e]" : undefined}>
+                          views {post.viewsSource === "manual" ? "set by team" : post.viewsSource === "screenshot" ? "read from screenshot" : "checked"} {formatRelative(post.viewsCapturedAt).toLowerCase()}
+                        </span>
+                      </span>
+                    ) : (
+                      ` · updated ${formatRelative(post.updatedAt)}`
+                    )}
                   </div>
                   {removed ? (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-[#6b746e]">

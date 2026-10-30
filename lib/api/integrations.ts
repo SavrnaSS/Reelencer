@@ -1,7 +1,7 @@
 import "server-only";
 import { fetchInstagramProfile } from "@/lib/api/instagramProfile";
 import { fetchInstagramBusinessProfile } from "@/lib/api/instagramGraph";
-import { syncInterval } from "@/lib/socialSyncSchedule";
+import { syncDueAt } from "@/lib/socialSyncSchedule";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decryptSecretText, encryptSecretText } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -176,7 +176,9 @@ export async function syncIntegrationStatus() {
     const rows = data ?? [];
     const synced = rows.map((r) => r.last_synced_at).filter(Boolean).map(String).sort();
     const now = Date.now();
-    const fresh = (r: Record<string, unknown>) => r.sync_status === "ok" && now - Date.parse(String(r.last_synced_at)) <= syncInterval(String(r.platform)) + 120_000;
+    // Each account's own schedule (fresh reels are checked more often), else the platform's default cadence.
+    const fresh = (r: Record<string, unknown>) =>
+      r.sync_status === "ok" && now <= syncDueAt(String(r.platform), String(r.last_synced_at), r.next_sync_at ? String(r.next_sync_at) : null) + 120_000;
     health = {
       active: rows.length,
       ok: rows.filter(fresh).length,

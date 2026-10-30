@@ -19,6 +19,29 @@ export function syncInterval(platform: string) {
   return accountPlatformFor(platform).id === "instagram" ? PROFILE_SYNC_INTERVAL_MS : API_SYNC_INTERVAL_MS;
 }
 
+/** Instagram cadence by the age of the newest tracked reel: views move fastest in a reel's first days. */
+/**
+ * When a successfully synced account is next due: its own schedule, but never later than the slowest normal
+ * cadence after the last success (so an odd schedule can't make old numbers look current).
+ */
+export function syncDueAt(platform: string, lastSyncedAt: string, nextSyncAt?: string | null) {
+  const instagram = accountPlatformFor(platform).id === "instagram";
+  const latest = Date.parse(lastSyncedAt) + (instagram ? QUIET_PROFILE_SYNC_INTERVAL_MS : API_SYNC_INTERVAL_MS);
+  const scheduled = Date.parse(String(nextSyncAt ?? ""));
+  return Number.isFinite(scheduled) ? Math.min(scheduled, latest) : Date.parse(lastSyncedAt) + syncInterval(platform);
+}
+
+export const HOT_REEL_SYNC_INTERVAL_MS = 2 * 60_000;
+export const QUIET_PROFILE_SYNC_INTERVAL_MS = 15 * 60_000;
+export function adaptiveSyncInterval(platform: string, newestPostAt: number | undefined, now = Date.now()) {
+  if (accountPlatformFor(platform).id !== "instagram") return API_SYNC_INTERVAL_MS;
+  if (newestPostAt === undefined) return PROFILE_SYNC_INTERVAL_MS;
+  const age = now - newestPostAt;
+  if (age <= 3 * 86_400_000) return HOT_REEL_SYNC_INTERVAL_MS;
+  if (age <= 14 * 86_400_000) return PROFILE_SYNC_INTERVAL_MS;
+  return QUIET_PROFILE_SYNC_INTERVAL_MS;
+}
+
 export function classifySyncError(error: unknown): SyncErrorCode {
   if (error instanceof SocialSyncError) return error.code;
   const message = error instanceof Error ? error.message : "";
@@ -65,6 +88,7 @@ export function syncPresentation(account: Pick<LinkedSocialAccount, "status" | "
   if (sync.inProgress && (!sync.lastAttemptAt || now - Date.parse(sync.lastAttemptAt) < SYNC_LEASE_MS)) return { label: "Syncing", tone: "progress" as const };
   if (sync.status === "error") return { label: sync.errorCode === "login_required" ? "Access limited" : sync.errorCode === "credentials" ? "Connection needs attention" : "Retry scheduled", tone: "warning" as const };
   if (!sync.lastSyncedAt) return { label: "Queued for sync", tone: "progress" as const };
-  const stale = now - Date.parse(sync.lastSyncedAt) > syncInterval(account.platform) + 120_000;
+  // The account's own schedule decides when it's due (fresh reels are checked more often than quiet profiles).
+  const stale = now > syncDueAt(account.platform, sync.lastSyncedAt, sync.nextSyncAt) + 120_000;
   return { label: stale ? "Update due" : "Up to date", tone: stale ? "warning" as const : "success" as const };
 }
