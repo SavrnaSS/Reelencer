@@ -16,7 +16,12 @@ export type WorkerDirectoryRecord = {
   accountCount: number;
   submittedCount: number;
   resubmitCount: number;
+  /** Credited to the wallet: approved work, reel credits and approved view claims. */
   approvedINR: number;
+  /** Linked social accounts (Content Posting), separate from accounts the team assigns. */
+  linkedAccountCount?: number;
+  /** Earned on linked accounts but not credited yet: view growth since the last credit and open claims. */
+  pendingINR?: number;
   upiId?: string;
   upiVerified?: boolean;
 };
@@ -42,8 +47,10 @@ export function filterWorkerDirectory<T extends WorkerDirectoryRecord>(workers: 
   return workers.filter(worker => {
     const status = workerAccessStatus(worker);
     if (options.status === "current" ? status === "deleted" : options.status !== "all" && options.status !== status) return false;
-    if (options.assignment === "assigned" && worker.accountCount === 0) return false;
-    if (options.assignment === "unassigned" && worker.accountCount > 0) return false;
+    // Linked social accounts count as accounts too, so Content Posting creators aren't listed as having none.
+    const accounts = worker.accountCount + (worker.linkedAccountCount ?? 0);
+    if (options.assignment === "assigned" && accounts === 0) return false;
+    if (options.assignment === "unassigned" && accounts > 0) return false;
     if (options.payment === "verified" && !worker.upiVerified) return false;
     if (options.payment === "unverified" && worker.upiVerified) return false;
     const searchable = [worker.name, worker.email, worker.id].join(" ").toLocaleLowerCase();
@@ -52,7 +59,7 @@ export function filterWorkerDirectory<T extends WorkerDirectoryRecord>(workers: 
     const name = left.name.localeCompare(right.name, undefined, { sensitivity: "base", numeric: true }) || left.id.localeCompare(right.id);
     if (options.sort === "name_desc") return -name;
     if (options.sort === "earnings") return right.approvedINR - left.approvedINR || name;
-    if (options.sort === "accounts") return right.accountCount - left.accountCount || name;
+    if (options.sort === "accounts") return right.accountCount + (right.linkedAccountCount ?? 0) - left.accountCount - (left.linkedAccountCount ?? 0) || name;
     if (options.sort === "submissions") return right.submittedCount - left.submittedCount || name;
     if (options.sort === "resubmits") return right.resubmitCount - left.resubmitCount || name;
     return name;
@@ -81,10 +88,11 @@ export function safeWorkerCsvCell(value: unknown) {
 }
 
 export function workerDirectoryCsv(workers: readonly WorkerDirectoryRecord[]) {
-  const rows: unknown[][] = [["Worker ID", "Name", "Email", "Access status", "Assigned accounts", "Submitted", "Resubmissions", "Approved earnings (INR)", "Payment verification"]];
+  const rows: unknown[][] = [["Worker ID", "Name", "Email", "Access status", "Assigned accounts", "Submitted", "Resubmissions", "Approved earnings (INR)", "Not yet credited (INR)", "Linked accounts", "Payment verification"]];
   for (const worker of workers) rows.push([
     worker.id, worker.name, worker.email, workerAccessStatus(worker), worker.accountCount,
     worker.submittedCount, worker.resubmitCount, Number.isFinite(worker.approvedINR) ? worker.approvedINR.toFixed(2) : "0.00",
+    Number.isFinite(worker.pendingINR) ? Number(worker.pendingINR).toFixed(2) : "0.00", worker.linkedAccountCount ?? 0,
     worker.upiVerified ? "Verified" : "Unverified",
   ]);
   return "\uFEFF" + rows.map(row => row.map(safeWorkerCsvCell).join(",")).join("\r\n") + "\r\n";

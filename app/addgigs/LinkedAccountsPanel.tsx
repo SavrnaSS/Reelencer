@@ -7,6 +7,7 @@ import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
 import { adminSessionCache } from "@/lib/adminSessionCache";
 import { isCurrentAdminCacheIdentity } from "@/lib/adminCacheIdentity";
 import { readAdminFilter, saveAdminFilter } from "@/lib/adminPreferences";
+import { readAdminLinkedAccounts } from "@/lib/adminLinkedAccounts";
 import { LINKED_ACCOUNTS_CACHE_KEY, LINKED_ACCOUNTS_FRESH_MS, LINKED_SYNC_CACHE_KEY, LINKED_SYNC_ATTEMPT_KEY, isLinkedAccountsData, isLinkedSyncAttempt, linkedAccountsData, linkedSyncDue, type LinkedAccountsData } from "@/lib/linkedAccountCache";
 import AdminSectionLoading from "@/app/_components/AdminSectionLoading";
 import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
@@ -37,6 +38,9 @@ import MetricChart from "../dashboard/MetricChart";
 import AutoSyncCard from "./AutoSyncCard";
 import ReelList from "./ReelList";
 import { countedReels, trackingStartInput } from "@/lib/reelTracking";
+import { summarizeAccountEarnings } from "@/lib/creatorEarnings";
+
+const rupees = (amount: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(amount);
 import AccountRequestsQueue from "./AccountRequestsQueue";
 import PlatformGlyph from "../dashboard/PlatformGlyph";
 import { Banner, ConfirmDialog, EmptyState, ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, cardClass, fieldClass, formatDate, formatDateTime } from "./adminUi";
@@ -435,6 +439,8 @@ function AccountDetail({
   const viewMeasurements = reelMeasurementSummary(account.posts, account.linkedAt);
   const reelLikes = observedTotal("likes");
   const earnings = reelEarnings(account);
+  // Wallet truth: what's already credited vs view growth (and open claims) not credited yet. Same split as Workers.
+  const wallet = summarizeAccountEarnings([account]).breakdown[0];
   const due = isDue(account, now);
   const days = daysSinceSnapshot(account.snapshots, now);
 
@@ -561,7 +567,13 @@ function AccountDetail({
               { label: "Engagement", value: formatPct(engagementRate(latest)), sub: "interactions ÷ reach" },
               earnings
                 ? earnings.basis === "views"
-                  ? { label: "Estimated view earnings", value: earnings.earned, sub: `${formatCompact(earnings.approvedViews)} approved views at ${earnings.rate} / 1,000${earnings.unmeasuredApproved ? ` · ${earnings.unmeasuredApproved} missing counts` : ""}${earnings.pending ? ` · ${earnings.pendingValue} in review` : ""}${earnings.unmeasuredPending ? ` · ${earnings.unmeasuredPending} pending counts` : ""}` }
+                  ? wallet?.walletVerified
+                    ? {
+                        label: "View earnings",
+                        value: rupees(wallet.approved + wallet.pending),
+                        sub: `${rupees(wallet.approved)} credited · ${wallet.pending ? `${rupees(wallet.pending)} not yet credited` : "nothing waiting"} · ${earnings.rate} / 1,000 views${wallet.missingCounts ? ` · ${wallet.missingCounts} missing counts` : ""}`,
+                      }
+                    : { label: "Estimated view earnings", value: earnings.earned, sub: `${formatCompact(earnings.approvedViews)} approved views at ${earnings.rate} / 1,000${earnings.unmeasuredApproved ? ` · ${earnings.unmeasuredApproved} missing counts` : ""}${earnings.pending ? ` · ${earnings.pendingValue} in review` : ""}${earnings.unmeasuredPending ? ` · ${earnings.unmeasuredPending} pending counts` : ""}` }
                   : { label: "Approved reels", value: String(earnings.approved), sub: `${earnings.earned} owed at ${earnings.rate}${earnings.pending ? ` · ${earnings.pending} to review` : ""}` }
                 : { label: "Approved reels", value: String(countedReels(account.posts, account.linkedAt).filter((p) => p.status === "approved").length), sub: account.payout ? `${account.payout}${account.payoutType ? ` · ${account.payoutType}` : ""}` : "" },
             ].map((item) => (
@@ -759,16 +771,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
     collectionState.current.revision++;
     adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
   }, [adminId]);
-  const read = useCallback(async (signal: AbortSignal, sync = false) => {
-    const res = await fetch(`/api/social-accounts?scope=all${sync ? "&sync=1" : ""}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
-    const payload = await res.json().catch(() => null);
-    if ((res.status === 401 || res.status === 403) && !signal.aborted && isCurrentAdminCacheIdentity(adminId)) {
-      adminSessionCache.clear(adminId);
-      window.dispatchEvent(new Event("admin-auth-invalidated"));
-    }
-    if (!res.ok) throw Object.assign(new Error(payload?.error || "Linked accounts couldn't be refreshed."), { unavailable: payload?.code === "schema_outdated" });
-    return linkedAccountsData(payload);
-  }, [adminId]);
+  const read = useCallback((signal: AbortSignal, sync = false) => readAdminLinkedAccounts(adminId, signal, sync), [adminId]);
   const resource = useAdminCachedResource<LinkedAccountsData>({
     scope: adminId, key: LINKED_ACCOUNTS_CACHE_KEY, load: read,
     ttlMs: LINKED_ACCOUNTS_FRESH_MS, maxAgeMs: 15 * 60_000, persist: true, validate: isLinkedAccountsData,

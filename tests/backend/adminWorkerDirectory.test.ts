@@ -118,6 +118,16 @@ test("directory CSV has a UTF-8 BOM, consistent line endings and safe exported s
   assert.equal(csv.endsWith("\r\n"), true);
   assert.match(csv, /"'\=HYPERLINK\(""bad""\)"/);
   assert.match(csv, /"line1,""quoted""\nline2@example\.test"/);
-  assert.match(csv, /"suspended","0","0","0","45\.50","Verified"/);
-  assert.match(csv, /"deleted","0","0","0","0\.00","Unverified"/);
+  assert.match(csv, /"suspended","0","0","0","45\.50","0\.00","0","Verified"/);
+  assert.match(csv, /"deleted","0","0","0","0\.00","0\.00","0","Unverified"/);
+});
+
+test("linked social accounts count as accounts, and pending earnings export beside credited ones", () => {
+  const creator = worker("C", { name: "Creator", accountCount: 0, linkedAccountCount: 1, approvedINR: 35.53, pendingINR: 63.84 });
+  const none = worker("N", { name: "Nobody", accountCount: 0 });
+  assert.deepEqual(filterWorkerDirectory([creator, none], { ...defaults, assignment: "assigned" }).map(row => row.id), ["C"]);
+  assert.deepEqual(filterWorkerDirectory([creator, none], { ...defaults, assignment: "unassigned" }).map(row => row.id), ["N"]);
+  const [header, row] = workerDirectoryCsv([creator]).replace("﻿", "").trim().split("\r\n");
+  assert.match(header, /"Not yet credited \(INR\)","Linked accounts"/);
+  assert.match(row, /"35\.53","63\.84","1"/);
 });

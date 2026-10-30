@@ -110,10 +110,18 @@ export function WorkerProfileHeader({ worker, onCreateAccount, onCreateWork }: {
       <div className={styles.profileActions}><button type="button" onClick={onCreateAccount}><WorkerGlyph name="plus" />Create account</button><button type="button" className={styles.primaryAction} onClick={onCreateWork} disabled={!worker.active}><WorkerGlyph name="plus" />Create work</button></div>
     </div>
     <dl className={styles.profileFacts}>
-      <div><dt><WorkerGlyph name="link" />Accounts</dt><dd>{worker.accountCount}</dd></div>
+      <div><dt><WorkerGlyph name="link" />Accounts</dt><dd>{worker.accountCount + (worker.linkedAccountCount ?? 0)}</dd>{worker.linkedAccountCount ? <dd className={styles.factSub}>{worker.linkedAccountCount} linked{worker.accountCount ? ` · ${worker.accountCount} assigned` : ""}</dd> : null}</div>
       <div><dt><WorkerGlyph name="send" />Submitted</dt><dd>{worker.submittedCount}</dd></div>
       <div className={worker.resubmitCount > 0 ? styles.factWarn : undefined}><dt><WorkerGlyph name="refresh" />Resubmits</dt><dd>{worker.resubmitCount}</dd></div>
-      <div className={styles.factMoney}><dt><WorkerGlyph name="wallet" />Approved</dt><dd>{currency.format(worker.approvedINR)}</dd></div>
+      <div className={styles.factMoney}>
+        <dt><WorkerGlyph name="wallet" />Approved</dt>
+        <dd title="Credited to the wallet">{currency.format(worker.approvedINR)}</dd>
+        {worker.pendingINR ? (
+          <dd className={styles.factPending} title="Earned on linked reels but not credited yet: view growth since the last credit and open claims">
+            +{currency.format(worker.pendingINR)} not yet credited
+          </dd>
+        ) : null}
+      </div>
     </dl>
   </header>;
 }

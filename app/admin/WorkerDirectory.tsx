@@ -148,6 +148,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
         const access = workerAccessStatus(worker);
         const open = selectedWorkerId === worker.id;
         const activity = [
+          worker.linkedAccountCount ? `${worker.linkedAccountCount} linked` : null,
           worker.accountCount ? `${worker.accountCount} ${worker.accountCount === 1 ? "account" : "accounts"}` : null,
           worker.submittedCount ? `${worker.submittedCount} submitted` : null,
         ].filter(Boolean).join(" · ");
@@ -160,7 +161,10 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
                 <span className={styles.identityTitle}><strong title={worker.name}>{worker.name}</strong>{access !== "active" ? <span className={`${styles.status} ${styles[access]}`}>{access === "deleted" ? "Deleted" : "Suspended"}</span> : null}</span>
                 <span className={styles.identityMeta}><span className={styles.workerId}>{worker.id}</span>{worker.email ? <small title={worker.email}>{worker.email}</small> : null}</span>
               </span>
-              <span className={`${styles.rowEarnings} ${worker.approvedINR ? "" : styles.zero}`} title="Approved earnings">{currency.format(worker.approvedINR)}</span>
+              <span className={styles.rowMoney}>
+                <span className={`${styles.rowEarnings} ${worker.approvedINR ? "" : styles.zero}`} title="Credited to the wallet">{currency.format(worker.approvedINR)}</span>
+                {worker.pendingINR ? <small className={styles.rowPending} title="Earned on linked reels, not credited yet">+{currency.format(worker.pendingINR)}</small> : null}
+              </span>
               <WorkerGlyph name="arrow" className={styles.openArrow} />
             </button>
             <div className={styles.rowFoot}>

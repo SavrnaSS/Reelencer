@@ -64,6 +64,8 @@
 .identityMeta { display: flex; align-items: baseline; gap: 6px; min-width: 0; margin-top: 1px; }
 .workerId { flex: 0 0 auto; color: #7a877c; font-family: ui-monospace, monospace; font-size: 10px; }
 .identity small { min-width: 0; overflow: hidden; color: #758078; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.rowMoney { display: flex; flex: 0 0 auto; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.rowPending { color: #8a6624; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .rowEarnings { flex: 0 0 auto; color: #2f6b3e; font-size: 12.5px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .rowEarnings.zero { color: #a3ada5; font-weight: 500; }
 .openArrow { flex-shrink: 0; width: 13px; height: 13px; color: #b3bdb5; transition: transform .15s, color .15s; }

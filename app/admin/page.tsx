@@ -18,6 +18,10 @@ import { getMyRole } from "@/lib/role";
 import { buildFeedbackSubject, feedbackCategoryLabel } from "@/lib/feedback";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
+import { readAdminLinkedAccounts } from "@/lib/adminLinkedAccounts";
+import { LINKED_ACCOUNTS_CACHE_KEY, LINKED_ACCOUNTS_FRESH_MS, isLinkedAccountsData, type LinkedAccountsData } from "@/lib/linkedAccountCache";
+import { summarizeAccountEarnings } from "@/lib/creatorEarnings";
+import type { LinkedSocialAccount } from "@/lib/socialAnalytics";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ADMIN_NAV_GROUPS, adminSectionHref, parseAdminSection, isGigAdminSection, type AdminSection, type GigAdminView } from "@/lib/adminNavigation";
 import { bindAdminCacheIdentity } from "@/lib/adminCacheIdentity";
@@ -1399,6 +1403,13 @@ function AdminConsole({ adminId }: { adminId: string }) {
   // REALTIME: the payout tables are server-only (browsers can't subscribe to them), so the server broadcasts a
   // content-free signal on the admin-only "admin:live" topic and we re-read just what changed.
   const devBypass = mounted && hasDevAdminBypassSession();
+  // Linked accounts (reels and wallet state) for the Workers directory: same cache as the Linked accounts panel.
+  const readLinkedAccounts = useCallback((signal: AbortSignal) => readAdminLinkedAccounts(adminId, signal), [adminId]);
+  const linkedAccounts = useAdminCachedResource<LinkedAccountsData>({
+    scope: adminId, key: LINKED_ACCOUNTS_CACHE_KEY, load: readLinkedAccounts, enabled: mounted && activeSection === "Workers",
+    ttlMs: LINKED_ACCOUNTS_FRESH_MS, maxAgeMs: 15 * 60_000, persist: true, validate: isLinkedAccountsData,
+  });
+  const refreshLinkedAccounts = linkedAccounts.refresh;
   const adminLive = useAdminLive(mounted && !devBypass, (kinds: Set<AdminLiveKind> | null) => {
     // Overview's queue owns its refresh. Invalidating here would abort that panel's new read.
     if (activeSection !== "Overview" && (!kinds || kinds.has("upi_configs") || kinds.has("worker_moderation") || kinds.has("worker_deletion_jobs"))) invalidateAdminUpiQueue(adminId);
@@ -1409,12 +1420,17 @@ function AdminConsole({ adminId }: { adminId: string }) {
     if (isGigSection || activeSection === "Overview") return;
     if (!kinds) {
       void loadSnapshot();
+      if (activeSection === "Workers") void refreshLinkedAccounts({ force: true, afterCurrent: true });
       if (activeSection === "Feedback") void loadFeedback();
       return;
     }
     if (kinds.has("upi_configs")) void loadUpiConfigs();
     if (kinds.has("payout_batches") || kinds.has("view_payout_claims")) void loadPayoutsAdmin();
     if (kinds.has("work_items") || kinds.has("worker_moderation") || kinds.has("worker_ip_blocks") || kinds.has("worker_deletion_jobs")) void loadSnapshot();
+    // Reel credits, view growth and claims move a worker's earnings.
+    if (activeSection === "Workers" && ["linked_social_accounts", "social_account_posts", "view_payout_claims", "work_items"].some(kind => kinds.has(kind as AdminLiveKind))) {
+      void refreshLinkedAccounts({ force: true, afterCurrent: true });
+    }
   }, { refreshOnConnect: true });
   // Local dev bypass has no realtime session: poll instead.
   useEffect(() => {
@@ -1433,6 +1449,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       return;
     }
     loadSnapshot();
+    if (activeSection === "Workers") void refreshLinkedAccounts({ force: true, afterCurrent: true });
     void refreshOverviewCounts({ afterCurrent: true });
   };
 
@@ -2292,10 +2309,24 @@ function AdminConsole({ adminId }: { adminId: string }) {
 
   /** ---------- Filters ---------- */
 
+  // A creator's linked accounts are keyed by the worker code (or user id) their application was made under.
+  const linkedByWorker = useMemo(() => {
+    const map = new Map<string, LinkedSocialAccount[]>();
+    for (const account of linkedAccounts.data?.accounts ?? []) {
+      const key = String(account.workerCode);
+      map.set(key, [...(map.get(key) ?? []), account]);
+    }
+    return map;
+  }, [linkedAccounts.data]);
   const workerDirectoryRows = useMemo(() => workers.map(worker => {
     const upi = getWorkerUpi(worker);
+    const linked = [...new Set([worker.id, worker.userId].filter(Boolean) as string[])].flatMap(key => linkedByWorker.get(key) ?? []);
+    const earnings = linked.length ? summarizeAccountEarnings(linked) : null;
     return {
       ...worker,
+      linkedAccountCount: linked.filter(account => account.status !== "unlinked").length,
+      // View growth and open claims not credited to the wallet yet (credited money is already in approvedINR).
+      pendingINR: earnings?.pending ?? 0,
       accountCount: accountsForWorker(worker.id).length,
       submittedCount: workItems.filter(item => isWorkerMatch(worker, item) && isCountedSubmission(item)).length,
       resubmitCount: workItems.filter(item => isWorkerMatch(worker, item) && isResubmission(item)).length,
@@ -2303,7 +2334,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       upiId: upi?.upiId,
       upiVerified: upi?.verified === true,
     };
-  }), [workers, getWorkerUpi, accountsForWorker, workItems, isWorkerMatch, isCountedSubmission, isResubmission, getWorkerApprovedEarnings]);
+  }), [workers, getWorkerUpi, linkedByWorker, accountsForWorker, workItems, isWorkerMatch, isCountedSubmission, isResubmission, getWorkerApprovedEarnings]);
   const selectedDirectoryWorker = workerDirectoryRows.find(worker => worker.id === selectedWorkerId);
 
   const scheduleRowsForSelected = useMemo(() => {
