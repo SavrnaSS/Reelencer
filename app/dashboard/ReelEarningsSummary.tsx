@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { AccountEarningsSummary } from "@/lib/creatorEarnings";
-import { formatAmount } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
 import { Icon, Skeleton } from "./dashboardUi";
 
 export default function ReelEarningsSummary({ summary, loading = false, error, onOpenAccounts }: {
@@ -34,7 +34,7 @@ export default function ReelEarningsSummary({ summary, loading = false, error, o
           <div key={row.label} className="min-w-0 rounded-xl border border-[#dfe9de] bg-white/80 p-3.5 sm:p-4">
             <dt className={`text-[12px] font-medium ${row.tone}`}>{row.label}</dt>
             <dd className="mt-1.5 break-words text-[24px] font-semibold leading-tight tracking-tight text-[#1a201c] tabular-nums sm:text-[28px]">
-              {loading ? <Skeleton className="h-8 w-28" /> : row.amount !== undefined ? formatAmount(row.amount) : "–"}
+              {loading ? <Skeleton className="h-8 w-28" /> : row.amount !== undefined ? formatMoney(row.amount) : "–"}
             </dd>
             {!loading && row.count !== undefined ? <p className="mt-1 text-[11.5px] text-[#7a827c]">{row.count} {row.detail}</p> : null}
           </div>
@@ -49,8 +49,8 @@ export default function ReelEarningsSummary({ summary, loading = false, error, o
                 {row.gigTitle ? <p className="mt-0.5 break-words text-[11.5px] text-[#7a827c]">{row.gigTitle}</p> : null}
               </div>
               <dl className="grid grid-cols-2 gap-3 text-[11.5px]">
-                <div className="min-w-0"><dt className="text-[#5d7466]">Approved</dt><dd className="break-words font-semibold text-[#1a201c] tabular-nums">{formatAmount(row.approved)}</dd></div>
-                <div className="min-w-0"><dt className="text-[#7a827c]">Pending</dt><dd className="break-words font-semibold text-[#1a201c] tabular-nums">{formatAmount(row.pending)}</dd></div>
+                <div className="min-w-0"><dt className="text-[#5d7466]">Approved</dt><dd className="break-words font-semibold text-[#1a201c] tabular-nums">{formatMoney(row.approved)}</dd></div>
+                <div className="min-w-0"><dt className="text-[#7a827c]">Pending</dt><dd className="break-words font-semibold text-[#1a201c] tabular-nums">{formatMoney(row.pending)}</dd></div>
               </dl>
             </li>
           ))}

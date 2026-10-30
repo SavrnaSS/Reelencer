@@ -8,11 +8,13 @@ import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
 import { formatAmount as formatINR } from "@/lib/money";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
+import { usePayoutIdentity } from "@/lib/usePayoutIdentity";
+import { summarizePayoutBatches } from "@/lib/creatorEarnings";
+import ReelEarningsSummary from "@/app/dashboard/ReelEarningsSummary";
+import { MetricTile } from "@/app/dashboard/dashboardUi";
 import { CREATOR_HOME_HREF } from "@/lib/routes";
 import { KycRow, KycSheet, type KycProfile } from "./KycPanel";
 
-type Role = "Admin" | "Worker";
-type AuthSession = { role: Role; workerId?: string; email?: string; at: string };
 // Matches the server: weekly payouts pick a weekday, monthly payouts a day of the month (1–28).
 type UpiSchedule = "Weekly" | "Monthly";
 type PayoutDay = string;
@@ -35,19 +37,6 @@ type WorkerMetrics = {
     met?: number;
     breached?: number;
   };
-};
-
-type GigAssignment = {
-  gigId?: string;
-  status?: string;
-  earningsReleaseStatus?: "none" | "queued" | "credited" | "blocked";
-};
-
-type GigSummary = {
-  id: string;
-  payout?: string | null;
-  payoutType?: string | null;
-  gigType?: string | null;
 };
 
 type UpiConfig = {
@@ -93,10 +82,6 @@ type PayoutBatch = {
 
 const MIN_PAYOUT_REQUEST_INR = 1000;
 
-const LS_KEYS = {
-  AUTH: "igops:auth",
-} as const;
-
 const DEFAULT_UPI: UpiConfig = {
   upiId: "",
   verified: false,
@@ -122,18 +107,6 @@ const sinceLabel = (value?: string | null) => {
   return hours < 24 ? `${hours}h ago` : new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 };
 
-function readLS<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as T;
-    return parsed ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 function fmtDate(value?: string | null) {
   if (!value) return "—";
   const date = new Date(value);
@@ -158,43 +131,7 @@ function isValidUpi(upi: string) {
   return text.length >= 5 && text.length <= 100 && /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/.test(text);
 }
 
-function parsePayoutAmount(raw: unknown) {
-  const text = String(raw ?? "").trim();
-  if (!text) return 0;
-  const normalized = text.replace(/[, ]+/g, "");
-  const match = normalized.match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
-}
-
-function summarizeCredentialEarnings(assignments: GigAssignment[], gigs: GigSummary[]) {
-  const payoutByGigId = new Map<string, number>(
-    gigs.map((gig) => [String(gig.id), String(gig.payoutType).trim().toLowerCase() === "per 1k views" || String(gig.gigType).trim().toLowerCase() === "content posting" ? 0 : parsePayoutAmount(gig.payout)])
-  );
-
-  return assignments.reduce(
-    (totals, assignment) => {
-      const amount = payoutByGigId.get(String(assignment.gigId ?? "")) ?? 0;
-      if (!amount) return totals;
-
-      if (assignment.earningsReleaseStatus === "credited") {
-        totals.earnings += amount;
-        return totals;
-      }
-
-      if (
-        assignment.earningsReleaseStatus === "queued" ||
-        ["Submitted", "Accepted", "Pending"].includes(String(assignment.status ?? ""))
-      ) {
-        totals.pending += amount;
-      }
-
-      return totals;
-    },
-    { earnings: 0, pending: 0 }
-  );
-}
-
-/** Shown only until the local session is read (a few ms); after that each section streams in with its own skeleton. */
+/** Each section loads independently after the signed-in account is verified. */
 function PayoutsSkeleton() {
   return (
     <div className="min-h-screen bg-[#f6f7f2]" aria-busy="true" aria-label="Loading payouts">
@@ -224,19 +161,47 @@ type PayoutSnapshot = {
   kyc: { status: KycStatus; reason: string | null };
   at: string;
 };
-const SNAPSHOT_KEY = (workerId: string) => `reelencer:payouts:v1:${workerId}`;
-/** Last good data for this tab session, so a return visit paints instantly and then refreshes in place. */
-function readSnapshot(workerId: string): PayoutSnapshot | null {
+
+/** Reject corrupted device data and unreadable API responses before rendering financial history. */
+function isPayoutBatch(value: unknown): value is PayoutBatch {
+  if (!value || typeof value !== "object") return false;
+  const batch = value as PayoutBatch;
+  return typeof batch.id === "string" && typeof batch.cycleLabel === "string" && typeof batch.createdAt === "string" &&
+    typeof batch.periodStart === "string" && typeof batch.periodEnd === "string" &&
+    ["Draft", "Processing", "Paid", "Failed"].includes(batch.status) && ["UPI", "Bank"].includes(batch.method) &&
+    Array.isArray(batch.notes) && batch.notes.every(note => typeof note === "string") &&
+    Array.isArray(batch.items) && batch.items.every(item => item && typeof item.id === "string" &&
+      typeof item.amountINR === "number" && Number.isFinite(item.amountINR) && item.amountINR >= 0);
+}
+
+/** Auth locks and stalled connections must resolve to retry controls rather than a permanent skeleton. */
+async function payoutSession() {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const raw = window.sessionStorage.getItem(SNAPSHOT_KEY(workerId));
-    return raw ? (JSON.parse(raw) as PayoutSnapshot) : null;
+    return await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Session check timed out. Refresh to try again.")), 20_000); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+const SNAPSHOT_KEY = (userId: string) => `reelencer:payouts:v2:${userId}`;
+/** Last good data for this tab session, so a return visit paints instantly and then refreshes in place. */
+function readSnapshot(userId: string): PayoutSnapshot | null {
+  try {
+    const raw = window.sessionStorage.getItem(SNAPSHOT_KEY(userId));
+    if (!raw) return null;
+    const snapshot = JSON.parse(raw) as PayoutSnapshot;
+    const age = Date.now() - Date.parse(snapshot.at);
+    if (!Number.isFinite(age) || age < 0 || age > 86_400_000 || !Array.isArray(snapshot.batches) || !snapshot.batches.every(isPayoutBatch) || !snapshot.kyc || !["none", "pending", "approved", "rejected"].includes(snapshot.kyc.status) || typeof snapshot.metrics?.money?.available !== "number" || !Number.isFinite(snapshot.metrics.money.available) || snapshot.metrics.money.available < 0) return null;
+    return snapshot;
   } catch {
     return null;
   }
 }
-function writeSnapshot(workerId: string, snapshot: PayoutSnapshot) {
+function writeSnapshot(userId: string, snapshot: PayoutSnapshot) {
   try {
-    window.sessionStorage.setItem(SNAPSHOT_KEY(workerId), JSON.stringify(snapshot));
+    window.sessionStorage.setItem(SNAPSHOT_KEY(userId), JSON.stringify(snapshot));
   } catch {
     /* Storage full or blocked: the page still works, just without the instant repaint. */
   }
@@ -272,10 +237,24 @@ function describeChange(prev: SeenState, next: SeenState, batches: PayoutBatch[]
 }
 
 export default function PayoutsPage() {
-  const [sessionLoaded, setSessionLoaded] = useState(false);
-  const [role, setRole] = useState<Role | null>(null);
-  const [workerId, setWorkerId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { state, retry } = usePayoutIdentity();
+  if (state.state === "error") return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f3f4f1] p-5">
+      <div role="alert" className="w-full max-w-md rounded-2xl border border-[#e3e5e1] bg-white p-6 text-[#1a201c]">
+        <h1 className="text-xl font-semibold">Payouts unavailable</h1>
+        <p className="mt-2 text-sm leading-6 text-[#616a64]">{state.message}</p>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button type="button" onClick={retry} className="rounded-xl bg-[#244e39] px-4 py-2.5 text-sm font-semibold text-white">Try again</button>
+          <Link href="/dashboard?section=wallet" className="rounded-xl border border-[#e3e5e1] px-4 py-2.5 text-sm font-semibold">Back to Wallet</Link>
+        </div>
+      </div>
+    </main>
+  );
+  if (state.state !== "ready") return <PayoutsSkeleton />;
+  return <PayoutsWorkspace key={`${state.userId}:${state.workerId}`} userId={state.userId} workerId={state.workerId} />;
+}
+
+function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [metrics, setMetrics] = useState<WorkerMetrics | null>(null);
@@ -297,7 +276,8 @@ export default function PayoutsPage() {
   const [ready, setReady] = useState({ metrics: false, batches: false, upi: false, kyc: false });
   const [fromSnapshot, setFromSnapshot] = useState(false);
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
-  const fallbackRef = useRef({ earnings: 0, pending: 0 });
+  const [verified, setVerified] = useState({ metrics: false, batches: false, upi: false, kyc: false });
+  const [failures, setFailures] = useState({ metrics: false, batches: false, upi: false, kyc: false });
   // What the creator last saw (this session or their previous visit), to announce what changed since.
   const seenRef = useRef<SeenState | null>(null);
   // Briefly highlights a card when it changes in real time (e.g. UPI verified by the team).
@@ -310,27 +290,14 @@ export default function PayoutsPage() {
   }, []);
   const upiSectionRef = useRef<HTMLElement>(null);
   const historyRef = useRef<HTMLElement>(null);
-  const socialAccounts = useSocialAccounts(sessionLoaded && role === "Worker" && Boolean(workerId));
-
-  useEffect(() => {
-    const session = readLS<AuthSession | null>(LS_KEYS.AUTH, null);
-    const safeRole = session?.role;
-    setRole(safeRole ?? null);
-    setWorkerId(session?.workerId ?? null);
-    setSessionLoaded(true);
-  }, []);
+  const socialAccounts = useSocialAccounts(true, userId);
 
   const loadPayoutData = useCallback(async (mode: "initial" | "refresh" = "initial") => {
-    if (loadInFlightRef.current && mode !== "initial") return;
-    if (!workerId) {
-      setLoading(false);
-      return;
-    }
-
+    if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
     if (mode === "initial") {
       // Paint the last snapshot from this session immediately; fresh data replaces it section by section.
-      const snapshot = readSnapshot(workerId);
+      const snapshot = readSnapshot(userId);
       if (snapshot) {
         setMetrics(snapshot.metrics);
         setBatches(snapshot.batches);
@@ -341,98 +308,78 @@ export default function PayoutsPage() {
         setFromSnapshot(true);
         seenRef.current = seenFrom(snapshot);
       }
-      setLoading(false);
     } else setRefreshing(true);
     setError(null);
 
     const issues: string[] = [];
     const fresh: Partial<PayoutSnapshot> = {};
     const mark = (key: keyof typeof ready) => setReady((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
-    const withMax = (money: WorkerMetrics["money"] | undefined) => ({
-      ...(money ?? {}),
-      earnings: Math.max(Number(money?.earnings ?? 0), fallbackRef.current.earnings),
-      pending: Math.max(Number(money?.pending ?? 0), fallbackRef.current.pending),
-    });
+    const settled = (key: keyof typeof ready, success: boolean) => {
+      mark(key);
+      setVerified(prev => ({ ...prev, [key]: success }));
+      setFailures(prev => ({ ...prev, [key]: !success }));
+    };
+    const read = (url: string, headers?: HeadersInit) => fetch(url, { headers, cache: "no-store", signal: AbortSignal.timeout(20_000) });
 
     try {
-      const { data } = await supabase.auth.getSession();
+      const { data } = await payoutSession();
       const token = data.session?.access_token;
-      const authHeaders = token ? { Authorization: `Bearer ${token}` } : undefined;
-      let metricsFailed = false;
+      if (!token) throw new Error("Your session expired. Sign in again to view payouts.");
+      const authHeaders = { Authorization: `Bearer ${token}` };
 
       await Promise.all([
         // Earnings metrics.
         (async () => {
           try {
-            const res = await fetch(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, { cache: "no-store" });
+            const res = await read(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, authHeaders);
             if (!res.ok) throw new Error();
             const json = (await res.json()) as WorkerMetrics;
-            const next = { ...(json ?? {}), money: withMax(json?.money) };
-            fresh.metrics = next;
-            setMetrics(next);
+            if (typeof json?.money?.available !== "number" || !Number.isFinite(json.money.available) || json.money.available < 0) throw new Error();
+            fresh.metrics = json;
+            setMetrics(json);
+            settled("metrics", true);
           } catch {
-            metricsFailed = true;
-          } finally {
-            mark("metrics");
-          }
-        })(),
-        // Credential-gig earnings (a slower, chained read) only ever raise the metrics above.
-        (async () => {
-          try {
-            const res = await fetch(`/api/gig-assignments?workerId=${encodeURIComponent(workerId)}`, { cache: "no-store" });
-            if (!res.ok) return;
-            const assignments = (await res.json().catch(() => [])) as GigAssignment[];
-            const list = Array.isArray(assignments) ? assignments : [];
-            const gigIds = new Set(list.map((row) => String(row.gigId ?? "")).filter(Boolean));
-            if (!gigIds.size) return;
-            const gigsRes = await fetch("/api/gigs", { cache: "no-store" });
-            if (!gigsRes.ok) return;
-            const gigs = (await gigsRes.json().catch(() => [])) as GigSummary[];
-            fallbackRef.current = summarizeCredentialEarnings(list, (Array.isArray(gigs) ? gigs : []).filter((gig) => gigIds.has(String(gig.id))));
-            setMetrics((prev) => {
-              const next = { ...(prev ?? {}), money: withMax(prev?.money) };
-              if (fresh.metrics) fresh.metrics = next;
-              return next;
-            });
-          } catch {
-            /* Optional enrichment. */
+            issues.push("wallet balance");
+            settled("metrics", false);
           }
         })(),
         // Payout cycles.
         (async () => {
           try {
-            const res = await fetch(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, { cache: "no-store" });
+            const res = await read(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, authHeaders);
             if (!res.ok) throw new Error();
             const json = await res.json();
-            fresh.batches = Array.isArray(json) ? json : [];
+            if (!Array.isArray(json) || !json.every(isPayoutBatch)) throw new Error();
+            fresh.batches = json;
             setBatches(fresh.batches);
           } catch {
             issues.push("payout batches");
           } finally {
-            mark("batches");
+            settled("batches", Boolean(fresh.batches));
           }
         })(),
         // UPI.
         (async () => {
           try {
-            if (!authHeaders) return;
-            const res = await fetch("/api/upi", { headers: authHeaders, cache: "no-store" });
+            if (!authHeaders) throw new Error("Not authenticated");
+            const res = await read("/api/upi", authHeaders);
             if (!res.ok) throw new Error();
             fresh.upi = (await res.json()) ?? null;
             setUpi(fresh.upi ?? null);
           } catch {
             issues.push("UPI status");
           } finally {
-            mark("upi");
+            settled("upi", fresh.upi !== undefined);
           }
         })(),
         // KYC.
         (async () => {
           try {
-            if (!authHeaders) return;
-            const res = await fetch("/api/kyc", { headers: authHeaders, cache: "no-store" });
+            if (!authHeaders) throw new Error("Not authenticated");
+            const res = await read("/api/kyc", authHeaders);
             if (!res.ok) throw new Error();
             const json = (await res.json().catch(() => ({}))) as KycResponse;
+            if (!json.status || !["none", "pending", "approved", "rejected"].includes(json.status)) throw new Error();
             fresh.kyc = { status: (json.status ?? "none") as KycStatus, reason: json.rejectionReason ?? null };
             setKycStatus(fresh.kyc.status);
             setKycRejectionReason(fresh.kyc.reason);
@@ -440,18 +387,10 @@ export default function PayoutsPage() {
           } catch {
             issues.push("KYC status");
           } finally {
-            mark("kyc");
+            settled("kyc", Boolean(fresh.kyc));
           }
         })(),
       ]);
-
-      if (metricsFailed) {
-        const fallback = fallbackRef.current;
-        if (fallback.earnings > 0 || fallback.pending > 0) {
-          fresh.metrics = { money: { ...fallback } };
-          setMetrics(fresh.metrics);
-        } else issues.push("earnings metrics");
-      }
 
       setLastUpdatedAt(new Date().toLocaleTimeString());
       setFromSnapshot(false);
@@ -467,36 +406,26 @@ export default function PayoutsPage() {
       }
       // Only cache a complete, successful read.
       if (!issues.length && fresh.metrics && fresh.batches && fresh.kyc) {
-        writeSnapshot(workerId, { metrics: fresh.metrics, batches: fresh.batches, upi: fresh.upi ?? null, kyc: fresh.kyc, at: new Date().toISOString() });
+        writeSnapshot(userId, { metrics: fresh.metrics, batches: fresh.batches, upi: fresh.upi ?? null, kyc: fresh.kyc, at: new Date().toISOString() });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load payout data.");
+      setReady({ metrics: true, batches: true, upi: true, kyc: true });
+      setVerified({ metrics: false, batches: false, upi: false, kyc: false });
+      setFailures({ metrics: true, batches: true, upi: true, kyc: true });
     } finally {
       loadInFlightRef.current = false;
-      if (mode === "initial") setLoading(false);
-      else setRefreshing(false);
+      setRefreshing(false);
     }
-  }, [workerId, flashSection]);
+  }, [userId, workerId, flashSection]);
 
-  useEffect(() => {
-    if (!sessionLoaded) return;
-    if (!role) {
-      window.location.replace("/login?next=/payouts");
-      return;
-    }
-    if (role === "Admin") {
-      window.location.replace("/admin");
-      return;
-    }
-    void loadPayoutData("initial");
-  }, [loadPayoutData, role, sessionLoaded]);
+  useEffect(() => { void loadPayoutData("initial"); }, [loadPayoutData]);
 
   // Live updates: the server broadcasts a content-free "changed" signal on this user's private payouts topic
   // whenever their cycles, wallet credits, UPI or KYC change (migration 202610110001). We then re-read through the
   // authenticated API. Polling stays as a slower safety net and backs off while the live channel is healthy.
   const [liveState, setLiveState] = useState<"connecting" | "live" | "offline">("connecting");
   useEffect(() => {
-    if (!sessionLoaded || role !== "Worker" || !workerId) return;
     let disposed = false;
     let refreshTimer: number | null = null;
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -511,7 +440,7 @@ export default function PayoutsPage() {
     };
     const connect = async () => {
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data } = await payoutSession();
         const session = data.session;
         if (disposed || !session) return;
         await supabase.realtime.setAuth(session.access_token);
@@ -564,7 +493,7 @@ export default function PayoutsPage() {
       window.removeEventListener("social-accounts-refreshed", onWake);
       if (channel) void supabase.removeChannel(channel);
     };
-  }, [loadPayoutData, role, sessionLoaded, workerId]);
+  }, [loadPayoutData, workerId]);
 
   // Deep link from other pages (e.g. an Email Creator gig): /payouts?verify=kyc opens the KYC sheet once KYC is known.
   useEffect(() => {
@@ -580,9 +509,7 @@ export default function PayoutsPage() {
     setUpiDraft(upi ?? DEFAULT_UPI);
   }, [upi]);
 
-  const approvedEarnings = metrics?.money?.available ?? metrics?.money?.earnings ?? 0;
-  const pendingPayouts = metrics?.money?.pending ?? 0;
-  const paidBatches = useMemo(() => batches.filter((batch) => batch.status === "Paid").length, [batches]);
+  const approvedEarnings = metrics?.money?.available ?? 0;
   const processingBatch = useMemo(() => batches.find((batch) => batch.status === "Processing" || batch.status === "Draft") ?? null, [batches]);
   const kycMeta = useMemo(() => describeKycStatus(kycStatus, kycRejectionReason), [kycStatus, kycRejectionReason]);
   const payoutReadiness = useMemo(
@@ -598,23 +525,20 @@ export default function PayoutsPage() {
       }),
     [approvedEarnings, kycStatus, kycRejectionReason, processingBatch, upi?.verified]
   );
-  const totalPaidAmount = useMemo(
-    () => batches.filter((batch) => batch.status === "Paid").reduce((sum, batch) => sum + batchTotal(batch), 0),
-    [batches]
-  );
+  const payoutSummary = useMemo(() => summarizePayoutBatches(batches), [batches]);
   const requestBlockedReason = payoutReadiness.primaryBlocker?.detail ?? null;
   const thresholdGap = Math.max(0, MIN_PAYOUT_REQUEST_INR - approvedEarnings);
 
   const requestPayout = async () => {
     if (!workerId) return;
-    if (!payoutReadiness.ready) {
+    if (!coreReady || !payoutReadiness.ready) {
       setNotice({ tone: "danger", text: payoutReadiness.primaryBlocker?.detail || "Payout request is blocked." });
       return;
     }
     setRequesting(true);
     setNotice(null);
     try {
-      const { data } = await supabase.auth.getSession();
+      const { data } = await payoutSession();
       const token = data.session?.access_token;
       if (!token) throw new Error("Not authenticated");
       const res = await fetch("/api/payoutbatches/request", {
@@ -642,7 +566,7 @@ export default function PayoutsPage() {
 
     setSavingUpi(true);
     try {
-      const { data } = await supabase.auth.getSession();
+      const { data } = await payoutSession();
       const token = data.session?.access_token;
       if (!token) throw new Error("Not authenticated");
 
@@ -675,17 +599,11 @@ export default function PayoutsPage() {
     }
   };
 
-  if (!sessionLoaded || (loading && !workerId)) {
-    return <PayoutsSkeleton />;
-  }
-
   const kycOk = kycStatus === "approved";
   const upiOk = Boolean(upi?.verified);
   const minimumOk = approvedEarnings >= MIN_PAYOUT_REQUEST_INR;
   const noActiveBatch = !processingBatch;
   const reel = socialAccounts.earnings;
-  const reelPending = reel?.pending ?? 0;
-  const reelApproved = reel?.approved ?? 0;
 
   const openUpiEditor = () => {
     setUpiDraft(upi ?? DEFAULT_UPI);
@@ -725,7 +643,8 @@ export default function PayoutsPage() {
     },
   ];
   const checkReady: Record<CheckKey, boolean> = { kyc: ready.kyc, upi: ready.upi, min: ready.metrics, batch: ready.batches };
-  const coreReady = ready.kyc && ready.upi && ready.metrics && ready.batches;
+  const coreReady = verified.kyc && verified.upi && verified.metrics && verified.batches;
+  const hasFailures = Object.values(failures).some(Boolean);
   const checksDone = readinessChecks.filter((c) => c.ok && checkReady[c.key]).length;
   const minimumProgress = Math.min(100, Math.round((approvedEarnings / MIN_PAYOUT_REQUEST_INR) * 100));
   // The first unmet check drives the balance card's "Next step".
@@ -742,32 +661,9 @@ export default function PayoutsPage() {
   const nextCheck = nextKey ? readinessChecks.find((c) => c.key === nextKey) : null;
   const nextAction = nextKey ? actionFor(nextKey) : null;
 
-  // Where the money is: review → approved estimate → wallet → paid.
-  const flow = [
-    {
-      key: "review",
-      label: "In review",
-      value: reelPending + pendingPayouts,
-      caption: reel?.pendingReels ? `${reel.pendingReels} ${reel.pendingReels === 1 ? "reel" : "reels"} awaiting review` : pendingPayouts ? "Work awaiting review" : "Nothing waiting",
-      tone: "muted" as const,
-      loaded: socialAccounts.load.state !== "loading" && ready.metrics,
-    },
-    {
-      key: "approved",
-      label: "Approved estimate",
-      value: reelApproved,
-      caption: reel?.approvedReels ? `${reel.approvedReels} approved ${reel.approvedReels === 1 ? "reel" : "reels"}` : "No approved reels yet",
-      tone: "muted" as const,
-      action: reelApproved > 0 ? { label: "Claim", href: "/dashboard?section=accounts" } : undefined,
-      loaded: socialAccounts.load.state !== "loading",
-    },
-    { key: "wallet", label: "In your wallet", value: approvedEarnings, caption: "Ready to withdraw", tone: "primary" as const, loaded: ready.metrics },
-    { key: "paid", label: "Paid out", value: totalPaidAmount, caption: `${paidBatches} of ${batches.length} ${batches.length === 1 ? "cycle" : "cycles"} paid`, tone: "muted" as const, loaded: ready.batches },
-  ];
-
   const inputClass =
     "mt-2 h-12 w-full rounded-[14px] border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40";
-  const card = "rounded-[22px] bg-white/90 shadow-[0_24px_44px_-36px_rgba(34,45,37,0.45)] ring-1 ring-[#e6ebe2]";
+  const card = "min-w-0 rounded-2xl border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]";
   const actionBtn =
     "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-[#dfe7dc] bg-white px-3 text-[12px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50";
   const renderAction = (action: CheckAction, className = actionBtn) =>
@@ -782,17 +678,16 @@ export default function PayoutsPage() {
     );
 
   return (
-    <div className="min-h-screen bg-[#f6f7f2] text-[#20352c]">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(60rem_30rem_at_0%_-10%,rgba(220,231,143,0.35),transparent_70%),radial-gradient(40rem_28rem_at_100%_0%,rgba(190,215,200,0.35),transparent_70%)]" />
+    <div className="min-h-screen bg-[#f3f4f1] text-[#1a201c]">
 
       <header className="sticky top-0 z-20 border-b border-[#e6ebe2] bg-[#fcfdf9]/90 backdrop-blur-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="mx-auto grid h-[60px] w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-3.5 sm:h-[68px] sm:px-6 lg:px-8">
           <Link
-            href="/dashboard"
+            href="/dashboard?section=wallet"
             className="inline-flex h-10 w-fit items-center gap-2 rounded-full border border-[#e2e8de] bg-white px-3.5 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
           >
             <span aria-hidden>←</span>
-            <span className="hidden min-[380px]:inline">Dashboard</span>
+            <span className="hidden min-[380px]:inline">Wallet</span>
           </Link>
           <Link href="/" aria-label="Reelencer home" className="flex min-w-0 items-center gap-1.5">
             <BrandLogo className="h-8 w-8" sizes="32px" />
@@ -812,7 +707,8 @@ export default function PayoutsPage() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-[clamp(1.6rem,6vw,2.25rem)] font-semibold leading-tight tracking-[-0.03em]">Payouts</h1>
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-[#5f6f65]">
+            <p className="mt-2 text-[13px] leading-5 text-[#616a64]">Withdraw from your wallet and manage your payout settings.</p>
+            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-[#5f6f65]">
               <span
                 className={`inline-flex items-center gap-1.5 font-semibold ${liveState === "live" ? "text-[#2f6a1f]" : liveState === "offline" ? "text-[#8a6a1f]" : "text-[#6f7d74]"}`}
                 title={liveState === "live" ? "Updates appear instantly" : liveState === "offline" ? "Live updates unavailable; checking every 10 seconds" : "Connecting to live updates"}
@@ -862,60 +758,21 @@ export default function PayoutsPage() {
           </div>
         )}
 
-        {/* Money flow: where every rupee currently sits */}
-        <section aria-labelledby="flow-heading" className={`${card} mt-5 p-3 sm:p-4`}>
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1 pb-3">
-            <h2 id="flow-heading" className="text-[15px] font-semibold tracking-[-0.01em]">Where your money is</h2>
-            <p className="text-[11.5px] text-[#6f7d74]">Reel amounts are estimates until the team&apos;s authenticity review.</p>
-          </div>
-          <ol className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-            {flow.map((step, index) => (
-              <li
-                key={step.key}
-                className={`relative flex min-w-0 flex-col rounded-[16px] p-3 sm:p-3.5 ${
-                  step.tone === "primary" ? "bg-[#f3f8e6] ring-2 ring-inset ring-[#c7d870]" : "bg-[#f6f8f3] ring-1 ring-inset ring-[#e8eee5]"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold ${
-                      step.tone === "primary" ? "bg-[#41695b] text-white" : "bg-white text-[#41695b] ring-1 ring-[#dfe7dc]"
-                    }`}
-                    aria-hidden
-                  >
-                    {index + 1}
-                  </span>
-                  <span className={`truncate text-[12px] font-semibold ${step.tone === "primary" ? "text-[#2f4f42]" : "text-[#4d5f55]"}`}>{step.label}</span>
-                </div>
-                {!step.loaded ? (
-                  <Shimmer className="mt-2 h-6 w-24" />
-                ) : (
-                  <span className="mt-1.5 break-words text-[clamp(1.15rem,4.5vw,1.5rem)] font-semibold leading-tight tracking-[-0.02em] tabular-nums">{formatINR(step.value)}</span>
-                )}
-                <span className={`mt-auto flex items-center justify-between gap-2 pt-1 text-[11.5px] ${step.tone === "primary" ? "text-[#4d6a2a]" : "text-[#6f7d74]"}`}>
-                  <span className="min-w-0 truncate">{step.loaded ? step.caption : "\u00a0"}</span>
-                  {step.action ? (
-                    <Link href={step.action.href} className="shrink-0 font-semibold text-[#41695b] underline-offset-2 hover:underline">
-                      {step.action.label} →
-                    </Link>
-                  ) : null}
-                </span>
-                {/* Arrow to the next stage (desktop row) */}
-                {index < flow.length - 1 ? (
-                  <span className="absolute -right-[13px] top-1/2 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-white text-[12px] text-[#7a8a80] shadow-sm ring-1 ring-[#e6ebe2] lg:flex" aria-hidden>
-                    →
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        </section>
+        <div className="mt-5">
+          <ReelEarningsSummary summary={reel} loading={socialAccounts.load.state === "loading"} error={socialAccounts.load.state === "error" ? socialAccounts.load.message : socialAccounts.load.state === "ready" ? socialAccounts.load.refreshError : undefined} />
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" aria-label="Payout summary">
+          <MetricTile label="Available balance" value={metrics ? formatINR(approvedEarnings) : "–"} caption={failures.metrics ? "Balance could not be refreshed" : "After approved claims"} loading={!ready.metrics} />
+          <MetricTile label="Paid out" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.credited)} caption="Lifetime" loading={!ready.batches} />
+          <MetricTile label="Pending withdrawal" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.pending)} caption="In open payout cycles" loading={!ready.batches} />
+          <MetricTile label="Open payout cycles" value={failures.batches && !batches.length ? "–" : String(payoutSummary.liveBatches)} caption={`${batches.length} cycles in total`} loading={!ready.batches} />
+        </div>
 
         <div className="mt-5 flex flex-col gap-4 sm:gap-5 lg:grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:items-start">
           {/* Left column (desktop) */}
           <div className="contents lg:flex lg:flex-col lg:gap-5">
             {/* Balance */}
-            <section aria-labelledby="balance-heading" className="relative order-1 overflow-hidden rounded-[24px] bg-[linear-gradient(150deg,#244d3f_0%,#1b3b30_100%)] p-5 text-white shadow-[0_28px_50px_-30px_rgba(27,59,48,0.8)] sm:p-6">
+            <section aria-labelledby="balance-heading" className="relative order-1 overflow-hidden rounded-2xl bg-[#244e39] p-5 text-white shadow-sm sm:p-6">
               <span className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-[#dce78f]/20 blur-3xl" />
               <div className="relative">
                 <div className="flex items-center justify-between gap-3">
@@ -929,12 +786,12 @@ export default function PayoutsPage() {
                   ) : null}
                 </div>
                 {ready.metrics ? (
-                  <div className="mt-1 break-words text-[clamp(2.2rem,9vw,3.25rem)] font-semibold leading-tight tracking-[-0.04em] tabular-nums">{formatINR(approvedEarnings)}</div>
+                  <div className="mt-1 break-words text-[clamp(2.2rem,9vw,3.25rem)] font-semibold leading-tight tracking-[-0.04em] tabular-nums">{metrics ? formatINR(approvedEarnings) : "Unavailable"}</div>
                 ) : (
                   <span className="mt-2 block h-12 w-44 animate-pulse rounded-xl bg-white/15" aria-label="Loading balance" />
                 )}
 
-                <div className="mt-4">
+                {metrics ? <div className="mt-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[12px] text-white/75">
                     <span>
                       {minimumOk ? "Minimum reached" : <>Minimum to request <span className="font-semibold text-white">{formatINR(MIN_PAYOUT_REQUEST_INR)}</span></>}
@@ -954,9 +811,9 @@ export default function PayoutsPage() {
                       <span key={mark} className="absolute top-0 h-full w-px bg-[#1b3b30]/40" style={{ left: `${mark}%` }} aria-hidden />
                     ))}
                   </div>
-                </div>
+                </div> : null}
 
-                {!coreReady ? (
+                {hasFailures ? <div role="status" className="mt-5 rounded-xl bg-white/10 p-4 text-[13px] leading-5">Some payout details are unavailable. Refresh to verify your balance and requirements before requesting a withdrawal.</div> : !coreReady ? (
                   <div className="mt-5 flex items-center gap-3 rounded-[16px] bg-white/[0.07] p-3.5 ring-1 ring-inset ring-white/10" aria-busy="true">
                     <span className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-white/10" />
                     <span className="min-w-0 flex-1 space-y-2">
@@ -1026,7 +883,8 @@ export default function PayoutsPage() {
                       <Shimmer className="mt-4 h-6 w-24" />
                     </div>
                   ))}
-                {ready.batches && batches.length === 0 && (
+                {ready.batches && failures.batches && !batches.length ? <p role="status" className="text-sm text-[#825317]">Payout history could not be loaded. Refresh to try again.</p> : null}
+                {ready.batches && !failures.batches && batches.length === 0 && (
                   <div className="flex flex-col items-center rounded-[18px] border border-dashed border-[#d9e3d6] bg-[#f8fbf5] px-5 py-8 text-center">
                     <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#41695b] ring-1 ring-[#e2e8de]" aria-hidden>
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -1129,6 +987,7 @@ export default function PayoutsPage() {
                       </li>
                     );
                   }
+                  if (failures[check.key === "min" ? "metrics" : check.key === "batch" ? "batches" : check.key]) return <li key={check.key} className="rounded-xl bg-[#fff8ec] px-3 py-3 text-[13px] text-[#825317]">{check.title}: verification unavailable. Refresh to try again.</li>;
                   if (check.key === "kyc") {
                     return (
                       <KycRow
@@ -1182,8 +1041,9 @@ export default function PayoutsPage() {
               className={`${card} order-3 scroll-mt-24 p-4 transition-shadow duration-500 sm:p-5 ${flash === "upi" ? "!ring-2 !ring-[#8db35a] shadow-[0_0_0_6px_rgba(141,179,90,0.18)]" : ""}`}
             >
               {(() => {
-                const state = !ready.upi ? "loading" : !upi?.upiId ? "none" : upiOk ? "verified" : "pending";
+                const state = !ready.upi ? "loading" : failures.upi ? "unavailable" : !upi?.upiId ? "none" : upiOk ? "verified" : "pending";
                 const chip = {
+                  unavailable: { text: "Unavailable", className: "bg-[#fff4d6] text-[#8a5a00] ring-[#f1dea6]" },
                   loading: { text: "…", className: "bg-[#f3f4f1] text-[#6f7d74] ring-[#e6ebe2]" },
                   none: { text: "Not added", className: "bg-[#fff4d6] text-[#8a5a00] ring-[#f1dea6]" },
                   pending: { text: "Verifying", className: "bg-[#eef4fb] text-[#1f5fa8] ring-[#cfe0f5]" },
