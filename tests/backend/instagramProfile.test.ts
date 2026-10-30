@@ -515,3 +515,16 @@ test("a login wall on the Reels tab and reel pages still refreshes saved reels f
   assert.match(profile.note, /came from public embeds/);
   assert.doesNotMatch(profile.note, /discovery paused/);
 });
+
+test("a profile embed's account summary supplies counts for an account with no posts", () => {
+  const context = JSON.stringify({ context: { username: "creator.name", full_name: "Creator", followers_count: 2, posts_count: 0, graphql_media: [], owner_id: 17979553314, type: "Profile" } });
+  const page = `<script>requireLazy(["ServerJS"],function(ServerJS){var s=new ServerJS();s.handle(${JSON.stringify({ require: [["Embed", [], [{ contextJSON: context }]]] })});});</script>`;
+  const profile = extractInstagramProfile(page, "creator.name");
+  assert.equal(profile.followers, 2);
+  assert.equal(profile.posts, 0);
+  assert.equal(profile.externalId, "17979553314");
+  assert.deepEqual(profile.media, []);
+  assert.throws(() => extractInstagramProfile(page.replace(/creator\.name/g, "someone.else"), "creator.name"), /readable counts/);
+  const richer = html({ username: "creator.name", edge_followed_by: { count: 3 }, biography: "Bio", is_private: false }) + page;
+  assert.equal(extractInstagramProfile(richer, "creator.name").biography, "Bio");
+});

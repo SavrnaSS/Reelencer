@@ -27,7 +27,9 @@ const row = (value: unknown): Row => value && typeof value === "object" && !Arra
 const decode = (value: string) => value.replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (all, n) => Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : all);
 
 function isRequestedProfile(value: Row, handle: string): boolean {
-  return String(value.username ?? "").toLowerCase() === handle && Boolean(value.edge_followed_by || value.follower_count !== undefined || value.edge_owner_to_timeline_media || value.is_private !== undefined);
+  // Profile embeds summarise the account as { username, followers_count, posts_count, owner_id }.
+  return String(value.username ?? "").toLowerCase() === handle && Boolean(value.edge_followed_by || value.follower_count !== undefined
+    || value.followers_count !== undefined || value.posts_count !== undefined || value.edge_owner_to_timeline_media || value.is_private !== undefined);
 }
 
 /** Reels-tab nodes omit usernames, but their numeric owner must match the requested profile's id or pk. */
@@ -38,7 +40,7 @@ function numericOwnerId(value: unknown): string | undefined {
 }
 
 function profileOwnerIds(objects: Row[], handle: string): Set<string> {
-  return new Set(objects.filter(object => isRequestedProfile(object, handle)).flatMap(object => [object.id, object.pk])
+  return new Set(objects.filter(object => isRequestedProfile(object, handle)).flatMap(object => [object.id, object.pk, object.owner_id])
     .map(numericOwnerId).filter((value): value is string => value !== undefined));
 }
 
@@ -97,13 +99,15 @@ function mediaFromObject(post: Row, code: string): ProfilePost {
 export function extractInstagramProfile(html: string, input: string): InstagramProfile {
   const handle = normalizeInstagramHandle(input);
   const objects = embeddedObjects(html);
-  const profile = objects.find(object => isRequestedProfile(object, handle));
+  // A full profile object (bio, privacy) wins over the embed's short summary when both are present.
+  const matches = objects.filter(object => isRequestedProfile(object, handle));
+  const profile = matches.find(object => object.followers_count === undefined && object.posts_count === undefined) ?? matches[0];
   const ownerIds = profileOwnerIds(objects, handle);
   const result: InstagramProfile = {
-    externalId: profile?.id ? String(profile.id) : undefined,
-    followers: count(row(profile?.edge_followed_by).count ?? profile?.follower_count),
+    externalId: profile?.id ? String(profile.id) : numericOwnerId(profile?.owner_id),
+    followers: count(row(profile?.edge_followed_by).count ?? profile?.follower_count ?? profile?.followers_count),
     following: count(row(profile?.edge_follow).count ?? profile?.following_count),
-    posts: count(row(profile?.edge_owner_to_timeline_media).count ?? profile?.media_count),
+    posts: count(row(profile?.edge_owner_to_timeline_media).count ?? profile?.media_count ?? profile?.posts_count),
     biography: typeof profile?.biography === "string" ? profile.biography.slice(0, 600) : undefined,
     isPrivate: typeof profile?.is_private === "boolean" ? profile.is_private : undefined,
     media: [],
