@@ -188,6 +188,51 @@ test("confirmed mutations cancel older reads and suppress their queued refresh",
   assert.deepEqual(reloaded.read("admin", "accounts")?.data, { status: "approved" });
 });
 
+test("a manual account sync keeps its newer count when an older collection sync finishes later", async () => {
+  const storage = new MemoryStorage();
+  const cache = createAdminSessionCache({ storage });
+  const accountsKey = "linked-accounts:v2";
+  const syncKey = "linked-accounts-sync:v2";
+  const pending = deferred<{ accounts: { id: string; views: number }[] }>();
+  let signal!: AbortSignal;
+  cache.write("admin", accountsKey, { accounts: [{ id: "reel-account", views: 913 }] }, { persist: true });
+  const background = cache.load("admin", syncKey, abortSignal => { signal = abortSignal; return pending.promise; });
+  const applyBackground = background.then(data => cache.write("admin", accountsKey, data, { persist: true }));
+  const cancelled = assert.rejects(applyBackground, { name: "AbortError" });
+  await Promise.resolve();
+
+  // LinkedAccountsPanel invalidates the separate collection-sync read before applying Sync now's result.
+  cache.invalidate("admin", syncKey);
+  cache.write("admin", accountsKey, { accounts: [{ id: "reel-account", views: 2017 }] }, { persist: true });
+  assert.equal(signal.aborted, true);
+  pending.resolve({ accounts: [{ id: "reel-account", views: 921 }] });
+  await cancelled;
+
+  assert.deepEqual(cache.read("admin", accountsKey)?.data, { accounts: [{ id: "reel-account", views: 2017 }] });
+  assert.deepEqual(createAdminSessionCache({ storage }).read("admin", accountsKey)?.data, { accounts: [{ id: "reel-account", views: 2017 }] });
+  assert.equal(cache.status("admin", accountsKey).error, null);
+});
+
+test("a cancelled collection read cannot clear or replace its newer replacement request", async () => {
+  const cache = createAdminSessionCache();
+  const key = "linked-accounts-sync:v2";
+  const oldResult = deferred<{ views: number }>();
+  const newResult = deferred<{ views: number }>();
+  const old = cache.load("admin", key, () => oldResult.promise);
+  const cancelled = assert.rejects(old, { name: "AbortError" });
+  await Promise.resolve();
+  cache.invalidate("admin", key);
+  const current = cache.load("admin", key, () => newResult.promise);
+  await Promise.resolve();
+  oldResult.resolve({ views: 921 });
+  await cancelled;
+  assert.equal(cache.status("admin", key).loading, true);
+  newResult.resolve({ views: 2017 });
+  assert.deepEqual(await current, { views: 2017 });
+  assert.deepEqual(cache.read("admin", key)?.data, { views: 2017 });
+  assert.equal(cache.status("admin", key).loading, false);
+});
+
 test("live invalidations coalesce into one follow-up read after the current request", async () => {
   const cache = createAdminSessionCache();
   const pending = deferred<{ count: number }>();

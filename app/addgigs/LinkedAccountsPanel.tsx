@@ -747,7 +747,18 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
   const [syncError, setSyncError] = useState<Error | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const collectionState = useRef({ revision: 0 });
+  const activeSync = useRef<object | null>(null);
+  useEffect(() => {
+    const state = collectionState.current;
+    mounted.current = true;
+    return () => { mounted.current = false; state.revision++; };
+  }, []);
+  const invalidateCollectionSync = useCallback(() => {
+    // Aborting handles pending reads; the revision also fences a settled response awaiting its continuation.
+    collectionState.current.revision++;
+    adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+  }, [adminId]);
   const read = useCallback(async (signal: AbortSignal, sync = false) => {
     const res = await fetch(`/api/social-accounts?scope=all${sync ? "&sync=1" : ""}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]) });
     const payload = await res.json().catch(() => null);
@@ -769,19 +780,28 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
   const loading = resource.refreshing || syncing || resource.loading;
 
   const syncAccounts = useCallback(async (force = false) => {
-    if (!isCurrentAdminCacheIdentity(adminId) || document.hidden || !navigator.onLine) return;
+    if (!mounted.current || !isCurrentAdminCacheIdentity(adminId) || document.hidden || !navigator.onLine) return;
     const lastAttempt = adminSessionCache.read<{ at: number }>(adminId, LINKED_SYNC_ATTEMPT_KEY, { maxAgeMs: 30 * 60_000, validate: isLinkedSyncAttempt })?.data.at;
     if (!linkedSyncDue(lastAttempt, Date.now(), force)) return;
     adminSessionCache.write(adminId, LINKED_SYNC_ATTEMPT_KEY, { at: Date.now() }, { persist: true });
+    const revision = collectionState.current.revision;
+    const request = {};
+    activeSync.current = request;
     if (mounted.current) { setSyncing(true); setSyncError(null); }
     try {
       const data = await adminSessionCache.load(adminId, LINKED_SYNC_CACHE_KEY, signal => read(signal, true), { force: true, validate: isLinkedAccountsData });
+      if (!mounted.current || !isCurrentAdminCacheIdentity(adminId) || revision !== collectionState.current.revision) return;
       // Confirmed sync wins over any older saved-data read still in flight.
       updateSaved(data);
-      if (mounted.current) setNow(Date.now());
+      setNow(Date.now());
     } catch (error) {
-      if (mounted.current && !(error instanceof Error && error.name === "AbortError")) setSyncError(error instanceof Error ? error : new Error("Profile checks couldn't finish. Saved data is still shown."));
-    } finally { if (mounted.current) setSyncing(false); }
+      if (mounted.current && isCurrentAdminCacheIdentity(adminId) && revision === collectionState.current.revision && !(error instanceof Error && error.name === "AbortError")) setSyncError(error instanceof Error ? error : new Error("Profile checks couldn't finish. Saved data is still shown."));
+    } finally {
+      if (activeSync.current === request) {
+        activeSync.current = null;
+        if (mounted.current && isCurrentAdminCacheIdentity(adminId)) setSyncing(false);
+      }
+    }
   }, [adminId, read, updateSaved]);
   const refreshVisible = useCallback(async () => {
     if (!navigator.onLine) return;
@@ -847,7 +867,7 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
   const selected = visible.find((a) => a.id === selectedId) ?? (isDesktop ? visible[0] : undefined);
   const update = (next: LinkedSocialAccount) => {
     window.dispatchEvent(new Event("admin-overview-refresh"));
-    adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+    invalidateCollectionSync();
     updateSaved(previous => linkedAccountsData({
       accounts: (previous?.accounts ?? accounts ?? []).map(account => account.id === next.id ? next : account),
       screenshotReader: previous?.screenshotReader ?? screenshotReader,
@@ -875,12 +895,12 @@ export default function LinkedAccountsPanel({ isDesktop, adminId }: { isDesktop:
       </div>
 
       <AccountRequestsQueue adminId={adminId} onLinked={() => {
-        adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+        invalidateCollectionSync();
         void refreshSaved({ force: true, afterCurrent: true });
       }} />
 
       <AutoSyncCard adminId={adminId} onChanged={() => {
-        adminSessionCache.invalidate(adminId, LINKED_SYNC_CACHE_KEY);
+        invalidateCollectionSync();
         void syncAccounts(true);
       }} />
 

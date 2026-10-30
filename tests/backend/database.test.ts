@@ -692,6 +692,7 @@ test('a team-pinned view count survives sync, records the public count beside it
   assert.deepEqual(await row(post.id), { views: 901, views_pinned: true, views_source: 'manual', synced_views: 1200 }, 'a higher public count never replaces a pinned one');
   await sync(post.id, 400);
   assert.equal((await row(post.id)).views, 901, 'nor does a lower one');
+  assert.equal((await row(post.id)).synced_views, 1200, 'a stale reader cannot lower the verified public high-water mark');
 
   // Saving again without views_pinned keeps the pin; an invalid pin value is rejected.
   await save({ views: 901, caption: 'Fixed caption' });
@@ -700,7 +701,7 @@ test('a team-pinned view count survives sync, records the public count beside it
 
   await assert.rejects(db.query('select public.resume_social_post_live_views($1,$2)', [worker, post.id]), /forbidden/);
   await db.query('select public.resume_social_post_live_views($1,$2)', [admin, post.id]);
-  assert.deepEqual(await row(post.id), { views: 400, views_pinned: false, views_source: 'profile', synced_views: 400 }, 'resuming takes the latest public count');
+  assert.deepEqual(await row(post.id), { views: 1200, views_pinned: false, views_source: 'profile', synced_views: 1200 }, 'resuming takes the highest verified public reading');
   await sync(post.id, 1300);
   assert.equal((await row(post.id)).views, 1300, 'live tracking continues after resuming');
   assert.equal(await scalar<number>("select count(*)::int as value from public.audit_events where action='social_post_views_resumed' and resource_id=$1", [post.id]), 1);

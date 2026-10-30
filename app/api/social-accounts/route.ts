@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { startSocialSyncScheduler } from "@/lib/api/socialSyncScheduler";
 import { z } from "zod";
 import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
@@ -11,6 +12,7 @@ import { recoverAccountProfile } from "@/lib/api/accountProfileRecovery";
 // Linked social accounts with their insight history. Creators get their own; admins can ask for every account
 // (`scope=all`) or just the counts behind the console badge (`scope=summary`).
 export const GET = withApi({ auth: "user" }, async (req) => {
+  startSocialSyncScheduler();
   const actor = await authenticate(req);
   const params = new URL(req.url).searchParams;
   const scope = params.get("scope");
