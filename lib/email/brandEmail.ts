@@ -35,6 +35,12 @@ export type BrandEmailInput = {
   /** Small note next to the button, e.g. "Expires in 24 hours". */
   ctaNote?: string;
   steps?: Array<{ title: string; body: string }>;
+  /** Heading above the steps. Defaults to "What happens next". */
+  stepsTitle?: string;
+  /** Put the steps above the button: for emails that are a set of instructions to follow, not a status update. */
+  stepsBeforeCta?: boolean;
+  /** A code the reader has to copy (a verification code), shown large and easy to select, under the intro. */
+  code?: { label: string; value: string; hint?: string };
   /** Raw link shown for clients where the button doesn't work. */
   fallbackLink?: string;
   /** Closing line (why they got this / what to do if it wasn't them). */
@@ -111,22 +117,24 @@ const TONES: Record<EmailTone, { bg: string; fg: string; dot: string; art: Email
 
 /**
  * Bulletproof button: a real VML button for Outlook desktop (which ignores padding/radius on links), and a styled
- * link everywhere else. Primary = the dashboard's dark button with a forward arrow; secondary = its outlined button.
+ * link everywhere else. Primary = the dashboard's dark button with a forward arrow; secondary = its outlined button. Both span the
+ * card's full width and stack, so they're equally easy to tap on a phone and line up on desktop.
  * The label sits in its own coloured <span>: Gmail and Apple Mail force links to `color:inherit` (see the
  * x-apple-data-detectors rule), which would otherwise turn white button text into dark-on-dark.
  */
 function button(label: string, href: string, kind: "primary" | "secondary") {
   const primary = kind === "primary";
   const fg = primary ? "#ffffff" : C.ink;
-  const width = Math.max(primary ? 220 : 170, Math.round(label.length * 8.4 + (primary ? 84 : 56)));
+  // Outlook desktop: the card's content width (600px card, 44px padding each side).
+  const width = 510;
   const content = `<span class="btn-label" style="color:${fg};">${esc(label)}</span>${
     primary ? `<span class="btn-label btn-arrow" style="color:${fg};padding-left:10px;font-weight:400;">&#8594;</span>` : ""
   }`;
   return `<!--[if mso]>
-<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(href)}" style="height:48px;v-text-anchor:middle;width:${width}px;" arcsize="17%" ${primary ? `stroke="f" fillcolor="${C.button}"` : `strokecolor="#d9ddd8" fillcolor="#ffffff"`}>
+<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="${esc(href)}" style="height:52px;v-text-anchor:middle;width:${width}px;" arcsize="20%" ${primary ? `stroke="f" fillcolor="${C.button}"` : `strokecolor="#d9ddd8" fillcolor="#ffffff"`}>
 <w:anchorlock/><center style="color:${fg};font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">${esc(label)}${primary ? " &#8594;" : ""}</center>
 </v:roundrect>
-<![endif]--><!--[if !mso]><!-- --><a class="${primary ? "btn-primary" : "btn-secondary"}" href="${esc(href)}" target="_blank" style="display:inline-block;min-width:${primary ? 180 : 140}px;box-sizing:border-box;text-align:center;${primary ? `background:${C.button};border:1px solid ${C.button};` : "background:#ffffff;border:1px solid #d9ddd8;"}padding:15px 26px;font:600 15px/1.1 ${FONT};color:${fg};text-decoration:none;border-radius:8px;mso-hide:all;">${content}</a><!--<![endif]-->`;
+<![endif]--><!--[if !mso]><!-- --><a class="${primary ? "btn-primary" : "btn-secondary"}" href="${esc(href)}" target="_blank" style="display:block;width:100%;box-sizing:border-box;text-align:center;${primary ? `background:${C.button};border:1px solid ${C.button};` : "background:#ffffff;border:1px solid #d9ddd8;"}padding:17px 24px;font:600 16px/1.1 ${FONT};color:${fg};text-decoration:none;border-radius:10px;mso-hide:all;">${content}</a><!--<![endif]-->`;
 }
 
 /** First name for a friendly greeting, or "" when the name is missing/placeholder. */
@@ -183,10 +191,20 @@ ${highlights
     )
     .join("");
 
+  const stepsTitle = input.stepsTitle ?? "What happens next";
+  // Tap-to-select on phones (user-select:all), large monospace so 0/O and 1/I can't be confused.
+  const codeHtml = input.code
+    ? `
+              <div class="code-box" style="margin-top:24px;border:1px dashed #9cc7a8;border-radius:12px;background:#f1f8f0;padding:18px 16px;text-align:center;">
+                <div class="t-muted" style="font:600 12px/1.4 ${FONT};color:${C.muted};letter-spacing:.04em;text-transform:uppercase;">${esc(input.code.label)}</div>
+                <div class="code t-ink" style="margin-top:8px;font:700 30px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:${C.ink};letter-spacing:.12em;-webkit-user-select:all;user-select:all;word-break:break-all;">${esc(input.code.value)}</div>
+                ${input.code.hint ? `<div class="t-muted" style="margin-top:8px;font:400 13px/1.5 ${FONT};color:${C.muted};">${esc(input.code.hint)}</div>` : ""}
+              </div>`
+    : "";
   const stepHtml = steps.length
     ? `
               <div class="rule" style="margin:30px 0 18px;border-top:1px solid ${C.hairline};"></div>
-              <div class="t-ink" style="margin-bottom:12px;font:600 14px/1.4 ${FONT};color:${C.ink};">What happens next</div>
+              <div class="t-ink" style="margin-bottom:12px;font:600 14px/1.4 ${FONT};color:${C.ink};">${esc(stepsTitle)}</div>
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
 ${steps
   .map(
@@ -206,16 +224,18 @@ ${steps
 
   const buttons = input.cta
     ? `
-              <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" class="btn-wrap" style="margin:30px auto 0;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="btn-wrap" style="margin:30px 0 0;">
                 <tr>
-                  <td class="btn btn-cell-primary" align="center" bgcolor="${C.button}" style="border-radius:8px;background:${C.button};color:#ffffff;">${button(input.cta.label, input.cta.href, "primary")}</td>
-                  ${
-                    input.secondaryCta
-                      ? `<td class="btn-gap" width="10" style="font-size:0;line-height:0;">&nbsp;</td>
-                  <td class="btn btn-cell-secondary" align="center" bgcolor="#ffffff" style="border-radius:8px;background:#ffffff;color:${C.ink};">${button(input.secondaryCta.label, input.secondaryCta.href, "secondary")}</td>`
-                      : ""
-                  }
-                </tr>
+                  <td class="btn btn-cell-primary" align="center" bgcolor="${C.button}" style="border-radius:10px;background:${C.button};color:#ffffff;">${button(input.cta.label, input.cta.href, "primary")}</td>
+                </tr>${
+                  input.secondaryCta
+                    ? `
+                <tr><td class="btn-gap" height="10" style="height:10px;font-size:0;line-height:0;">&nbsp;</td></tr>
+                <tr>
+                  <td class="btn btn-cell-secondary" align="center" bgcolor="#ffffff" style="border-radius:10px;background:#ffffff;color:${C.ink};">${button(input.secondaryCta.label, input.secondaryCta.href, "secondary")}</td>
+                </tr>`
+                    : ""
+                }
               </table>
               ${input.ctaNote ? `<div class="t-muted" style="margin-top:12px;text-align:center;font:500 13px/1.4 ${FONT};color:${C.muted};">${esc(input.ctaNote)}</div>` : ""}`
     : "";
@@ -241,9 +261,13 @@ ${steps
     a { color:${C.green}; }
     /* Stop clients from restyling detected phone numbers/addresses/dates. */
     a[x-apple-data-detectors], u + #body a, #MessageViewBody a { color:inherit !important; text-decoration:none !important; font-size:inherit !important; font-family:inherit !important; font-weight:inherit !important; line-height:inherit !important; }
-    .btn-primary:hover { background:#2b3a31 !important; }
-    .btn-secondary:hover { background:#f7f8f6 !important; }
-    .btn-primary:hover .btn-arrow { padding-left:14px !important; }
+    /* Hover/focus (clients that support it): a clear lift without ever changing the label colour. */
+    .btn-primary, .btn-secondary { transition:background-color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+    .btn-arrow { transition:padding .15s ease; }
+    .btn-primary:hover, .btn-primary:focus-visible { background:#2e7d4f !important; border-color:#2e7d4f !important; box-shadow:0 4px 14px rgba(46,125,79,.28) !important; }
+    .btn-secondary:hover, .btn-secondary:focus-visible { background:#f1f5f0 !important; border-color:#9cc7a8 !important; box-shadow:0 2px 8px rgba(26,32,28,.06) !important; }
+    .btn-primary:hover .btn-arrow { padding-left:16px !important; }
+    .btn-primary:focus-visible, .btn-secondary:focus-visible { outline:2px solid #9cc7a8; outline-offset:2px; }
     @media only screen and (max-width:600px) {
       .outer { padding:16px 10px 24px !important; }
       .px { padding-left:22px !important; padding-right:22px !important; }
@@ -253,10 +277,9 @@ ${steps
       .kv-k, .kv-v { display:block !important; width:auto !important; }
       .kv-k { padding-bottom:0 !important; }
       .kv-v { padding-top:2px !important; border-top:0 !important; }
-      .btn-wrap, .btn-wrap tbody, .btn-wrap tr, .btn-wrap td { display:block !important; width:100% !important; box-sizing:border-box; }
-      .btn a { display:block !important; text-align:center !important; min-width:0 !important; }
-      .btn-gap { height:10px !important; }
+      .btn a { padding:16px 18px !important; font-size:15px !important; }
       .rcpt { font-size:12px !important; }
+      .code { font-size:26px !important; letter-spacing:.08em !important; }
     }
     @media (prefers-color-scheme: dark) {
       .page { background:#111513 !important; }
@@ -269,11 +292,14 @@ ${steps
       .rule { border-color:#2a312d !important; }
       .chip { background:${tone.darkBg} !important; color:${tone.darkFg} !important; }
       .step-dot { background:#173222 !important; color:#9fd7ad !important; }
+      .code-box { background:#132219 !important; border-color:#2f5a3d !important; }
       .link { color:#8fd3a3 !important; }
       .btn-primary, .btn-cell-primary { background:#eef2ee !important; border-color:#eef2ee !important; color:#111513 !important; }
       .btn-primary .btn-label { color:#111513 !important; }
       .btn-secondary, .btn-cell-secondary { background:#1a1f1c !important; border-color:#3a433d !important; color:#eef2ee !important; }
       .btn-secondary .btn-label { color:#eef2ee !important; }
+      .btn-primary:hover, .btn-primary:focus-visible { background:#bfe3c8 !important; border-color:#bfe3c8 !important; box-shadow:0 4px 14px rgba(0,0,0,.35) !important; }
+      .btn-secondary:hover, .btn-secondary:focus-visible { background:#232b26 !important; border-color:#6f9c7d !important; box-shadow:none !important; }
     }
     [data-ogsc] .t-ink, [data-ogsc] .brand { color:#eef2ee !important; }
     [data-ogsc] .t-body { color:#cdd5cf !important; }
@@ -326,10 +352,10 @@ ${steps
                 <div class="rule" style="margin:26px 0 24px;border-top:1px solid ${C.hairline};"></div>
                 ${input.greeting ? `<p class="t-ink" style="margin:0 0 12px;font:400 16px/1.6 ${FONT};color:${C.ink};">${esc(input.greeting)}</p>` : ""}
                 <p class="t-body" style="margin:0;font:400 16px/1.65 ${FONT};color:${C.body};">${rich(input.intro)}</p>
+                ${codeHtml}
                 ${highlightHtml}
                 ${sectionHtml}
-                ${buttons}
-                ${stepHtml}
+                ${input.stepsBeforeCta ? `${stepHtml}${buttons}` : `${buttons}${stepHtml}`}
                 ${
                   input.fallbackLink
                     ? `<div class="panel" style="margin-top:${stepHtml ? "10px" : "28px"};border:1px solid ${C.hairline};border-radius:10px;background:${C.panel};padding:14px 16px;">
@@ -373,12 +399,14 @@ ${steps
     "",
     input.greeting ?? "",
     input.intro,
+    ...(input.code ? ["", `${input.code.label}: ${input.code.value}`, ...(input.code.hint ? [input.code.hint] : [])] : []),
     ...(highlights.length ? ["", ...highlights.map((h) => `${h.label}: ${h.value}`)] : []),
     ...sections.flatMap((s) => ["", `${s.label}:`, s.value]),
+    ...(input.stepsBeforeCta && steps.length ? ["", `${stepsTitle}:`, ...steps.map((s, i) => `${i + 1}. ${s.title} - ${s.body}`)] : []),
     ...(input.cta ? ["", `${input.cta.label}: ${input.cta.href}`] : []),
     ...(input.secondaryCta ? [`${input.secondaryCta.label}: ${input.secondaryCta.href}`] : []),
     input.ctaNote ? `(${input.ctaNote})` : "",
-    ...(steps.length ? ["", "What happens next:", ...steps.map((s, i) => `${i + 1}. ${s.title} - ${s.body}`)] : []),
+    ...(!input.stepsBeforeCta && steps.length ? ["", `${stepsTitle}:`, ...steps.map((s, i) => `${i + 1}. ${s.title} - ${s.body}`)] : []),
     ...(input.note ? ["", input.note] : []),
     "",
     "Thanks,",

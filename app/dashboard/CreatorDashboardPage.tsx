@@ -16,6 +16,7 @@ import GigWorkPanel, { requestGigWorkStart, type WorkAssignment } from "./GigWor
 import GigBriefAssets from "./GigBriefAssets";
 import DashboardJobsView, { type JobPosting } from "./DashboardJobsView";
 import AccountSetupPanel from "./AccountSetupPanel";
+import AccountSetupCountdown from "./AccountSetupCountdown";
 import GigSampleReel from "./GigSampleReel";
 import SocialAccountsView from "./SocialAccountsView";
 import { parseGigSamples } from "@/lib/gigSamples";
@@ -63,7 +64,7 @@ import {
   FEEDBACK_MIN_MESSAGE_LENGTH,
   type FeedbackCategory,
 } from "@/lib/feedback";
-import { accountPlatformFor, payoutPhrase, type AccountSetupView } from "@/lib/accountSetup";
+import { ACCOUNT_SETUP_ANCHOR, accountPlatformFor, payoutPhrase, type AccountSetupView } from "@/lib/accountSetup";
 import { resolveGigApplicationMode, type GigApplicationMode } from "@/lib/gigApplicationMode";
 import { supabase } from "@/lib/supabaseClient";
 import { applicationQuota, formatWait, quotaBlocksGig, quotaCoversGig, quotaLimitMessage, strictestQuota, type ApplicationQuota } from "@/lib/applicationQuota";
@@ -1157,6 +1158,25 @@ function isProjectGig(gig: Pick<Gig, "gigType">) {
   return String(gig.gigType ?? "")
     .trim()
     .toLowerCase() === "project";
+}
+
+/** Scrolls to the gig page's account setup once it has rendered, and flashes it so the eye lands there. */
+function revealAccountSetup(attempt = 0) {
+  if (typeof window === "undefined") return;
+  const target = document.getElementById(ACCOUNT_SETUP_ANCHOR);
+  if (!target) {
+    if (attempt < 90) window.requestAnimationFrame(() => revealAccountSetup(attempt + 1));
+    return;
+  }
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  target.focus({ preventScroll: true });
+  if (!reduceMotion) {
+    target.animate(
+      [{ boxShadow: "0 0 0 0 rgba(46,125,79,0)" }, { boxShadow: "0 0 0 4px rgba(46,125,79,0.35)", offset: 0.25 }, { boxShadow: "0 0 0 0 rgba(46,125,79,0)" }],
+      { duration: 1800, delay: 350, easing: "ease-out" }
+    );
+  }
 }
 
 function isContentPostingGig(gig: Pick<Gig, "gigType">) {
@@ -3625,6 +3645,8 @@ export default function DashboardPage() {
   const [directApplySuccess, setDirectApplySuccess] = useState<{
     /** Email Creator: approved on submit, work starts right away. */
     instant?: boolean;
+    /** Content Posting: the account setup comes next, and the sheet opens it after a countdown. */
+    setupPlatform?: string;
     gigId: string;
     title: string;
     company: string;
@@ -4595,6 +4617,7 @@ export default function DashboardPage() {
       }
       setDirectApplySuccess({
         instant: instantApproval,
+        setupPlatform: !instantApproval && isContentPostingGig(directApplyTargetGig) ? directApplyTargetGig.platform || "Instagram" : undefined,
         gigId: submittedGigId,
         title: directApplyTargetGig.title,
         company: directApplyTargetGig.company,
@@ -4970,6 +4993,12 @@ export default function DashboardPage() {
     writeDashboardSectionToUrl(section, options);
     openDashboardDestination(section, options);
     if (typeof window !== "undefined") window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+  };
+  const openAccountSetupFromSuccess = (gigId: string) => {
+    setDirectApplySuccess(null);
+    navigateFromView("find", { gigId, intent: "details" });
+    // navigateFromView scrolls to the top on the next frame; land on the setup panel after that.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => revealAccountSetup()));
   };
 
   const renderSection = () => {
@@ -5854,6 +5883,7 @@ export default function DashboardPage() {
                               ) : null}
 
                               {needsAccountSetup && selectedGigApplication && !(selectedGigReviewStatus === "Accepted" && accountSetup?.status === "Verified") ? (
+                                <div id={ACCOUNT_SETUP_ANCHOR} tabIndex={-1} className="scroll-mt-24 rounded-2xl outline-none">
                                 <AccountSetupPanel
                                   key={selectedGigApplication.id}
                                   gig={selectedGig}
@@ -5867,6 +5897,7 @@ export default function DashboardPage() {
                                     });
                                   }}
                                 />
+                                </div>
                               ) : null}
 
                               {selectedGigReviewStatus === "Accepted"
@@ -7810,10 +7841,15 @@ export default function DashboardPage() {
                       ) : (
                         <>
                           You&apos;re in recruiter screening for <span className="font-semibold text-[#1a201c]">{directApplySuccess.title}</span> at {directApplySuccess.company}.
+                          {directApplySuccess.setupPlatform ? " One quick step left before you can post." : null}
                         </>
                       )}
                     </p>
                   </div>
+
+                  {directApplySuccess.setupPlatform ? (
+                    <AccountSetupCountdown key={directApplySuccess.gigId} platform={directApplySuccess.setupPlatform} onGo={() => openAccountSetupFromSuccess(directApplySuccess.gigId)} />
+                  ) : null}
 
                   <dl className="mt-5 divide-y divide-[#f0f1ef] rounded-lg border border-[#ebedea] text-[13px]">
                     <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
@@ -7853,7 +7889,7 @@ export default function DashboardPage() {
                   <ol className="mt-5 grid grid-cols-3 gap-2" aria-label="Application progress">
                     {[
                       { label: "Applied", state: "done" },
-                      { label: "Screening", state: "current" },
+                      directApplySuccess.setupPlatform ? { label: "Account setup", state: "current" } : { label: "Screening", state: "current" },
                       { label: "Decision", state: "todo" },
                     ].map((step) => (
                       <li key={step.label} className="min-w-0">
@@ -7874,7 +7910,11 @@ export default function DashboardPage() {
                     ))}
                   </ol>
                   <p className="mt-2 text-center text-[12px] text-[#7a827c]">
-                    {directApplySuccess.instant ? "No waiting: your five work emails and their inbox are ready on the gig page." : "The decision will appear in Jobs and Messages."}
+                    {directApplySuccess.instant
+                      ? "No waiting: your five work emails and their inbox are ready on the gig page."
+                      : directApplySuccess.setupPlatform
+                        ? "Your application stays in screening while you set up the account."
+                        : "The decision will appear in Jobs and Messages."}
                   </p>
                 </div>
 
@@ -7889,13 +7929,14 @@ export default function DashboardPage() {
                     className="w-full sm:h-9 sm:flex-1 sm:text-[13px]"
                     onClick={() => {
                       const gigId = directApplySuccess.gigId;
+                      if (directApplySuccess.setupPlatform) return openAccountSetupFromSuccess(gigId);
                       const instant = directApplySuccess.instant;
                       setDirectApplySuccess(null);
                       navigateFromView("find", { gigId, intent: "details" });
                       if (instant) requestGigWorkStart(gigId);
                     }}
                   >
-                    {directApplySuccess.instant ? "Open my work emails" : "View application"}
+                    {directApplySuccess.instant ? "Open my work emails" : directApplySuccess.setupPlatform ? "Set up account now" : "View application"}
                   </UiButton>
                   <UiButton
                     size="lg"

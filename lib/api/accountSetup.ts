@@ -1,10 +1,13 @@
 import "server-only";
 import { ACCOUNT_REQUEST_LIMITS, makeVerifyCode } from "@/lib/accountRequests";
 import {
+  ACCOUNT_SETUP_ANCHOR,
   accountPlatformFor,
   canReadBio,
   isContentPostingType,
+  instructionLines,
   normalizeHandle,
+  parseAccountInstructions,
   payoutPhrase,
   readStoredAccountSetup,
   redactProposal,
@@ -182,6 +185,76 @@ function ownershipConfirmedMail(setup: StoredAccountSetup, gig: DbRecord): Param
     ctaLabel: "View application",
     ...(setup.profileUrl ? { secondaryCtaLabel: `Open @${setup.handle}`, secondaryCtaHref: setup.profileUrl } : {}),
   };
+}
+
+/**
+ * The email a creator gets right after applying to a Content Posting gig: their bio code and how to set up, link
+ * and submit the account, personalised with the gig, the brand's own setup brief and the pay.
+ */
+export function contentPostingSetupMail(input: {
+  applicationId: string;
+  gig: DbRecord;
+  gigUrl: string;
+}): Parameters<typeof sendLifecycleNotification>[2] {
+  const { gig } = input;
+  const platform = accountPlatformFor(String(gig.platform ?? ""));
+  const readable = canReadBio(platform);
+  const code = accountVerifyCode(input.applicationId);
+  const title = String(gig.title ?? "").trim() || "your gig";
+  const company = String(gig.company ?? "").trim() || "the brand";
+  const pay = payoutPhrase(String(gig.payout ?? ""), String(gig.payout_type ?? ""));
+  const brief = instructionLines(parseAccountInstructions(gig.requirements));
+  // The platform's how-to without its closing "don't post yet" line, which is said once below.
+  const prepare = platform.steps.slice(0, -1).join(" ");
+  const bioWhere = platform.id === "instagram" ? "In the Instagram app, tap Edit profile, then Bio" : platform.id === "youtube" ? "In YouTube Studio, open Customisation, then Description" : `Open your ${platform.label} profile settings`;
+  // Worded as a plain transactional message (no "verify your account" or money-making phrasing, no links outside
+  // Reelencer) so inbox filters don't mistake a code plus an account link for phishing.
+  return {
+    eyebrow: "Next Step",
+    subject: `${title}: your next step`,
+    tone: "neutral",
+    illustration: "welcome",
+    title: "Add your profile code to get started",
+    preheader: `Add ${code} to your ${platform.label} bio, then share your username on the gig page. About 3 minutes.`,
+    intro: `Thanks for applying to ${title} with ${company}. The next step is to connect the ${platform.label} profile you'll post from. It takes about 3 minutes: add the code below to your bio, then share your username on the gig page.`,
+    code: { label: "Your profile code", value: code, hint: "Only for this gig. Add it anywhere in your bio, exactly as shown." },
+    highlights: [
+      { label: "Gig", value: title },
+      { label: "Platform", value: platform.label },
+      ...(pay ? [{ label: "Rate", value: pay }] : []),
+    ],
+    stepsTitle: "How to finish setup",
+    stepsBeforeCta: true,
+    steps: [
+      { title: `Prepare your ${platform.label} profile`, body: prepare },
+      { title: "Add the code to your bio", body: `${bioWhere}. Add ${code} anywhere and save. Your current bio text can stay.` },
+      { title: "Share your username", body: `Open ${title} on your Reelencer dashboard. Under Account setup, enter your @username and tap Submit.` },
+      readable
+        ? { title: "We confirm it", body: "We check your public bio and email you once the code shows up. The team then reviews the profile." }
+        : { title: "The team confirms it", body: "A reviewer opens the profile, looks for the code and emails you the outcome." },
+    ],
+    sections: [
+      ...(brief.length ? [{ label: `From ${company}'s brief`, value: brief.map((line) => `• ${line}`).join("\n") }] : []),
+      { label: "Good to know", value: "Keep the profile public and the code in your bio until the team approves it. Please wait for approval before posting the gig's reels, and keep the same username." },
+    ],
+    ctaLabel: "Open account setup",
+    ctaHref: `${input.gigUrl}#${ACCOUNT_SETUP_ANCHOR}`,
+    ctaNote: "Opens your gig page on Reelencer",
+    footer: `You're receiving this because you applied to ${title} on Reelencer. Your code and setup progress are always on the gig page.`,
+  };
+}
+
+/** Sends the setup email for a fresh Content Posting application. Never throws. */
+export async function sendContentPostingSetupMail(sb: ReturnType<typeof supabaseAdmin>, row: DbRecord): Promise<MailStatus> {
+  try {
+    const { data: gig, error } = await sb.from("gigs").select("id,title,company,platform,gig_type,payout,payout_type,requirements").eq("id", String(row.gig_id)).maybeSingle();
+    if (error || !gig) return { sent: false, reason: "The gig could not be loaded for the setup email." };
+    const { to, context } = await resolveNotificationContext(sb, row);
+    if (!context) return { sent: false, recipient: to, reason: "No recipient email was found for this application." };
+    return await sendLifecycleNotification(to, context, contentPostingSetupMail({ applicationId: String(row.id), gig: gig as DbRecord, gigUrl: context.gigUrl }));
+  } catch (error) {
+    return { sent: false, reason: error instanceof Error ? error.message : "Notification failed." };
+  }
 }
 
 /** Creator submits (or resubmits after a change request) the account they made, with the code in its bio. */

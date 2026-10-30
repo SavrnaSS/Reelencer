@@ -4,7 +4,8 @@ import { ApiError, databaseError } from "@/lib/api/errors";
 import { NextResponse } from "next/server";
 import { resolveWorkerUserId } from "@/lib/api/work";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { decodePublicWorkerName } from "@/lib/api/accountSetup";
+import { decodePublicWorkerName, sendContentPostingSetupMail } from "@/lib/api/accountSetup";
+import { isContentPostingType } from "@/lib/accountSetup";
 import { readCurrentApplications } from "@/lib/api/applicationReads";
 import { quotaLimitMessage, type ApplicationQuota } from "@/lib/applicationQuota";
 import {
@@ -111,7 +112,10 @@ async function handlePOST(req: Request) {
     let mailStatus: MailStatus | null = null;
     try {
       const decoded = decodeWorkerName(data.worker_name);
-      if (decoded.proposal || decoded.workerEmail) {
+      // Content Posting: the next step is linking the account, so that email replaces the generic "received" one.
+      if (isContentPostingType(String(gig.gig_type ?? "")) && data.status !== "Accepted") {
+        mailStatus = await sendContentPostingSetupMail(sb, data);
+      } else if (decoded.proposal || decoded.workerEmail) {
         const { to, context } = await resolveNotificationContext(sb, data);
         const submittedProposal = hasMeaningfulProposalSubmission(decoded.proposal);
         mailStatus = await sendLifecycleNotification(to, context, {

@@ -244,6 +244,8 @@ export async function sendLifecycleNotification(
   context: NotificationContext | null,
   config: {
     eyebrow: string;
+    /** Defaults to "<eyebrow>: <gig title>". */
+    subject?: string;
     title: string;
     tone?: EmailTone;
     illustration?: EmailIllustration;
@@ -254,7 +256,11 @@ export async function sendLifecycleNotification(
     highlights?: Array<{ label: string; value: string }>;
     /** Numbered "What happens next" list. */
     steps?: Array<{ title: string; body: string }>;
+    stepsTitle?: string;
+    stepsBeforeCta?: boolean;
+    code?: { label: string; value: string; hint?: string };
     ctaLabel?: string;
+    ctaNote?: string;
     ctaHref?: string;
     secondaryCtaLabel?: string;
     secondaryCtaHref?: string;
@@ -262,7 +268,7 @@ export async function sendLifecycleNotification(
   }
 ) : Promise<MailStatus> {
   if (!to || !context) return { sent: false, recipient: to, reason: "No recipient email was found for this application." };
-  const subject = `${config.eyebrow}: ${context.gigTitle}`;
+  const subject = config.subject ?? `${config.eyebrow}: ${context.gigTitle}`;
   const first = firstName(context.recipient);
   const ctaHref = config.ctaHref ?? context.gigUrl;
   const { html, text } = renderBrandEmail({
@@ -278,7 +284,11 @@ export async function sendLifecycleNotification(
     highlights: config.highlights,
     sections: config.sections,
     steps: config.steps,
+    stepsTitle: config.stepsTitle,
+    stepsBeforeCta: config.stepsBeforeCta,
+    code: config.code,
     cta: { label: config.ctaLabel ?? "View my project", href: ctaHref },
+    ctaNote: config.ctaNote,
     secondaryCta: config.secondaryCtaLabel && config.secondaryCtaHref ? { label: config.secondaryCtaLabel, href: config.secondaryCtaHref } : undefined,
     note: config.footer ?? `You're receiving this because you applied to ${context.gigTitle} on Reelencer. Your project panel always has the latest status.`,
   });

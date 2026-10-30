@@ -4,6 +4,7 @@ import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { ACCOUNT_REQUEST_LIMITS } from "@/lib/accountRequests";
 import {
+  ACCOUNT_SETUP_ANCHOR,
   ACCOUNT_LIMITS,
   accountPlatformFor,
   canReadBio,
@@ -323,6 +324,16 @@ export default function AccountSetupPanel({
   const verified = setup?.status === "Verified" || application.status === "Accepted";
   const changesRequested = setup?.status === "ChangesRequested";
   const owned = ownershipProven(setup);
+
+  // Arriving from the setup email: bring the form into view once, then drop the hash so it doesn't happen again.
+  useEffect(() => {
+    if (window.location.hash !== `#${ACCOUNT_SETUP_ANCHOR}`) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(ACCOUNT_SETUP_ANCHOR)?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   const [editing, setEditing] = useState(false);
   const formOpen = !verified && (!setup || changesRequested || editing);

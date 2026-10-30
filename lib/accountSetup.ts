@@ -355,4 +355,7 @@ export function payoutPhrase(payout?: string, payoutType?: string) {
   return amount;
 }
 
+/** Where the account form sits on the gig page: the setup email links here and the panel scrolls into view. */
+export const ACCOUNT_SETUP_ANCHOR = "account-setup";
+
 export const isContentPostingType = (gigType?: string) => String(gigType ?? "").trim().toLowerCase() === "content posting";
