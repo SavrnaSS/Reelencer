@@ -250,6 +250,7 @@ function postPath(input: string): string | undefined {
 }
 
 const stopsReads = (error: unknown) => /limited|redirected/i.test(error instanceof Error ? error.message : "");
+const rateLimited = (error: unknown) => error instanceof SocialSyncError && error.code === "rate_limited";
 
 /** Fetch a submitted reel directly; its owner and shortcode must match before any numbers are accepted. */
 /**
@@ -345,14 +346,20 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
     for (const link of page.matchAll(/<a\b[^>]*href\s*=\s*(["'])([^"']+)\1/gi)) discovered.push(decode(link[2]));
   };
   collect(html);
-  let blocked = false;
+  // A rate limit stops every further read. A login wall on a full page (the Reels tab or a reel page) only stops
+  // full-page reads: the per-reel embeds are served separately and usually stay public, so saved reels keep updating.
+  let blocked = false, walled = false;
+  const pageFailed = (error: unknown) => {
+    if (rateLimited(error)) blocked = true;
+    else if (stopsReads(error)) walled = true;
+  };
   if (profile.posts !== 0 && !signal.aborted) {
     try { if (!usedEmbed) collect(await readPage(`/${handle}/embed/`, AbortSignal.any([signal, AbortSignal.timeout(2500)]))); }
     catch (error) { blocked = stopsReads(error); }
     // The profile feed can be pinned, cached, or omit reels shared only to the Reels tab.
-    if (!blocked && !signal.aborted) {
+    if (!blocked && !walled && !signal.aborted) {
       try { collect(await readPage(`/${handle}/reels/`, AbortSignal.any([signal, AbortSignal.timeout(1500)]))); }
-      catch (error) { blocked = stopsReads(error); }
+      catch (error) { pageFailed(error); }
     }
   }
   const trackedPaths = [...new Map(trackedUrls.map(postPath).filter((path): path is string => !!path).map((path) => [path.split('/')[2], path])).values()];
@@ -393,11 +400,11 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
         if (stopsReads(error)) blocked = true;
         if (signal.aborted || blocked) return undefined;
       }
-      if (signal.aborted) return embedded;
+      if (signal.aborted || walled) return embedded;
       try {
         const primary = extractInstagramPost(await readPage(path, signal), handle, code);
         return mergeReelReadings(embedded, primary);
-      } catch (error) { if (stopsReads(error)) blocked = true; return embedded; }
+      } catch (error) { pageFailed(error); return embedded; }
     }));
     for (const [offset, media] of results.entries()) {
       checked++;
@@ -410,6 +417,7 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
   if (checked) profile.note += ` Checked ${checked} public reels including embed data; ${unavailable} did not expose verified view counts.`;
   else if (!profile.media.length) profile.note += " No reel links exposed on this profile; add a reel link to track its public metrics.";
   if (blocked) profile.note += " Additional discovery paused because Instagram limited or redirected a read.";
+  else if (walled) profile.note += " Instagram asked for login on full pages, so reel counts came from public embeds.";
   return profile;
 }
 

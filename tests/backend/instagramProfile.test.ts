@@ -495,3 +495,23 @@ test("direct reel primary-page rate limits preserve a valid embed and stop befor
   assert.equal((await fetchInstagramReel('creator.name', 'https://www.instagram.com/reel/CURRENT/'))?.views, 913);
   assert.deepEqual(urls, ['https://www.instagram.com/reel/CURRENT/embed/', 'https://www.instagram.com/reel/CURRENT/']);
 });
+
+test("a login wall on the Reels tab and reel pages still refreshes saved reels from their public embeds", async () => {
+  const urls: string[] = [];
+  globalThis.fetch = (async (input) => {
+    const url = String(input); urls.push(url);
+    if (url.endsWith('/creator.name/')) return new Response(html(base), { headers: { 'content-type': 'text/html' } });
+    if (/\/reel\/\w+\/embed\/$/.test(url)) {
+      const code = url.split('/')[4];
+      return new Response(embedPage({ shortcode: code, is_video: true, owner: { username: "creator.name" }, video_view_count: code === "ABC" ? 2232 : 900, like_count: 41 }), { headers: { 'content-type': 'text/html' } });
+    }
+    if (url.endsWith('/creator.name/embed/')) return new Response('', { headers: { 'content-type': 'text/html' } });
+    return new Response(null, { status: 302, headers: { location: 'https://www.instagram.com/accounts/login/' } });
+  }) as typeof fetch;
+  const profile = await fetchInstagramProfile("creator.name", ["https://www.instagram.com/reel/ABC/", "https://www.instagram.com/reel/DEF/"]);
+  assert.deepEqual(profile.media.map((media) => [media.url, media.views]), [["https://www.instagram.com/reel/ABC/", 2232], ["https://www.instagram.com/reel/DEF/", 900]]);
+  assert.ok(urls.includes("https://www.instagram.com/reel/DEF/embed/"), "every saved reel's embed is read");
+  assert.equal(urls.filter((url) => /\/reel\/\w+\/$/.test(url)).length, 0, "no reel pages after the Reels tab asked for login");
+  assert.match(profile.note, /came from public embeds/);
+  assert.doesNotMatch(profile.note, /discovery paused/);
+});
