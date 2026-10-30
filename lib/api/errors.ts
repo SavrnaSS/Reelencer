@@ -41,6 +41,10 @@ export function databaseError(error: { code?: string; message?: string } | null)
       worker_inactive: [409, "Restore this worker's access before assigning accounts or creating work."],
       worker_deleted: [409, "This worker has been deleted. Refresh applications before continuing."],
       documents_required: [400, "Upload your identity document and selfie before submitting verification."],
+      reel_date_required: [409, "Add the reel's posting date before approving its earnings."],
+      rate_changed: [409, "This reel already has earnings at a different payout basis. Review its wallet history before changing the rate type."],
+      reel_wallet_owner_unknown: [409, "The account owner could not be verified. Correct the linked creator before approving earnings."],
+      reel_wallet_basis_changed: [409, "This reel already has earnings at a different payout basis. Review its wallet history before changing the rate type."],
       reel_removed: [409, "This reel was removed. Restore it before changing its review."],
       reel_before_link: [409, "This reel went live before the account was linked. Only reels posted from the day it was linked can be approved."],
     };

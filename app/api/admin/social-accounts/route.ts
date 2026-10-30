@@ -72,7 +72,7 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
       return NextResponse.json({ post: await upsertPost(actor.user.id, input) }, { headers: NO_STORE_HEADERS });
     }
     case "review_post":
-      return NextResponse.json(await reviewPost(body.id, body.status, body.note), { headers: NO_STORE_HEADERS });
+      return NextResponse.json(await reviewPost(actor.user.id, body.id, body.status, body.note), { headers: NO_STORE_HEADERS });
     case "sync":
       return NextResponse.json({ account: await syncAccountNow(body.accountId, { aliases: [], isAdmin: true }, "admin") }, { headers: NO_STORE_HEADERS });
     case "delete_snapshot":

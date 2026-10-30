@@ -14,6 +14,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readProfileHealth } from "@/lib/accountProfileHealth";
 import { countedReels, reelTracking, trackingStartLabel } from "@/lib/reelTracking";
 import { profileRecoveryCode } from "./accountProfileRecovery";
+import { readSocialPostWalletCredit, readSocialAccountWalletCredits } from "@/lib/socialWallet";
 
 type Row = Record<string, unknown>;
 type Sb = ReturnType<typeof supabaseAdmin>;
@@ -58,6 +59,7 @@ const toPost = (r: Row): SocialPost => ({
   reviewedAt: str(r.reviewed_at),
   createdAt: String(r.created_at ?? r.updated_at),
   source: r.source === "api" || r.source === "screenshot" || r.source === "profile" ? r.source : "manual",
+  ...(r.wallet_credit ? { walletCredit: readSocialPostWalletCredit(r.wallet_credit) } : {}),
   ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason), ...(r.removal_silent ? { removedSilently: true } : {}) } : {}),
 });
 
@@ -106,15 +108,30 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
   const ids = rows.map((r) => String(r.id));
   const gigIds = [...new Set(rows.map((r) => String(r.gig_id)))];
   const since = new Date(Date.now() - 400 * 86_400_000).toISOString();
+  const loadPosts = async () => {
+    const data: Row[] = [];
+    for (let from = 0; ; from += 1000) {
+      const page = await sb.from("social_account_posts").select("*").in("account_id", ids)
+        .order("posted_at", { ascending: false, nullsFirst: false }).order("id").range(from, from + 999);
+      databaseError(page.error);
+      data.push(...(page.data ?? []));
+      if ((page.data?.length ?? 0) < 1000) return { data, error: null };
+    }
+  };
   const [snapshots, posts, gigs] = await Promise.all([
     // Apply the database's row cap to the newest readings, then restore chronological chart order below.
     sb.from("social_account_snapshots").select("*").in("account_id", ids).gte("captured_at", since).order("captured_at", { ascending: false }).order("created_at", { ascending: false }).limit(5000),
-    sb.from("social_account_posts").select("*").in("account_id", ids).order("posted_at", { ascending: false, nullsFirst: false }).limit(2000),
+    loadPosts(),
     sb.from("gigs").select("id,title,company,payout,payout_type").in("id", gigIds),
   ]);
   databaseError(snapshots.error);
   databaseError(posts.error);
   databaseError(gigs.error);
+  const wallet = await sb.rpc("social_post_wallet_state", { p_posts: posts.data.map(post => String(post.id)), p_accounts: ids });
+  // An older deployment may show clearly labelled estimates until its read-model migration is installed.
+  if (wallet.error && !["PGRST202", "42883"].includes(wallet.error.code ?? "")) databaseError(wallet.error);
+  const postWallet = new Map<string, Row>((wallet.data?.posts ?? []).map((state: Row) => [String(state.postId), state]));
+  const accountWallet = new Map<string, Row>((wallet.data?.accounts ?? []).map((state: Row) => [String(state.accountId), state]));
   const gigById = new Map((gigs.data ?? []).map((g) => [String(g.id), g as Row]));
   const config = await resolveSyncConfig();
   return rows.map((r) => {
@@ -135,10 +152,11 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
       linkedAt: String(r.linked_at),
       payout: str(gig?.payout),
       payoutType: str(gig?.payout_type),
+      ...(accountWallet.has(String(r.id)) ? { walletCredits: readSocialAccountWalletCredits({ amountINR: accountWallet.get(String(r.id))?.creditedINR, reels: accountWallet.get(String(r.id))?.creditedReels }) } : {}),
       sync: toSync(r, config),
       snapshots: (snapshots.data ?? []).filter((s) => String(s.account_id) === String(r.id)).reverse().map(toSnapshot),
       posts: (() => {
-        const own = (posts.data ?? []).filter((p) => String(p.account_id) === String(r.id)).map(toPost);
+        const own = (posts.data ?? []).filter((p) => String(p.account_id) === String(r.id)).map(post => toPost({ ...post, wallet_credit: postWallet.get(String(post.id)) }));
         return audience === "creator" ? countedReels(own, String(r.linked_at)) : own;
       })(),
     };
@@ -303,32 +321,36 @@ export async function upsertPost(actorId: string, input: PostInput) {
   if (postedAt) assertInWindow(postedAt.toISOString(), account);
   const { data: current } = await sb.from("social_account_posts").select("removed_at").eq("account_id", input.accountId).eq("url", input.url.trim()).maybeSingle();
   if (current?.removed_at) throw new ApiError(409, "This reel was removed. Restore it from the Removed tab instead.", "reel_removed");
-  const { data, error } = await sb
-    .from("social_account_posts")
-    .upsert(
-      {
-        account_id: input.accountId,
-        url: input.url.trim(),
-        caption: input.caption?.trim() ?? "",
-        posted_at: postedAt?.toISOString() ?? null,
-        views: input.views ?? null,
-        views_captured_at: input.views !== undefined ? new Date().toISOString() : null,
-        views_source: input.views !== undefined ? "manual" : null,
-        reach: input.reach ?? null,
-        likes: input.likes ?? null,
-        comments: input.comments ?? null,
-        shares: input.shares ?? null,
-        saves: input.saves ?? null,
-        updated_by: actorId,
-        updated_at: new Date().toISOString(),
-        ...(input.status ? { status: input.status, reviewed_at: new Date().toISOString() } : {}),
-      },
-      { onConflict: "account_id,url" },
-    )
-    .select("*")
-    .single();
+  const { data, error } = await sb.rpc("save_social_post_with_wallet", {
+    p_actor: actorId,
+    p_input: {
+      account_id: input.accountId, url: input.url.trim(), caption: input.caption?.trim() ?? "",
+      posted_at: postedAt?.toISOString() ?? null, views: input.views ?? null,
+      views_captured_at: input.views !== undefined ? new Date().toISOString() : null,
+      views_source: input.views !== undefined ? "manual" : null,
+      reach: input.reach ?? null, likes: input.likes ?? null, comments: input.comments ?? null,
+      shares: input.shares ?? null, saves: input.saves ?? null,
+      ...(input.status ? { status: input.status } : {}),
+    },
+  });
+  requireWalletCreditSchema(error);
   databaseError(error);
-  return toPost(data as Row);
+  if (!data?.post) throw new ApiError(503, "The reel could not be saved. Refresh and try again.", "wallet_credit_unavailable");
+  return hydratedWalletPost(sb, data.post as Row);
+}
+
+
+async function hydratedWalletPost(sb: Sb, post: Row) {
+  const { data, error } = await sb.rpc("social_post_wallet_state", { p_posts: [String(post.id)], p_accounts: [String(post.account_id)] });
+  databaseError(error);
+  return toPost({ ...post, wallet_credit: data?.posts?.[0] });
+}
+
+/** Approvals must never succeed without the matching wallet transaction being installed. */
+function requireWalletCreditSchema(error: { code?: string } | null) {
+  if (["PGRST202", "42883", "42703", "PGRST204"].includes(error?.code ?? "")) {
+    throw new ApiError(503, "Approved earnings need the latest wallet database update. Please contact the team or try again after the update.", "schema_outdated");
+  }
 }
 
 /**
@@ -502,19 +524,18 @@ export async function withdrawCreatorReel(aliases: string[], postId: string) {
   databaseError(deleteError);
 }
 
-export async function reviewPost(postId: string, status: "approved" | "rejected", note?: string) {
+export async function reviewPost(actorId: string, postId: string, status: "approved" | "rejected", note?: string) {
   const sb = supabaseAdmin();
   if (status === "approved") {
-    // "*" rather than named columns, so approving still works on a database without the removal columns yet.
-    const { data: current, error: readError } = await sb.from("social_account_posts").select("*").eq("id", postId).maybeSingle();
-    databaseError(readError);
-    if (!current) throw new ApiError(404, "Reel not found.");
-    if (current.removed_at) throw new ApiError(409, "This reel was removed. Restore it before reviewing it.", "reel_removed");
-    if (current.posted_at) assertInWindow(String(current.posted_at), await requireAccount(sb, String(current.account_id)));
+    const { data, error } = await sb.rpc("approve_social_post_and_credit", { p_actor: actorId, p_post: postId, p_note: note?.trim() ?? "" });
+    requireWalletCreditSchema(error);
+    databaseError(error);
+    if (!data?.post) throw new ApiError(503, "The approval could not be confirmed. Refresh and try again.", "wallet_credit_unavailable");
+    return { post: await hydratedWalletPost(sb, data.post as Row), mailStatus: null };
   }
   const { data, error } = await sb
     .from("social_account_posts")
-    .update({ status, review_note: note?.trim() ?? "", reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({ status, review_note: note?.trim() ?? "", reviewed_at: new Date().toISOString(), updated_by: actorId, updated_at: new Date().toISOString() })
     .eq("id", postId)
     .select("*")
     .maybeSingle();

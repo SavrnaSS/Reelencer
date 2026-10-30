@@ -35,6 +35,7 @@ beforeEach(() => {
     }
     assert.equal(url.origin, "https://profile-recovery.example.test", "never contact a real service");
     const table = url.pathname.replace("/rest/v1/", "");
+    if (table === "rpc/social_post_wallet_state") return json({ posts: [], accounts: [] });
     if (table === "linked_social_accounts") {
       if (init?.method === "PATCH") row = { ...row, ...JSON.parse(String(init.body)) };
       return json([row]);

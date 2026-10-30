@@ -618,7 +618,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const actionFor = (key: CheckKey): CheckAction | null => {
     if (key === "kyc") return kycOk ? null : { label: kycStatus === "pending" ? "View status" : kycStatus === "rejected" ? "Fix KYC" : "Verify now", onClick: () => setKycSheetOpen(true) };
     if (key === "upi") return upiOk ? null : { label: upi?.upiId ? "Edit UPI" : "Add UPI", onClick: openUpiEditor };
-    if (key === "min") return minimumOk ? null : { label: "Claim views", href: "/dashboard?section=accounts" };
+    if (key === "min") return minimumOk ? null : { label: "View earnings", href: "/dashboard?section=accounts" };
     return noActiveBatch ? null : { label: "View cycle", onClick: showHistory };
   };
   const readinessChecks: Array<{ key: CheckKey; ok: boolean; title: string; detail: string }> = [
@@ -762,7 +762,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           <ReelEarningsSummary summary={reel} loading={socialAccounts.load.state === "loading"} error={socialAccounts.load.state === "error" ? socialAccounts.load.message : socialAccounts.load.state === "ready" ? socialAccounts.load.refreshError : undefined} />
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" aria-label="Payout summary">
-          <MetricTile label="Available balance" value={metrics ? formatINR(approvedEarnings) : "–"} caption={failures.metrics ? "Balance could not be refreshed" : "After approved claims"} loading={!ready.metrics} />
+          <MetricTile label="Available balance" value={metrics ? formatINR(approvedEarnings) : "–"} caption={failures.metrics ? "Balance could not be refreshed" : "From approved earnings"} loading={!ready.metrics} />
           <MetricTile label="Paid out" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.credited)} caption="Lifetime" loading={!ready.batches} />
           <MetricTile label="Pending withdrawal" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.pending)} caption="In open payout cycles" loading={!ready.batches} />
           <MetricTile label="Open payout cycles" value={failures.batches && !batches.length ? "–" : String(payoutSummary.liveBatches)} caption={`${batches.length} cycles in total`} loading={!ready.batches} />
@@ -1294,7 +1294,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 <span className="absolute bottom-3 left-3 top-3 w-px bg-[#dfe7dc]" aria-hidden />
                 {[
                   { title: "Earn", text: "Approved reels and work become payout-eligible after the team's review." },
-                  { title: "Claim", text: "Claim measured views on your accounts to credit your wallet." },
+                  { title: "Review", text: "Reel approval credits reviewed earnings to your wallet automatically. New views still need review." },
                   { title: "Request", text: `Once your wallet reaches ${formatINR(MIN_PAYOUT_REQUEST_INR)} with KYC and UPI verified, request a payout.` },
                   { title: "Get paid", text: "The team approves the cycle and marks it paid to your UPI." },
                 ].map((step, index) => (

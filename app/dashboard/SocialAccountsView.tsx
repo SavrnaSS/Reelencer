@@ -903,7 +903,7 @@ function AccountDetail({
       </section>
       {earnings ? (
         <p className="-mt-1 text-[11.5px] leading-5 text-[#8a928c]">
-          Estimate at the gig&apos;s listed rate before authenticity deductions. Eligible earnings are credited after the team&apos;s payout review.
+          Estimates use the gig&apos;s listed rate. Reel approval credits reviewed earnings to your wallet; new views need another review.
         </p>
       ) : null}
 

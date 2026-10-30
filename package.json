@@ -26,7 +26,8 @@
     "social:sync": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-social-accounts.mjs",
     "social:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/sync-social-accounts.mjs --check",
     "purge:workers": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/purge-workers.mjs",
-    "purge:workers:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/purge-workers.mjs --check"
+    "purge:workers:check": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/purge-workers.mjs --check",
+    "wallet:reconcile": "node --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/reconcile-approved-reels.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

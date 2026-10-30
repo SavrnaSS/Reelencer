@@ -2780,7 +2780,7 @@ function DashboardPageShell({
   loading: boolean;
   onLogout: () => void | Promise<void>;
   navBadges?: Partial<Record<DashboardSection, number>>;
-  walletSummary?: { credited: number; pending: number; estimated?: boolean; loading?: boolean; unavailable?: boolean };
+  walletSummary?: { credited: number; pending: number; estimated?: boolean; walletVerified?: boolean; loading?: boolean; unavailable?: boolean };
   liveStatus?: { syncing: boolean; lastSyncedAt: number | null; saved?: boolean; onSync: () => void };
   onGlobalSearch?: (query: string) => void;
   children: ReactNode;
@@ -3088,14 +3088,14 @@ function DashboardPageShell({
                 <span className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11.5px] text-[#7a827c]">
                   <span className="inline-flex flex-wrap items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#2e7d4f]" aria-hidden="true" />
-                    {walletSummary.estimated ? "Approved" : "Paid out"} {walletSummary.loading || walletSummary.unavailable ? "–" : formatINR(walletSummary.credited)}
+                    {walletSummary.estimated ? walletSummary.walletVerified ? "Credited" : "Approved estimate" : "Paid out"} {walletSummary.loading || walletSummary.unavailable ? "–" : formatINR(walletSummary.credited)}
                   </span>
                   <span className="inline-flex items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#7cb68a]" aria-hidden="true" />
                     Pending
                   </span>
                 </span>
-                {walletSummary.estimated ? <span className="mt-1 block text-[10.5px] text-[#8a928c]">Estimate from your linked accounts</span> : null}
+                {walletSummary.estimated ? <span className="mt-1 block text-[10.5px] text-[#8a928c]">{walletSummary.walletVerified ? "Approved earnings added to your wallet" : "Estimate from your linked accounts"}</span> : null}
                 {walletSummary.unavailable ? <span className="mt-1 block text-[10.5px] text-[#8a5300]">Earnings couldn’t be refreshed</span> : null}
               </button>
             ) : null}
@@ -3451,9 +3451,9 @@ function DashboardPageShell({
                           <span className="block break-words text-[16px] font-semibold text-[#1a201c] tabular-nums">{walletSummary.loading || walletSummary.unavailable ? "–" : formatINR(walletSummary.pending)}</span>
                         </span>
                         <span className="col-start-2 min-w-0 text-[11.5px] text-[#7a827c]">
-                          {walletSummary.estimated ? "Approved" : "Paid out"}
+                          {walletSummary.estimated ? walletSummary.walletVerified ? "Credited" : "Approved estimate" : "Paid out"}
                           <span className="ml-2 break-words text-[12.5px] font-semibold text-[#1a201c] tabular-nums">{walletSummary.loading || walletSummary.unavailable ? "–" : formatINR(walletSummary.credited)}</span>
-                          {walletSummary.estimated ? <span className="mt-1 block text-[10.5px]">Estimate from your linked accounts</span> : null}
+                          {walletSummary.estimated ? <span className="mt-1 block text-[10.5px]">{walletSummary.walletVerified ? "Approved earnings added to your wallet" : "Estimate from your linked accounts"}</span> : null}
                         </span>
                       </button>
                     </div>
@@ -7443,7 +7443,7 @@ export default function DashboardPage() {
         loading={loading}
         onLogout={logout}
         navBadges={{ messages: unreadCount, accounts: socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues?.length ?? 0 : 0 }}
-        walletSummary={{ credited: accountEarnings?.approved ?? payoutSummary.credited, pending: accountEarnings?.pending ?? payoutSummary.pending, estimated: Boolean(accountEarnings), loading: earningsLoading, unavailable: socialAccounts.load.state === "error" }}
+        walletSummary={{ credited: accountEarnings?.approved ?? payoutSummary.credited, pending: accountEarnings?.pending ?? payoutSummary.pending, estimated: Boolean(accountEarnings), walletVerified: accountEarnings?.walletVerified, loading: earningsLoading, unavailable: socialAccounts.load.state === "error" }}
         liveStatus={{ syncing: liveSyncing || socialAccounts.refreshing, saved: usingSavedData, lastSyncedAt, onSync: () => { void refreshLiveData(true); void socialAccounts.refresh(currentSection === "accounts"); } }}
       >
         {error ? (

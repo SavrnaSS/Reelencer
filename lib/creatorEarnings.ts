@@ -1,6 +1,7 @@
 import { reelEarnings, type LinkedSocialAccount } from "./socialAnalytics";
 import { needsProfileRecovery } from "./accountProfileHealth";
 import { countedReels } from "./reelTracking";
+import { readSocialAccountWalletCredits, readSocialPostWalletCredit } from "./socialWallet";
 
 export type AccountEarnings = {
   accountId: string;
@@ -11,21 +12,55 @@ export type AccountEarnings = {
   approvedReels: number;
   pendingReels: number;
   missingCounts: number;
+  /** True only when every amount is backed by the complete wallet read model. */
+  walletVerified?: boolean;
 };
 
-/** Add the amounts displayed on each account card, in paise; never add payout credits again. */
+/** Ledger credits and unreviewed estimates remain separate. Old snapshots retain explicitly estimated totals. */
 export function summarizeAccountEarnings(accounts: LinkedSocialAccount[]) {
   const breakdown: AccountEarnings[] = [];
   for (const account of new Map(accounts.map(account => [account.id, account])).values()) {
-    if (account.status === "unlinked" && !needsProfileRecovery(account)) continue;
+    const wallet = readSocialAccountWalletCredits(account.walletCredits);
+    if (account.status === "unlinked" && !needsProfileRecovery(account) && !wallet?.amountINR) continue;
     const earnings = reelEarnings(account);
     // INR dashboard totals cannot combine currencies or convert a foreign payout rate.
-    if (!earnings || !["", "₹", "INR"].includes(earnings.symbol)) continue;
+    const hasInrRate = earnings && ["", "₹", "INR"].includes(earnings.symbol);
+    if (!hasInrRate && !wallet?.amountINR) continue;
+    const posts = countedReels(account.posts, account.linkedAt);
+    const walletVerified = !!wallet && posts.every(post => !!readSocialPostWalletCredit(post.walletCredit));
+    let pending = hasInrRate ? earnings.pendingAmount : 0;
+    let pendingReels = hasInrRate ? earnings.pending : 0;
+    if (walletVerified) {
+      let pendingPaise = 0;
+      pendingReels = 0;
+      for (const post of posts) {
+        const credit = readSocialPostWalletCredit(post.walletCredit)!;
+        let paise = Math.round(credit.pendingClaimINR * 100);
+        const needsReview = post.status === "submitted" || post.status === "approved";
+        if (hasInrRate && needsReview) {
+          if (earnings.basis === "views") {
+            if (Number.isSafeInteger(post.views) && post.views! >= 0 && post.views! > credit.consumedViews) {
+              const rate = BigInt(Math.round(earnings.rateAmount * 100));
+              const cumulative = (views: number) => (BigInt(views) * rate + BigInt(500)) / BigInt(1000);
+              paise += Number(cumulative(post.views!) - cumulative(credit.consumedViews));
+            }
+          } else if (!credit.fixedCredit && credit.creditedINR === 0 && credit.consumedViews === 0) {
+            paise += Math.round(earnings.rateAmount * 100);
+          }
+        }
+        pendingPaise += paise;
+        if (post.status === "submitted" || paise > 0 || (needsReview && hasInrRate && earnings.basis === "views" && post.views === undefined)) pendingReels++;
+      }
+      pending = pendingPaise / 100;
+    }
     breakdown.push({
       accountId: account.id, handle: account.handle, gigTitle: account.gigTitle,
-      approved: earnings.approvedAmount, pending: earnings.pendingAmount,
-      approvedReels: earnings.approved, pendingReels: earnings.pending,
-      missingCounts: (earnings.unmeasuredApproved ?? 0) + (earnings.unmeasuredPending ?? 0),
+      approved: walletVerified ? wallet!.amountINR : hasInrRate ? earnings.approvedAmount : wallet?.amountINR ?? 0,
+      pending,
+      approvedReels: walletVerified ? wallet!.reels : hasInrRate ? earnings.approved : wallet?.reels ?? 0,
+      pendingReels,
+      missingCounts: hasInrRate ? (earnings.unmeasuredApproved ?? 0) + (earnings.unmeasuredPending ?? 0) : 0,
+      walletVerified,
     });
   }
   const sum = (key: "approved" | "pending") => breakdown.reduce((total, row) => total + Math.round(row[key] * 100), 0) / 100;
@@ -34,11 +69,13 @@ export function summarizeAccountEarnings(accounts: LinkedSocialAccount[]) {
     approvedReels: breakdown.reduce((total, row) => total + row.approvedReels, 0),
     pendingReels: breakdown.reduce((total, row) => total + row.pendingReels, 0),
     missingCounts: breakdown.reduce((total, row) => total + row.missingCounts, 0),
+    walletVerified: breakdown.length > 0 && breakdown.every(row => row.walletVerified),
     breakdown,
   };
 }
 
-export type AccountEarningsSummary = ReturnType<typeof summarizeAccountEarnings>;
+/** Optional on legacy/demo figures; absence must never be presented as a verified wallet credit. */
+export type AccountEarningsSummary = Omit<ReturnType<typeof summarizeAccountEarnings>, "walletVerified"> & { walletVerified?: boolean };
 
 export function isOpenPayoutStatus(status: string) {
   return ["draft", "pending", "submitted", "approved", "processing"].includes(status.trim().toLowerCase());

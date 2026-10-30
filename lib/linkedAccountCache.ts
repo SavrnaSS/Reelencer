@@ -1,5 +1,6 @@
 import type { LinkedSocialAccount } from "./socialAnalytics";
 import { readProfileHealth } from "./accountProfileHealth";
+import { readSocialAccountWalletCredits, readSocialPostWalletCredit } from "./socialWallet";
 
 export const LINKED_ACCOUNTS_CACHE_KEY = "linked-accounts:v2";
 export const LINKED_SYNC_CACHE_KEY = "linked-accounts-sync:v2";
@@ -22,10 +23,11 @@ export function isLinkedAccountsData(value: unknown): value is LinkedAccountsDat
   return value.accounts.every(account => {
     if (!record(account) || !strings(account, ["id", "applicationId", "gigId", "workerCode", "platform", "handle", "profileUrl", "linkedAt"]) || !["active", "paused", "unlinked"].includes(String(account.status))) return false;
     if (account.profileHealth !== undefined && !readProfileHealth(account.profileHealth)) return false;
+    if (account.walletCredits !== undefined && !readSocialAccountWalletCredits(account.walletCredits)) return false;
     if (!record(account.sync) || typeof account.sync.available !== "boolean" || !["pending", "ok", "error", "unsupported", "not_configured"].includes(String(account.sync.status))) return false;
     if (!Array.isArray(account.snapshots) || !Array.isArray(account.posts)) return false;
     return account.snapshots.every(snapshot => record(snapshot) && strings(snapshot, ["id", "capturedAt"]) && typeof snapshot.periodDays === "number" && Number.isFinite(snapshot.periodDays) && source(snapshot.source) && numbers(snapshot, metrics))
-      && account.posts.every(post => record(post) && strings(post, ["id", "url", "updatedAt", "createdAt"]) && ["submitted", "approved", "rejected"].includes(String(post.status)) && typeof post.submittedByWorker === "boolean" && source(post.source) && numbers(post, postMetrics));
+      && account.posts.every(post => record(post) && strings(post, ["id", "url", "updatedAt", "createdAt"]) && ["submitted", "approved", "rejected"].includes(String(post.status)) && typeof post.submittedByWorker === "boolean" && source(post.source) && numbers(post, postMetrics) && (post.walletCredit === undefined || !!readSocialPostWalletCredit(post.walletCredit)));
   });
 }
 
@@ -38,6 +40,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
       if (!record(account) || !record(account.sync) || !Array.isArray(account.snapshots) || !Array.isArray(account.posts)) throw new Error("Linked accounts returned an unreadable response. Please retry.");
       return {
         ...pick(account, ["id", "applicationId", "gigId", "gigTitle", "company", "workerCode", "platform", "handle", "profileUrl", "status", "linkedAt", "payout", "payoutType"]),
+        ...(account.walletCredits !== undefined ? { walletCredits: readSocialAccountWalletCredits(account.walletCredits) } : {}),
         ...(readProfileHealth(account.profileHealth) ? { profileHealth: readProfileHealth(account.profileHealth) } : {}),
         sync: pick(account.sync, ["available", "status", "lastSyncedAt", "lastAttemptAt", "nextSyncAt", "inProgress", "consecutiveFailures", "provider", "errorCode", "error"]),
         snapshots: account.snapshots.map(snapshot => {
@@ -46,7 +49,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
         }),
         posts: account.posts.map(post => {
           if (!record(post)) throw new Error("Invalid account post.");
-          return pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason", "removedSilently"]);
+          return { ...pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason", "removedSilently"]), ...(post.walletCredit !== undefined ? { walletCredit: readSocialPostWalletCredit(post.walletCredit) } : {}) };
         }),
       };
     }),

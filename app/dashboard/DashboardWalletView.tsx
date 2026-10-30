@@ -301,7 +301,7 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
             <ol className="relative mx-4 mb-4 mt-3 space-y-3.5 border-l border-[#e6e8e4] pl-4 sm:mx-5 sm:mb-5">
               {[
                 ["Earn", "Post reels and submit assigned work for review."],
-                ["Claim", "Claim new eligible reel views from Accounts. Reviewed claims credit your wallet."],
+                ["Review", "Approved reel earnings credit your wallet automatically. New views require review."],
                 ["Withdraw", "Request a payout from your available balance when eligible."],
                 ["Paid", "The team processes your withdrawal and records the payment."],
               ].map(([title, body], index) => (

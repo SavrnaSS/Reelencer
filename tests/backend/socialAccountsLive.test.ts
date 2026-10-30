@@ -22,6 +22,7 @@ test('frequent sync history keeps the newest followers under a database row cap 
     assert.equal(url.origin, 'https://live-backend.example.test', 'never contact a real service');
     const table = url.pathname.replace('/rest/v1/', '');
     let rows: unknown[] = [];
+    if (table === 'rpc/social_post_wallet_state') return new Response(JSON.stringify({ posts: [], accounts: [] }), { headers: { 'content-type': 'application/json' } });
     if (table === 'linked_social_accounts') {
       assert.equal(url.searchParams.get('worker_code'), 'in.(WKR-LIVE)');
       rows = [{ id, application_id: id, gig_id: 'live', worker_code: 'WKR-LIVE', platform: 'Instagram', handle: 'creator', status: 'active', linked_at: new Date(now).toISOString() }];

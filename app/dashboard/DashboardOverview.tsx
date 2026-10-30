@@ -665,9 +665,9 @@ export default function DashboardOverview({
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 sm:gap-4">
         <KpiTile
-          label={accountEarnings ? "Approved earnings" : "Earnings paid"}
+          label={accountEarnings ? accountEarnings.walletVerified ? "Credited earnings" : "Approved estimate" : "Earnings paid"}
           value={earningsError && !accountEarnings ? "–" : formatMoney(accountEarnings?.approved ?? metrics.credited)}
-          caption={accountEarnings ? "Approved reels · lifetime estimate" : earningsError ? "Earnings are unavailable" : payoutBatches.length ? rangeMeta.long.toLowerCase() : "lifetime"}
+          caption={accountEarnings ? accountEarnings.walletVerified ? "Reel earnings credited to wallet" : "Approved reels · lifetime estimate" : earningsError ? "Earnings are unavailable" : payoutBatches.length ? rangeMeta.long.toLowerCase() : "lifetime"}
           delta={!accountEarnings && metrics.creditedDelta !== null ? { value: metrics.creditedDelta, goodWhenUp: true } : null}
           trend={!accountEarnings && payoutBatches.length ? creditedTrend : undefined}
           onClick={() => onNavigate("wallet")}

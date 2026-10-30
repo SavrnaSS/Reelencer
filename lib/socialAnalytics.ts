@@ -1,5 +1,6 @@
 import { formatAmount } from "./money";
 import { countedReels } from "./reelTracking";
+import type { SocialAccountWalletCredits, SocialPostWalletCredit } from "./socialWallet";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -53,6 +54,8 @@ export type SocialPost = {
   removalReason?: string;
   /** Removed silently: the creator was never told (no email, no live update, a neutral answer on resubmitting). */
   removedSilently?: boolean;
+  /** Actual credits and frozen consumed view intervals; absent while wallet evidence is unavailable. */
+  walletCredit?: SocialPostWalletCredit;
 };
 
 export type SocialPostStatus = "submitted" | "approved" | "rejected";
@@ -142,6 +145,8 @@ export type LinkedSocialAccount = {
   snapshots: SocialSnapshot[];
   /** Newest first. */
   posts: SocialPost[];
+  /** Lifetime approved reel credits, including historical reels no longer listed. Not the available balance. */
+  walletCredits?: SocialAccountWalletCredits;
 };
 
 export type SnapshotMetric = "followers" | "following" | "reach" | "impressions" | "profileViews" | "engagements" | "linkClicks" | "posts";
