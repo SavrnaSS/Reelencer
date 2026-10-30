@@ -362,6 +362,8 @@ test('worker provisioning checks the owner and rolls back conflicting worker cod
 
 test('application updates detect stale decisions and assignment retries preserve reviewed state', async () => {
   await db.exec("insert into public.gigs(id,title,company,workload,payout,gig_type) values('proposal','Role','Team','1','1000','Content Creator')");
+  // Earlier tests' applications would otherwise fill this week's two application slots.
+  await db.exec("update public.gig_applications set applied_at=now()-interval '8 days'");
   const application=await scalar<{id:string;status:string;worker_name:string}>("select public.submit_gig_application($1,$1,'proposal','name') as value",[worker]);
   assert.equal(application.status,'Pending');
   await db.query("select public.update_gig_application($1,$2,$3,'reviewed','Accepted')",[admin,application.id,JSON.stringify(application)]);
@@ -373,6 +375,31 @@ test('application updates detect stale decisions and assignment retries preserve
   const retried=await scalar<{id:string;status:string}>("select public.create_gig_assignment($1,$1,'proposal',$2) as value",[worker,JSON.stringify(emails)]);
   assert.equal(retried.id,assignment.id);
   assert.equal(retried.status,'Submitted');
+});
+
+test('creators can apply to at most two gigs in any rolling seven days', async () => {
+  await db.exec("update public.gig_applications set applied_at=now()-interval '8 days'");
+  await db.exec("insert into public.gigs(id,title,company,workload,payout,gig_type) values('weekly-a','A','Team','1','1000','Content Creator'),('weekly-b','B','Team','1','1000','Content Creator'),('weekly-c','C','Team','1','1000','Content Creator')");
+  const quota=async()=>scalar<{used:number;remaining:number;nextSlotAt:string|null;gigs:{gigId:string}[]}>('select public.gig_application_quota($1) as value',[other]);
+  assert.equal((await quota()).remaining,2);
+  await db.query("select public.submit_gig_application($1,$1,'weekly-a','a')",[other]);
+  await db.query("select public.submit_gig_application($1,$1,'weekly-b','b')",[other]);
+  const full=await quota();
+  assert.equal(full.used,2);
+  assert.equal(full.remaining,0);
+  assert.ok(full.nextSlotAt && Date.parse(full.nextSlotAt)>Date.now()+6*86_400_000);
+  assert.deepEqual(full.gigs.map(g=>g.gigId).sort(),['weekly-a','weekly-b']);
+  await assert.rejects(db.query("select public.submit_gig_application($1,$1,'weekly-c','c')",[other]),/weekly_application_limit/);
+  // Withdrawing doesn't free the slot, re-submitting a counted gig is allowed, and the team isn't limited.
+  await db.query("update public.gig_applications set status='Withdrawn' where gig_id='weekly-a'");
+  await assert.rejects(db.query("select public.submit_gig_application($1,$1,'weekly-c','c')",[other]),/weekly_application_limit/);
+  await db.query("select public.submit_gig_application($1,$1,'weekly-a','again')",[other]);
+  await db.query("select public.submit_gig_application($1,$2,'weekly-c','by team')",[admin,other]);
+  // A slot opens once the oldest counted application is more than seven days old.
+  await db.exec("update public.gig_applications set applied_at=now()-interval '8 days' where gig_id in('weekly-a','weekly-c')");
+  assert.equal((await quota()).remaining,1);
+  await db.query("select public.submit_gig_application($1,$1,'weekly-c','c')",[other]);
+  assert.equal((await quota()).remaining,0);
 });
 
 test('inbox addresses cannot be claimed across workers or reused after deletion', async () => {

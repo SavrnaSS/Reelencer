@@ -47,6 +47,22 @@ test("current applications resolve canonical and legacy identities but keep unow
   assert.equal((await db.query<{ count: number }>("select count(*)::int as count from public.gig_applications")).rows[0].count, 7);
 });
 
+test("weekly quota counts legacy application owners once per gig without trusting spoofed payloads", async () => {
+  const quota = async (user: string) => (await db.query<{ value: { used: number; remaining: number; gigs: { gigId: string }[] } }>("select public.gig_application_quota($1) as value", [user])).rows[0].value;
+  assert.equal((await quota(owner)).used, 1, "five aliases for the same gig use one slot");
+  assert.equal((await quota(peer)).used, 1, "canonical peer ownership overrides the encoded owner");
+  await db.query("update public.workers set id='QUOTA-LEGACY' where user_id=$1", [owner]);
+  await db.exec("insert into public.gigs(id,title,company,workload,payout,gig_type) values('quota-legacy','Legacy quota','Test','Reels','49','Content Creator'),('quota-third','Third gig','Test','Reels','49','Content Creator')");
+  await db.exec("insert into public.gig_applications(gig_id,worker_code) values('quota-legacy','QUOTA-LEGACY')");
+  assert.equal((await quota(owner)).used, 2);
+  assert.equal((await quota(owner)).remaining, 0);
+  await assert.rejects(db.query("select public.submit_gig_application($1,$1,'quota-third','Owner')", [owner]), /weekly_application_limit/);
+  assert.equal((await quota(peer)).used, 1);
+  // Keep this fixture scoped so later visibility tests retain their original row counts.
+  await db.exec("delete from public.gig_applications where gig_id='quota-legacy'");
+  await db.query("update public.workers set id=$2 where user_id=$1", [owner, code]);
+});
+
 test("deletion hides every application alias immediately without removing retained records or another user's application", async () => {
   await db.query("select public.moderate_worker($1,$2,'delete','User requested account deletion',$3)", [admin, owner, code]);
   assert.deepEqual(await visible(), [peerCode], "An existing canonical owner wins over stale or spoofed encoded metadata");

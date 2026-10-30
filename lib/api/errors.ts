@@ -46,6 +46,7 @@ export function databaseError(error: { code?: string; message?: string } | null)
       reel_wallet_owner_unknown: [409, "The account owner could not be verified. Correct the linked creator before approving earnings."],
       reel_wallet_basis_changed: [409, "This reel already has earnings at a different payout basis. Review its wallet history before changing the rate type."],
       reel_removed: [409, "This reel was removed. Restore it before changing its review."],
+      weekly_application_limit: [429, "You've used both of this week's applications. A slot opens 7 days after each application."],
       reel_before_link: [409, "This reel went live before the account was linked. Only reels posted from the day it was linked can be approved."],
     };
     const match = messages[error.message ?? ""];

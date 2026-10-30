@@ -63,7 +63,7 @@ test("directory sorting is deterministic on ties and never mutates the source ar
   const original = structuredClone(rows);
   for (const row of rows) Object.freeze(row);
   Object.freeze(rows);
-  for (const sort of ["name_asc", "earnings", "accounts", "submissions"] as const) {
+  for (const sort of ["name_asc", "earnings", "accounts", "submissions", "resubmits"] as const) {
     assert.deepEqual(filterWorkerDirectory(rows, { ...defaults, sort }).map(row => row.id), ["A", "C", "B"]);
   }
   assert.deepEqual(filterWorkerDirectory(rows, { ...defaults, sort: "name_desc" }).map(row => row.id), ["B", "C", "A"]);

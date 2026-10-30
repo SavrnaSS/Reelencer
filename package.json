@@ -32,15 +32,15 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
-    "mailparser": "^3.9.34",
-    "next": "^16.3.8",
-    "nodemailer": "^10.0.14",
+    "mailparser": "^3.14.1",
+    "next": "^16.4.3",
+    "nodemailer": "^10.3.1",
     "nvm": "^0.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "server-only": "^0.0.1",
     "sharp": "0.35.5",
-    "zod": "^4.3.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

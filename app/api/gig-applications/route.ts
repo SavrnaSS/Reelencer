@@ -6,6 +6,7 @@ import { resolveWorkerUserId } from "@/lib/api/work";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { decodePublicWorkerName } from "@/lib/api/accountSetup";
 import { readCurrentApplications } from "@/lib/api/applicationReads";
+import { quotaLimitMessage, type ApplicationQuota } from "@/lib/applicationQuota";
 import {
   getDevDashboardApplications,
   isDashboardDevMode,
@@ -46,6 +47,17 @@ async function handleGET(req: Request) {
   return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
 }
 
+/** The weekly limit was reached: say when the next slot opens, with the server's count for the dashboard. */
+async function weeklyLimitResponse(sb: ReturnType<typeof supabaseAdmin>, workerUserId: string) {
+  const { data } = await sb.rpc("gig_application_quota", { p_worker: workerUserId });
+  const quota = data && typeof data === "object" ? (data as ApplicationQuota) : null;
+  const retryAfter = quota?.nextSlotAt ? Math.max(60, Math.ceil((Date.parse(quota.nextSlotAt) - Date.now()) / 1000)) : 3600;
+  return NextResponse.json(
+    { ok: false, error: quota ? quotaLimitMessage(quota, { withTime: false }) : "You've used both of this week's applications.", code: "weekly_application_limit", quota },
+    { status: 429, headers: { ...NO_STORE_HEADERS, "Retry-After": String(retryAfter) } },
+  );
+}
+
 async function handlePOST(req: Request) {
   try {
     const body = await req.json();
@@ -84,6 +96,7 @@ async function handlePOST(req: Request) {
     const { data, error } = await sb.rpc("submit_gig_application", {
       p_actor: actor.user.id, p_worker: workerUserId, p_gig: body.gigId, p_worker_name: workerNameEncoded,
     });
+    if (error?.message === "weekly_application_limit") return weeklyLimitResponse(sb, workerUserId);
     databaseError(error);
     const responsePayload = {
       ...(decodePublicWorkerName(data.worker_name)),

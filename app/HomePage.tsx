@@ -4,6 +4,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { apiFetch } from "@/lib/api/client";
 import { BrandMark } from "@/app/_components/BrandMark";
 import { ThemeToggle, useSyncHomeTheme } from "@/app/_components/ThemeToggle";
 import { HomeHero } from "@/app/_components/home/HomeHero";
@@ -814,7 +815,8 @@ export default function HomePage() {
         setAvatarUrl(sessionAvatar);
         setAccountEmail(user.email ?? null);
 
-        const ensured = await fetch("/api/bootstrap-profile", { method: "POST" });
+        // apiFetch sends the session token; without it the server can't tell who is signed in.
+        const ensured = await apiFetch("/api/bootstrap-profile", { method: "POST" });
         if (!ensured.ok) throw new Error("Profile unavailable");
         const profile = await ensured.json() as { role?: Exclude<Role, null>; display_name?: string | null } | null;
 

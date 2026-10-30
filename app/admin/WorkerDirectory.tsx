@@ -16,7 +16,7 @@ type Props = {
   selectedWorkerId: string | null;
   onSelect: (id: string) => void;
   onRefresh: () => void | Promise<void>;
-  onVerifyUpi: (id: string) => void;
+  onVerifyUpi: (id: string, reviewedUpiId: string) => void | Promise<void>;
 };
 
 function PageCheckbox({ checked, mixed, disabled, onChange }: { checked: boolean; mixed: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
@@ -26,6 +26,38 @@ function PageCheckbox({ checked, mixed, disabled, onChange }: { checked: boolean
 }
 
 const currency = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
+
+function UpiReview({ worker, onVerify }: { worker: WorkerDirectoryRecord; onVerify: Props["onVerifyUpi"] }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const panelId = useId();
+  const review = useRef<HTMLButtonElement>(null);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const running = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { if (open) confirm.current?.focus(); }, [open]);
+  const cancel = () => { setOpen(false); review.current?.focus(); };
+  const verify = async () => {
+    if (running.current || !worker.upiId) return;
+    running.current = true;
+    setBusy(true);
+    try { await onVerify(worker.id, worker.upiId); }
+    finally {
+      running.current = false;
+      if (mounted.current) { setBusy(false); cancel(); }
+    }
+  };
+  return <div className={`${styles.upiReview} ${open ? styles.upiReviewOpen : ""}`}>
+    <span className={styles.chipPending}>UPI unverified<button ref={review} type="button" disabled={busy} aria-expanded={open} aria-controls={panelId} aria-label={`Review payout UPI for ${worker.name}`} onClick={() => open ? cancel() : setOpen(true)}>Review</button></span>
+    {open ? <div id={panelId} className={styles.upiConfirmation} onKeyDown={event => { if (event.key === "Escape" && !busy) { event.stopPropagation(); cancel(); } }}>
+      <strong>Verify payout UPI for {worker.name}</strong>
+      <code>{worker.upiId}</code>
+      <p>Confirm only after checking this exact payout address.</p>
+      <div><button type="button" disabled={busy} onClick={cancel}>Cancel</button><button ref={confirm} type="button" disabled={busy} aria-label={`Confirm ${worker.upiId} as verified for ${worker.name}`} onClick={() => void verify()}>{busy ? "Verifying…" : "Confirm verified"}</button></div>
+    </div> : null}
+  </div>;
+}
 
 export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, onRefresh, onVerifyUpi }: Props) {
   const id = useId();
@@ -65,7 +97,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     setSelected(result.ids);
     setNotice(result.limitReached ? `The batch limit is ${MAX_WORKER_SELECTION} users. Your first ${MAX_WORKER_SELECTION} selections are retained; remaining users are unselected.` : null);
   };
-  const extraFilters = Number(assignment !== "all") + Number(payment !== "all") + Number(sort !== "name_asc");
+  const extraFilters = Number(assignment !== "all") + Number(payment !== "all") + Number(sort !== "name_asc") + Number(status === "all");
   const hasFilters = !!localSearch || extraFilters > 0 || status !== "current";
   const resetFilters = () => { setLocalSearch(""); setAssignment("all"); setPayment("all"); setStatus("current"); setSort("name_asc"); };
   const exportSelection = () => {
@@ -80,7 +112,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
 
   return <div className={styles.directory}>
     <div className={styles.tabs} role="group" aria-label="Filter workers by access status">
-      {([["current", "Current"], ["active", "Active"], ["suspended", "Suspended"], ["deleted", "Deleted"], ["all", "All records"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} className={status === value ? styles.activeTab : ""} onClick={() => setStatus(value)}><span className={styles.tabLabel}>{label}</span><span className={styles.tabCount}>{counts[value]}</span></button>)}
+      {([["current", "Current"], ["active", "Active"], ["suspended", "Suspended"], ["deleted", "Deleted"]] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} className={`${status === value ? styles.activeTab : ""} ${value !== "current" && value !== "active" && counts[value] > 0 ? styles.tabAlert : ""}`} onClick={() => setStatus(value)}><span className={styles.tabCount}>{counts[value]}</span><span className={styles.tabLabel}>{label}</span></button>)}
     </div>
 
     <div className={styles.searchRow}>
@@ -88,14 +120,15 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
       <button type="button" className={styles.filterToggle} aria-label={extraFilters ? `Filters (${extraFilters} applied)` : "Filters"} title="Filter and sort users" aria-expanded={filtersOpen} aria-controls={`${id}-filters`} onClick={() => setFiltersOpen(open => !open)}><WorkerGlyph name="filter" /><span>Filters</span>{extraFilters > 0 ? <b>{extraFilters}</b> : null}</button>
     </div>
     <div id={`${id}-filters`} className={styles.filters} hidden={!filtersOpen}>
+      <label htmlFor={`${id}-status`}><span>Access</span><select id={`${id}-status`} value={status} onChange={event => setStatus(event.target.value as WorkerDirectoryFilter)}><option value="current">Current team</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="deleted">Pending removal</option><option value="all">All records ({counts.all})</option></select></label>
       <label htmlFor={`${id}-assignment`}><span>Assignments</span><select id={`${id}-assignment`} value={assignment} onChange={event => setAssignment(event.target.value as typeof assignment)}><option value="all">Any assignment</option><option value="assigned">Has accounts</option><option value="unassigned">No accounts</option></select></label>
       <label htmlFor={`${id}-payment`}><span>Payment details</span><select id={`${id}-payment`} value={payment} onChange={event => setPayment(event.target.value as typeof payment)}><option value="all">Any verification</option><option value="verified">UPI verified</option><option value="unverified">UPI not verified</option></select></label>
-      <label htmlFor={`${id}-sort`}><span>Sort users</span><select id={`${id}-sort`} value={sort} onChange={event => setSort(event.target.value as WorkerDirectorySort)}><option value="name_asc">Name: A–Z</option><option value="name_desc">Name: Z–A</option><option value="earnings">Highest approved earnings</option><option value="accounts">Most assigned accounts</option><option value="submissions">Most submissions</option></select></label>
+      <label htmlFor={`${id}-sort`}><span>Sort users</span><select id={`${id}-sort`} value={sort} onChange={event => setSort(event.target.value as WorkerDirectorySort)}><option value="name_asc">Name: A–Z</option><option value="name_desc">Name: Z–A</option><option value="earnings">Highest approved earnings</option><option value="accounts">Most assigned accounts</option><option value="submissions">Most submissions</option><option value="resubmits">Most resubmits</option></select></label>
     </div>
     {hasFilters ? <div className={styles.filterSummary}><span>{extraFilters > 0 ? `${extraFilters} additional ${extraFilters === 1 ? "filter" : "filters"} applied` : "Filtered directory"}</span><button type="button" className={styles.reset} onClick={resetFilters}>Reset filters</button></div> : null}
 
     <div className={styles.toolbar}>
-      <label className={styles.pageSelect}><PageCheckbox checked={pageRows.length > 0 && pageSelected === pageRows.length} mixed={pageSelected > 0 && pageSelected < pageRows.length} disabled={!pageRows.length} onChange={checked => changeSelection(pageRows.map(worker => worker.id), checked)} /><span><strong>{filtered.length}</strong> {filtered.length === 1 ? "user" : "users"}{pageCount > 1 ? <small> · page {page} of {pageCount}</small> : null}</span></label>
+      <label className={styles.pageSelect}><PageCheckbox checked={pageRows.length > 0 && pageSelected === pageRows.length} mixed={pageSelected > 0 && pageSelected < pageRows.length} disabled={!pageRows.length} onChange={checked => changeSelection(pageRows.map(worker => worker.id), checked)} /><span><strong>{filtered.length}</strong> {filtered.length === 1 ? "user" : "users"}{status === "all" ? <small> · incl. deleted</small> : null}{pageCount > 1 ? <small> · page {page} of {pageCount}</small> : null}</span></label>
       {filtered.length > pageRows.length ? <button type="button" className={styles.linkButton} onClick={() => changeSelection(filtered.map(worker => worker.id), true)}>Select all {Math.min(filtered.length, MAX_WORKER_SELECTION)}</button> : null}
     </div>
 
@@ -113,22 +146,31 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     <div className={styles.rows} aria-label="User directory">
       {pageRows.map(worker => {
         const access = workerAccessStatus(worker);
-        return <article key={worker.id} className={`${styles.row} ${selectedWorkerId === worker.id ? styles.openRow : ""} ${effectiveSelection.has(worker.id) ? styles.selectedRow : ""}`}>
-          <div className={styles.rowTop}>
-            <label className={styles.rowCheck}><input type="checkbox" aria-label={`Select ${worker.name} (${worker.id})`} checked={effectiveSelection.has(worker.id)} onChange={event => changeSelection([worker.id], event.target.checked)} /></label>
-            <button type="button" className={styles.openUser} onClick={() => onSelect(worker.id)} aria-label={`Manage ${worker.name} (${worker.id})`} aria-pressed={selectedWorkerId === worker.id}>
-              <span className={styles.avatar} aria-hidden="true">{workerInitials(worker.name)}</span>
+        const open = selectedWorkerId === worker.id;
+        const activity = [
+          worker.accountCount ? `${worker.accountCount} ${worker.accountCount === 1 ? "account" : "accounts"}` : null,
+          worker.submittedCount ? `${worker.submittedCount} submitted` : null,
+        ].filter(Boolean).join(" · ");
+        return <article key={worker.id} className={`${styles.row} ${open ? styles.openRow : ""} ${effectiveSelection.has(worker.id) ? styles.selectedRow : ""}`}>
+          <label className={styles.rowCheck}><input type="checkbox" aria-label={`Select ${worker.name} (${worker.id})`} checked={effectiveSelection.has(worker.id)} onChange={event => changeSelection([worker.id], event.target.checked)} /></label>
+          <div className={styles.rowMain}>
+            <button type="button" className={styles.openUser} onClick={() => onSelect(worker.id)} aria-label={`Manage ${worker.name} (${worker.id})`} aria-pressed={open}>
+              <span className={styles.avatar} aria-hidden="true">{workerInitials(worker.name)}<i className={styles[access]} /></span>
               <span className={styles.identity}>
-                <span className={styles.identityTitle}><strong>{worker.name}</strong><span className={`${styles.status} ${styles[access]}`}>{access === "deleted" ? "Deleted" : access === "suspended" ? "Suspended" : "Active"}</span></span>
+                <span className={styles.identityTitle}><strong title={worker.name}>{worker.name}</strong>{access !== "active" ? <span className={`${styles.status} ${styles[access]}`}>{access === "deleted" ? "Deleted" : "Suspended"}</span> : null}</span>
                 <span className={styles.identityMeta}><span className={styles.workerId}>{worker.id}</span>{worker.email ? <small title={worker.email}>{worker.email}</small> : null}</span>
               </span>
-              <span className={styles.rowEarnings}><span>Approved</span><b>{currency.format(worker.approvedINR)}</b></span>
+              <span className={`${styles.rowEarnings} ${worker.approvedINR ? "" : styles.zero}`} title="Approved earnings">{currency.format(worker.approvedINR)}</span>
               <WorkerGlyph name="arrow" className={styles.openArrow} />
             </button>
-          </div>
-          <div className={styles.rowDetails}>
-            <dl className={styles.metrics}><div><dt>{worker.accountCount === 1 ? "account" : "accounts"}</dt><dd>{worker.accountCount}</dd></div><div><dt>submitted</dt><dd>{worker.submittedCount}</dd></div><div className={worker.resubmitCount > 0 ? styles.needsReview : undefined}><dt>{worker.resubmitCount === 1 ? "resubmit" : "resubmits"}</dt><dd>{worker.resubmitCount}</dd></div></dl>
-            {worker.upiId && <div className={styles.paymentRow}><span title={worker.upiId}>UPI {worker.upiId}</span><span className={worker.upiVerified ? styles.verified : styles.unverified}>{worker.upiVerified ? "✓ Verified" : "Unverified"}</span>{!worker.upiVerified && <button type="button" onClick={() => onVerifyUpi(worker.id)}>Confirm verified UPI</button>}</div>}
+            <div className={styles.rowFoot}>
+              <span className={activity ? styles.activity : styles.noActivity}>{activity || "No work yet"}</span>
+              {worker.resubmitCount > 0 ? <span className={styles.chipWarn}>{worker.resubmitCount} {worker.resubmitCount === 1 ? "resubmit" : "resubmits"}</span> : null}
+              {worker.upiId ? worker.upiVerified
+                ? <span className={styles.chipOk} title={`UPI ${worker.upiId}`}>UPI verified</span>
+                : <UpiReview key={`${worker.id}:${worker.upiId}`} worker={worker} onVerify={onVerifyUpi} />
+                : null}
+            </div>
             {access === "deleted" ? <p className={styles.deletionDeadline}>
               <span>{workerDeletionLabel(worker.purgeAfter, worker.purgeStartedAt, now)}</span>
               {worker.purgeAfter ? <time dateTime={worker.purgeAfter}>{new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(worker.purgeAfter))}</time> : null}

@@ -2,7 +2,7 @@ export const MAX_WORKER_SELECTION = 100;
 
 export type WorkerAccessStatus = "active" | "suspended" | "deleted";
 export type WorkerDirectoryFilter = "current" | "all" | WorkerAccessStatus;
-export type WorkerDirectorySort = "name_asc" | "name_desc" | "earnings" | "accounts" | "submissions";
+export type WorkerDirectorySort = "name_asc" | "name_desc" | "earnings" | "accounts" | "submissions" | "resubmits";
 export type WorkerDirectoryRecord = {
   id: string;
   userId?: string;
@@ -54,6 +54,7 @@ export function filterWorkerDirectory<T extends WorkerDirectoryRecord>(workers: 
     if (options.sort === "earnings") return right.approvedINR - left.approvedINR || name;
     if (options.sort === "accounts") return right.accountCount - left.accountCount || name;
     if (options.sort === "submissions") return right.submittedCount - left.submittedCount || name;
+    if (options.sort === "resubmits") return right.resubmitCount - left.resubmitCount || name;
     return name;
   });
 }

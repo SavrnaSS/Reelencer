@@ -66,6 +66,8 @@ import {
 import { accountPlatformFor, payoutPhrase, type AccountSetupView } from "@/lib/accountSetup";
 import { resolveGigApplicationMode, type GigApplicationMode } from "@/lib/gigApplicationMode";
 import { supabase } from "@/lib/supabaseClient";
+import { applicationQuota, formatWait, quotaBlocksGig, quotaCoversGig, quotaLimitMessage, strictestQuota, type ApplicationQuota } from "@/lib/applicationQuota";
+import WeeklyApplicationsMeter, { ApplicationSlotPreview } from "./WeeklyApplicationsMeter";
 
 type Role = "Admin" | "Worker";
 type AuthSession = { role?: Role; workerId?: string; email?: string; name?: string; at?: number | string };
@@ -3997,6 +3999,15 @@ export default function DashboardPage() {
         .sort((left, right) => safeTime(right.assignment.primaryDate) - safeTime(left.assignment.primaryDate)),
     [gigById, normalizedAssignments]
   );
+  // Weekly application limit: counted from the creator's own applications so it updates live; a blocked attempt's
+  // server answer (which can see applications this list can't) wins until its next slot opens.
+  const [serverQuota, setServerQuota] = useState<ApplicationQuota | null>(null);
+  const weeklyQuota = useMemo(() => strictestQuota(applicationQuota(applications, minuteNow), serverQuota, minuteNow), [applications, serverQuota, minuteNow]);
+  /** Why applying to this gig is blocked right now, or null when it isn't. */
+  const weeklyLimitBlock = useCallback((gigId: string) => (quotaBlocksGig(weeklyQuota, gigId) ? quotaLimitMessage(weeklyQuota, { now: Date.now() }) : null), [weeklyQuota]);
+  const rememberServerQuota = useCallback((failure: { code?: string; quota?: ApplicationQuota | null }) => {
+    if (failure?.code === "weekly_application_limit" && failure.quota) setServerQuota(failure.quota);
+  }, []);
   const applicationByGigId = useMemo(() => {
     const map = new Map<string, GigApplication>();
     applications.forEach((application) => {
@@ -4425,6 +4436,13 @@ export default function DashboardPage() {
       setProposalError("This application is already in the hiring queue. Track recruiter updates from the status panel.");
       return;
     }
+    const limitBlock = weeklyLimitBlock(String(directApplyTargetGig.id));
+    if (limitBlock) {
+      setDirectApplyGigId(null);
+      setDirectApplyLaunchGigId(null);
+      setProposalError(limitBlock);
+      return;
+    }
 
     const sessionError = !submissionWorkerId ? "Your dashboard session has expired. Refresh the page and try again." : null;
     setDirectApplyGigId(String(directApplyTargetGig.id));
@@ -4445,7 +4463,7 @@ export default function DashboardPage() {
     if (!sessionError && !directApplyWorkerEmail && !authContactEmail) {
       setDirectApplyError("Add an email to your profile or login account before submitting this application.");
     }
-  }, [directApplyTargetApplication, directApplyTargetGig?.id, directApplyWorkerEmail, submissionWorkerId, workerId]);
+  }, [directApplyTargetApplication, directApplyTargetGig?.id, directApplyWorkerEmail, submissionWorkerId, weeklyLimitBlock, workerId]);
 
   useLayoutEffect(() => {
     if (!directApplyLaunchGigId) return;
@@ -4497,6 +4515,11 @@ export default function DashboardPage() {
       setDirectApplyError("Confirm the application terms before submitting.");
       return;
     }
+    const limitBlock = weeklyLimitBlock(String(directApplyTargetGig.id));
+    if (limitBlock) {
+      setDirectApplyError(limitBlock);
+      return;
+    }
     if (!directApplySubmissionEmail) {
       setDirectApplyError("Add an email to your profile or login account before submitting this application.");
       return;
@@ -4537,7 +4560,8 @@ export default function DashboardPage() {
       });
       if (!response.ok) {
         const failure = await response.json().catch(() => ({}));
-        throw new Error(failure?.error || "Application could not be saved.");
+        rememberServerQuota(failure);
+        throw new Error(failure?.code === "weekly_application_limit" && failure.quota ? quotaLimitMessage(failure.quota) : failure?.error || "Application could not be saved.");
       }
 
       const payload = (await response.json()) as GigApplication & { mailStatus?: { sent: boolean; reason?: string } | null };
@@ -4600,8 +4624,10 @@ export default function DashboardPage() {
     profileDisplayName,
     profileName,
     profileUserId,
+    rememberServerQuota,
     selectedGig,
     submissionWorkerId,
+    weeklyLimitBlock,
   ]);
 
   const submitDashboardProposal = useCallback(async () => {
@@ -4616,6 +4642,12 @@ export default function DashboardPage() {
     const budget = proposalBudget.trim();
     const portfolio = proposalPortfolio.trim();
     const requiresBudget = isProjectGig(selectedGig) || isContentPostingGig(selectedGig) || isCustomGig(selectedGig);
+
+    const limitBlock = weeklyLimitBlock(String(selectedGig.id));
+    if (limitBlock) {
+      setProposalError(limitBlock);
+      return;
+    }
 
     if (!pitch || !timeline || (requiresBudget && !budget)) {
       setProposalError(requiresBudget ? "Add a proposal note, delivery timeline, and quoted rate before submitting." : "Add a proposal note and delivery timeline before submitting.");
@@ -4655,7 +4687,8 @@ export default function DashboardPage() {
       });
       if (!response.ok) {
         const failure = await response.json().catch(() => ({}));
-        throw new Error(failure?.error || "Unable to submit proposal right now.");
+        rememberServerQuota(failure);
+        throw new Error(failure?.code === "weekly_application_limit" && failure.quota ? quotaLimitMessage(failure.quota) : failure?.error || "Unable to submit proposal right now.");
       }
 
       const payload = (await response.json()) as GigApplication;
@@ -4696,6 +4729,8 @@ export default function DashboardPage() {
     selectedGigApplication?.id,
     selectedGigReviewStatus,
     submissionWorkerId,
+    weeklyLimitBlock,
+    rememberServerQuota,
     workerId,
   ]);
 
@@ -5396,7 +5431,23 @@ export default function DashboardPage() {
         // Email Creator gigs need no approval: the main action starts the work panel directly.
         const startsWorkDirectly = isEmailCreatorGig(selectedGig);
         const hasWorkAssignment = assignmentByGigId.has(String(selectedGig.id));
-        const primaryApplicationActionLabel = startsWorkDirectly
+        // New applications (and revisions of ones no longer counted) wait while this week's slots are used.
+        const detailLimitBlock = !hasWorkAssignment && !applicationLocked ? weeklyLimitBlock(String(selectedGig.id)) : null;
+        const limitNotice = detailLimitBlock ? (
+          <div role="status" className="flex items-start gap-2.5 rounded-lg border border-[#f0d9a8] bg-[#fffaf0] px-3.5 py-3 text-[13px] leading-5 text-[#6b4a05]">
+            <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="12" cy="13" r="8" />
+              <path d="M12 9v4l2.5 2" />
+            </svg>
+            <span className="min-w-0">
+              <span className="block font-semibold">Weekly application limit reached</span>
+              {detailLimitBlock} You can still read the brief and save it for then.
+            </span>
+          </div>
+        ) : null;
+        const primaryApplicationActionLabel = detailLimitBlock
+          ? `Opens in ${formatWait(weeklyQuota.nextSlotAt, minuteNow)}`
+          : startsWorkDirectly
           ? hasWorkAssignment || hasApplication
             ? "Open your work"
             : "Apply now"
@@ -5516,6 +5567,8 @@ export default function DashboardPage() {
                     variant="primary"
                     size="lg"
                     className="w-full sm:w-auto sm:px-6"
+                    disabled={!!detailLimitBlock}
+                    title={detailLimitBlock ?? undefined}
                     onClick={() => {
                       if (startsWorkDirectly && (hasApplication || hasWorkAssignment)) {
                         requestGigWorkStart(String(selectedGig.id));
@@ -6150,6 +6203,7 @@ export default function DashboardPage() {
                             /* ---------------- Quick apply ---------------- */
                             proposalDeskOpen ? (
                               <div className="space-y-4">
+                                {limitNotice}
                                 <div className="flex items-center gap-3 rounded-lg border border-[#ebedea] bg-[#fafbf9] p-3.5">
                                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#1f2b24] text-[14px] font-semibold text-white" aria-hidden="true">
                                     {getInitials(profileDisplayName)}
@@ -6190,20 +6244,23 @@ export default function DashboardPage() {
                                     <UiButton onClick={() => setProposalDeskOpen(false)} className="w-full sm:w-auto">
                                       Cancel
                                     </UiButton>
-                                    <UiButton variant="primary" onClick={() => void openDashboardDirectApplyModal()} disabled={proposalSaving} className="w-full sm:w-auto">
+                                    <UiButton variant="primary" onClick={() => void openDashboardDirectApplyModal()} disabled={proposalSaving || !!detailLimitBlock} className="w-full sm:w-auto">
                                       {proposalSaving ? "Submitting…" : "Apply now"}
                                     </UiButton>
                                   </div>
                                 </div>
                               </div>
                             ) : (
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <p className="text-[13.5px] text-[#3b443e]">
-                                  {startsWorkDirectly ? "Apply once and you're approved instantly. No proposal or screening." : "Confirm once to enter recruiter screening. No proposal needed."}
-                                </p>
-                                <UiButton variant="primary" onClick={() => void openDashboardDirectApplyModal()} className="w-full sm:w-auto">
-                                  Apply now
-                                </UiButton>
+                              <div className="space-y-3">
+                                {limitNotice}
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                  <p className="text-[13.5px] text-[#3b443e]">
+                                    {startsWorkDirectly ? "Apply once and you're approved instantly. No proposal or screening." : "Confirm once to enter recruiter screening. No proposal needed."}
+                                  </p>
+                                  <UiButton variant="primary" onClick={() => void openDashboardDirectApplyModal()} disabled={!!detailLimitBlock} className="w-full sm:w-auto">
+                                    {detailLimitBlock ? primaryApplicationActionLabel : "Apply now"}
+                                  </UiButton>
+                                </div>
                               </div>
                             )
                           ) : proposalDeskOpen ? (
@@ -6216,6 +6273,7 @@ export default function DashboardPage() {
                               className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_260px] xl:items-start"
                             >
                               <div className="min-w-0 space-y-4">
+                                {limitNotice}
                                 {canReviseProposal ? (
                                   <div className="rounded-lg border border-[#f1dea6] bg-[#fffbeb] p-3.5">
                                     <div className="flex items-center gap-2 text-[13px] font-semibold text-[#6b4a05]">
@@ -6395,8 +6453,8 @@ export default function DashboardPage() {
                                 <UiButton onClick={() => setProposalDeskOpen(false)} className="w-full sm:w-auto">
                                   Cancel
                                 </UiButton>
-                                <UiButton type="submit" variant="primary" disabled={proposalSaving} className="w-full sm:w-auto">
-                                  {proposalSaving ? "Submitting…" : canReviseProposal ? "Submit revision" : "Submit proposal"}
+                                <UiButton type="submit" variant="primary" disabled={proposalSaving || !!detailLimitBlock} className="w-full sm:w-auto">
+                                  {proposalSaving ? "Submitting…" : detailLimitBlock ? primaryApplicationActionLabel : canReviseProposal ? "Submit revision" : "Submit proposal"}
                                 </UiButton>
                               </div>
                             </form>
@@ -6544,10 +6602,13 @@ export default function DashboardPage() {
                       }
                       scrollToProposalDesk(!applicationLocked);
                     }}
-                    className="gig-detail-primary-button mt-4 w-full"
+                    className="gig-detail-primary-button mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!!detailLimitBlock}
+                    title={detailLimitBlock ?? undefined}
                   >
                     {primaryApplicationActionLabel}
                   </button>
+                  {detailLimitBlock ? <div className="mt-3">{limitNotice}</div> : null}
 
                   <ul className="mt-4 space-y-2 border-t border-[#ebedea] pt-4 text-[12.5px] text-[#616a64]">
                     <li className="flex items-start gap-2">
@@ -6717,6 +6778,18 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          <div className="mt-3">
+            <WeeklyApplicationsMeter
+              quota={weeklyQuota}
+              now={minuteNow}
+              gigTitle={(gigId) => gigById.get(gigId)?.title ?? "Gig no longer listed"}
+              onOpenGig={(gigId) => {
+                const gig = gigById.get(gigId);
+                if (gig) openGigDetail(gig, "details");
+              }}
+            />
+          </div>
+
           <div className="mt-4">
             {gigsLoading && openGigs.length === 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
@@ -6759,12 +6832,16 @@ export default function DashboardPage() {
                   const cardReviewStatus = getProposalReviewStatus(cardApplication);
                   const cardHasApplication = !!cardApplication;
                   const cardHasAssignment = !!cardAssignment;
-                  const cardCanApply =
-                    String(gig.status ?? "").trim().toLowerCase() === "open" && !cardHasApplication && !cardHasAssignment;
+                  const cardOpenForApplications = String(gig.status ?? "").trim().toLowerCase() === "open" && !cardHasApplication && !cardHasAssignment;
+                  // The weekly limit holds new applications until a slot opens; existing ones stay trackable.
+                  const cardLimitBlocked = cardOpenForApplications && quotaBlocksGig(weeklyQuota, String(gig.id));
+                  const cardCanApply = cardOpenForApplications && !cardLimitBlocked;
                   const cardWorkflowLabel = cardHasAssignment
                     ? isEmailCreatorGig(gig)
                       ? "In progress"
                       : "Assigned"
+                    : cardLimitBlocked
+                      ? "Weekly limit"
                     : isEmailCreatorGig(gig) && !cardHasApplication
                       ? "Instant approval"
                     : cardHasApplication
@@ -6782,6 +6859,8 @@ export default function DashboardPage() {
                         : "Proposal";
                   const cardWorkflowToneClass = cardHasAssignment
                     ? "bg-[#1f2b24] text-white"
+                    : cardLimitBlocked
+                      ? "bg-[#fff3dc] text-[#9a5b00]"
                     : cardReviewStatus === "Accepted"
                       ? "bg-[#e3f1df] text-[#1f5131]"
                       : cardReviewStatus === "Rejected"
@@ -6790,7 +6869,9 @@ export default function DashboardPage() {
                           ? "bg-[#e0ecf8] text-[#1f4a73]"
                           : "bg-[#f1f3f0] text-[#4b544e]";
                   const cardStartsWork = isEmailCreatorGig(gig);
-                  const primaryCardActionLabel = cardStartsWork
+                  const primaryCardActionLabel = cardLimitBlocked
+                    ? `Opens in ${formatWait(weeklyQuota.nextSlotAt, minuteNow)}`
+                    : cardStartsWork
                     ? cardHasAssignment || cardHasApplication
                       ? "Open your work"
                       : "Apply now"
@@ -6916,6 +6997,7 @@ export default function DashboardPage() {
                             type="button"
                             onClick={openPrimaryCardAction}
                             disabled={!cardCanApply && !cardHasApplication && !cardHasAssignment}
+                            title={cardLimitBlocked ? quotaLimitMessage(weeklyQuota, { now: minuteNow }) : undefined}
                             className={cx(
                               "inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg px-3.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-not-allowed",
                               cardCanApply
@@ -6925,8 +7007,14 @@ export default function DashboardPage() {
                                   : "bg-[#eef0ed] text-[#8a928c]"
                             )}
                           >
+                            {cardLimitBlocked ? (
+                              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                <circle cx="12" cy="13" r="8" />
+                                <path d="M12 9v4l2.5 2" />
+                              </svg>
+                            ) : null}
                             <span className="truncate">{primaryCardActionLabel}</span>
-                            <ArrowRightIcon className="h-4 w-4 shrink-0" />
+                            {cardLimitBlocked ? <span className="sr-only">. {quotaLimitMessage(weeklyQuota, { now: minuteNow })}</span> : <ArrowRightIcon className="h-4 w-4 shrink-0" />}
                           </button>
                         </div>
                       </div>
@@ -7564,6 +7652,11 @@ export default function DashboardPage() {
                       <p className="mt-1.5 text-[12px] text-[#7a827c]">Used for your confirmation and recruiter updates.</p>
                     )}
                   </section>
+
+                  {/* Weekly limit: what this application uses */}
+                  {directApplyTargetGig && !quotaCoversGig(weeklyQuota, String(directApplyTargetGig.id)) ? (
+                    <ApplicationSlotPreview quota={weeklyQuota} now={minuteNow} />
+                  ) : null}
 
                   {/* Consent */}
                   <label

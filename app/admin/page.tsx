@@ -2527,10 +2527,10 @@ function AdminConsole({ adminId }: { adminId: string }) {
                       selectedWorkerId={selectedWorkerId}
                       onSelect={workerId => { setSelectedWorkerId(workerId); setWorkerDetailOpen(true); }}
                       onRefresh={loadSnapshot}
-                      onVerifyUpi={workerId => {
+                      onVerifyUpi={(workerId, reviewedUpiId) => {
                         const worker = workers.find(row => row.id === workerId);
                         const upi = worker ? getWorkerUpi(worker) : null;
-                        if (upi) void verifyWorkerUpi(upi);
+                        if (upi && upi.upiId === reviewedUpiId) return verifyWorkerUpi(upi);
                       }}
                     />
                   </>
