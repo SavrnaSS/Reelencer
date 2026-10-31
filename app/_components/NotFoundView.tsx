@@ -78,63 +78,66 @@ export default function NotFoundView() {
       </header>
 
       <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col items-center justify-center px-3.5 py-8 min-[380px]:px-4 sm:px-5 sm:py-12 md:px-6 lg:px-7 2xl:px-8">
-        <section aria-labelledby="not-found-title" className="w-full max-w-2xl rounded-xl border border-[#e3e5e1] bg-white px-4 py-8 text-center shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] sm:px-10 sm:py-11">
-          <div className="mx-auto w-full max-w-[500px]">
+        {/* The art sits straight on the page: side by side with the message on desktop, stacked on phones. */}
+        <section aria-labelledby="not-found-title" className="grid w-full max-w-5xl items-center gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-12">
+          <div className="mx-auto w-full max-w-[440px] sm:max-w-[520px] lg:max-w-none">
             <NotFoundIllustration />
           </div>
 
-          <p className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-[#fde4e1] px-2.5 py-1 text-[12px] font-medium text-[#8e1f1a] sm:mt-6">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#d03b3b]" aria-hidden="true" />
-            Error 404 · Page not found
-          </p>
-          <h1 id="not-found-title" className="mx-auto mt-3 max-w-xl text-balance text-[24px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c] sm:text-[30px]">
-            This scene didn&apos;t make the final cut
-          </h1>
-          <p className="mx-auto mt-2 max-w-md text-pretty text-[13.5px] leading-6 text-[#616a64] sm:text-[14.5px]">
-            The page you&apos;re looking for doesn&apos;t exist, was moved, or the link has a typo.
-          </p>
+          <div className="min-w-0 text-center lg:text-left">
+            <p className="inline-flex items-center gap-1.5 rounded-full bg-[#fde4e1] px-2.5 py-1 text-[12px] font-medium text-[#8e1f1a]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#d03b3b]" aria-hidden="true" />
+              Error 404 · Page not found
+            </p>
+            <h1 id="not-found-title" className="mx-auto mt-3 max-w-xl text-balance text-[26px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c] sm:text-[32px] lg:mx-0 lg:text-[36px]">
+              This scene didn&apos;t make the final cut
+            </h1>
+            <p className="mx-auto mt-2 max-w-md text-pretty text-[14px] leading-6 text-[#616a64] sm:text-[15px] lg:mx-0">
+              The page you&apos;re looking for doesn&apos;t exist, was moved, or the link has a typo.
+            </p>
 
-          {path ? (
-            <code className="mx-auto mt-4 flex w-fit max-w-full items-center gap-2 rounded-lg border border-[#e3e5e1] bg-[#fafbf9] px-3 py-1.5 text-[12.5px] text-[#4b544e]">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#d03b3b]" aria-hidden="true" />
-              <span className="truncate">{path}</span>
-            </code>
-          ) : null}
+            {path ? (
+              <code className="mx-auto mt-4 flex w-fit lg:mx-0 max-w-full items-center gap-2 rounded-lg border border-[#e3e5e1] bg-[#fafbf9] px-3 py-1.5 text-[12.5px] text-[#4b544e]">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#d03b3b]" aria-hidden="true" />
+                <span className="truncate">{path}</span>
+              </code>
+            ) : null}
 
-          {suggestion ? (
-            <Link
-              href={suggestion.href}
-              className="group mx-auto mt-4 flex w-fit max-w-full items-center gap-3 rounded-xl border border-[#cfe3d4] bg-[#f4f9f2] py-2.5 pl-3 pr-4 text-left transition hover:bg-[#eaf4e6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#2e7d4f] text-white">
-                <Icon className="h-4 w-4"><path d="M5 12h14M13 6l6 6-6 6" /></Icon>
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[11.5px] font-medium text-[#2b5d4a]">Did you mean</span>
-                <span className="block truncate text-[14px] font-semibold text-[#1a201c]">{suggestion.label}</span>
-              </span>
-            </Link>
-          ) : null}
-
-          <div className="mx-auto mt-6 flex w-full max-w-xs flex-col gap-2 sm:max-w-none sm:flex-row sm:justify-center">
-            <Link href="/" className={buttonClassName("primary", "lg")}>
-              <Icon className="h-4 w-4"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" /></Icon>
-              Back to home
-            </Link>
-            {back ? (
-              <button type="button" onClick={() => window.history.back()} className={buttonClassName("secondary", "lg")}>
-                <Icon className="h-4 w-4"><path d="M19 12H5M11 6l-6 6 6 6" /></Icon>
-                Go back
-              </button>
-            ) : (
-              <Link href={FIND_GIGS_HREF} className={buttonClassName("secondary", "lg")}>
-                Browse gigs
+            {suggestion ? (
+              <Link
+                href={suggestion.href}
+                className="group mx-auto mt-4 flex w-fit max-w-full items-center gap-3 rounded-xl border border-[#cfe3d4] bg-white lg:mx-0 py-2.5 pl-3 pr-4 text-left transition hover:bg-[#eaf4e6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#2e7d4f] text-white">
+                  <Icon className="h-4 w-4"><path d="M5 12h14M13 6l6 6-6 6" /></Icon>
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[11.5px] font-medium text-[#2b5d4a]">Did you mean</span>
+                  <span className="block truncate text-[14px] font-semibold text-[#1a201c]">{suggestion.label}</span>
+                </span>
               </Link>
-            )}
+            ) : null}
+
+            <div className="mx-auto mt-6 flex w-full max-w-xs flex-col gap-2 sm:max-w-none sm:flex-row sm:justify-center lg:justify-start">
+              <Link href="/" className={buttonClassName("primary", "lg")}>
+                <Icon className="h-4 w-4"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" /></Icon>
+                Back to home
+              </Link>
+              {back ? (
+                <button type="button" onClick={() => window.history.back()} className={buttonClassName("secondary", "lg")}>
+                  <Icon className="h-4 w-4"><path d="M19 12H5M11 6l-6 6 6 6" /></Icon>
+                  Go back
+                </button>
+              ) : (
+                <Link href={FIND_GIGS_HREF} className={buttonClassName("secondary", "lg")}>
+                  Browse gigs
+                </Link>
+              )}
+            </div>
           </div>
         </section>
 
-        <nav aria-label="Popular pages" className="mt-6 w-full max-w-4xl sm:mt-8">
+        <nav aria-label="Popular pages" className="mt-8 w-full max-w-5xl sm:mt-10">
           <h2 className="mb-2.5 px-1 text-[12.5px] font-medium text-[#616a64]">Or jump to</h2>
           <ul className="grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 sm:gap-3 lg:grid-cols-4">
             {LINKS.map((link) => (

@@ -11,9 +11,6 @@ export default function NotFoundIllustration() {
   return (
     <svg data-illustration="not-found" className={styles.art} viewBox="0 0 640 350" fill="none" aria-hidden="true" focusable="false">
       <defs>
-        <radialGradient id={`${id}-halo`} cx="0" cy="0" r="1" gradientTransform="translate(320 181) rotate(90) scale(157 247)" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#e8f3e3" /><stop offset="1" stopColor="#f5f9f1" stopOpacity="0" />
-        </radialGradient>
         <linearGradient id={`${id}-paper`} x1="160" y1="65" x2="453" y2="303" gradientUnits="userSpaceOnUse">
           <stop stopColor="#fff" /><stop offset="1" stopColor="#f6f9f3" />
         </linearGradient>
@@ -34,8 +31,7 @@ export default function NotFoundIllustration() {
         <clipPath id={`${id}-slate`}><rect x="464" y="48" width="101" height="21" rx="5" /></clipPath>
       </defs>
 
-      <ellipse cx="320" cy="181" rx="247" ry="157" fill={paint("halo")} />
-      <ellipse cx="324" cy="312" rx="195" ry="11" fill="#e8eee3" opacity=".6" />
+      {/* No backdrop: the scene sits directly on whatever surface shows it. */}
       <path d="M101 167c-15-56 43-99 104-106m312 119c54 5 68 46 29 77" stroke="#ccddc9" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="4 7" />
       <circle cx="101" cy="167" r="4" fill="#b6cfad" /><circle cx="547" cy="258" r="4" fill="#b6cfad" />
       <path d="m130 72 3-8 3 8 8 3-8 3-3 8-3-8-8-3 8-3Z" fill="#8bb881" />
