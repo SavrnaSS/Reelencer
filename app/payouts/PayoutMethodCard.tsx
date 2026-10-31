@@ -2,6 +2,7 @@
 
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useEffect, useId, useState, type FormEvent, type ReactNode, type RefObject } from "react";
+import { Shimmer } from "./PayoutLoading";
 import {
   isValidAccountHolder,
   isValidAccountNumber,
@@ -159,6 +160,7 @@ export default function PayoutMethodCard({
     <section
       ref={sectionRef}
       aria-labelledby="payout-method-heading"
+      aria-busy={!ready}
       className={cx(className, highlighted && "!ring-2 !ring-[#8db35a] shadow-[0_0_0_6px_rgba(141,179,90,0.18)]")}
     >
       <div className="flex items-start justify-between gap-3">
@@ -178,7 +180,7 @@ export default function PayoutMethodCard({
               {isBank ? "Payout bank account" : "Payout method"}
             </h2>
             {state === "loading" ? (
-              <span className="mt-1 block h-5 w-40 animate-pulse rounded-md bg-[#e8eee5]" aria-hidden />
+              <span className="mt-1 block space-y-2"><Shimmer className="h-5 w-40" /><Shimmer className="h-3 w-44" /></span>
             ) : (
               <div className={cx("break-all text-[16px] font-semibold leading-snug", has ? "text-[#20352c]" : "text-[#8a948d]")}>{has ? payoutMethodLabel(config) : "Not added yet"}</div>
             )}
@@ -214,7 +216,7 @@ export default function PayoutMethodCard({
         <p className="mt-3 text-[12.5px] leading-5 text-[#5f6f65]">Add a bank account or UPI ID for your payouts. The team verifies it once, usually within a day.</p>
       ) : state === "unavailable" ? (
         <p className="mt-3 text-[12.5px] leading-5 text-[#825317]">Your payout details couldn&apos;t be loaded. Refresh to try again.</p>
-      ) : null}
+      ) : state === "loading" ? <Shimmer className="mt-3 h-5 w-full" /> : null}
 
       {locked && has ? (
         <p className="mt-3 flex gap-2 rounded-lg bg-[#fff8e8] px-3 py-2 text-[12px] leading-5 text-[#7a5200]">
@@ -223,7 +225,7 @@ export default function PayoutMethodCard({
         </p>
       ) : null}
 
-      <button
+      {state === "loading" ? <Shimmer className="mt-4 h-11 w-full !rounded-lg" /> : <button
         type="button"
         onClick={() => setEditorOpen(!editorOpen)}
         aria-expanded={editorOpen}
@@ -234,7 +236,7 @@ export default function PayoutMethodCard({
         )}
       >
         {editorOpen ? "Close" : has ? "Change payout method" : "Add payout method"}
-      </button>
+      </button>}
 
       {editorOpen ? (
         <form onSubmit={save} noValidate className="mt-4 space-y-4 rounded-xl bg-[#f8faf5] p-4 ring-1 ring-[#e8eee5]">

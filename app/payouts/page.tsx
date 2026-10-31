@@ -3,6 +3,7 @@ import { apiFetch as fetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Icon, PageHeader, buttonClassName, cx } from "@/app/dashboard/dashboardUi";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
@@ -20,9 +21,16 @@ import { useSocialAccounts } from "@/lib/useSocialAccounts";
 import { usePayoutIdentity } from "@/lib/usePayoutIdentity";
 import { summarizePayoutBatches } from "@/lib/creatorEarnings";
 import { CREATOR_HOME_HREF } from "@/lib/routes";
-import { KycRow, KycSheet, type KycProfile } from "./KycPanel";
+import type { KycProfile } from "./KycPanel";
+import { KycRow } from "./KycStatusRow";
 import PayoutMethodCard, { hasPayoutMethod, payoutMethodLabel, type PayoutMethodConfig } from "./PayoutMethodCard";
-import PayoutHistoryCard from "./PayoutHistoryCard";
+import PayoutsSkeleton, { PAYOUT_CARD_CLASS, PAYOUT_CONTAINER_CLASS, PAYOUT_GRID_CLASS, PAYOUT_MAIN_CLASS, PayoutHistoryLoading, Shimmer, WithdrawalScheduleLoading } from "./PayoutLoading";
+import DeferredPayoutContent from "./DeferredPayoutContent";
+
+const KycSheet = dynamic(() => import("./KycPanel").then(module => module.KycSheet), {
+  loading: () => <div role="status" className="fixed inset-0 z-50 grid place-items-center bg-[#15251d]/30 p-5"><div className="rounded-xl bg-white px-6 py-5 text-sm font-semibold text-[#20352c]">Opening identity verification…</div></div>,
+});
+const PayoutHistoryCard = dynamic(() => import("./PayoutHistoryCard"), { loading: () => <PayoutHistoryLoading rows={1} /> });
 
 // Matches the server: weekly payouts pick a weekday, monthly payouts a day of the month (1–28).
 type UpiSchedule = "Weekly" | "Monthly";
@@ -117,30 +125,6 @@ const istMonth = (value: number) => new Date(value + 5.5 * 3_600_000).toISOStrin
 
 function batchTotal(batch: PayoutBatch) {
   return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
-}
-
-/** Each section loads independently after the signed-in account is verified. */
-function PayoutsSkeleton() {
-  return (
-    <div className="min-h-screen bg-[#f6f7f2]" aria-busy="true" aria-label="Loading payouts">
-      <div className="h-[60px] border-b border-[#e6ebe2] bg-[#fcfdf9] sm:h-[68px]" />
-      <div className="mx-auto w-full max-w-6xl px-3.5 pt-6 sm:px-6 lg:px-8">
-        <div className="h-9 w-40 animate-pulse rounded-xl bg-[#e7efe5]" />
-        <div className="mt-2 h-4 w-56 animate-pulse rounded-full bg-[#edf3eb]" />
-        {/* Same shape as the page: balance card beside the checklist, then the overview. */}
-        <div className="mt-5 grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
-          <div className="h-[280px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
-          <div className="h-[280px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
-          <div className="h-[200px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Pulse placeholder used inside sections while their own data loads. */
-function Shimmer({ className = "" }: { className?: string }) {
-  return <span className={`block animate-pulse rounded-md bg-[#e8eee5] ${className}`} aria-hidden />;
 }
 
 type PayoutSnapshot = {
@@ -247,15 +231,17 @@ export default function PayoutsPage() {
 }
 
 function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: string }) {
+  // The workspace mounts only after /api/me verifies the owner. Restore their display data on its first paint.
+  const [snapshot] = useState(() => readSnapshot(userId));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
-  const [metrics, setMetrics] = useState<WorkerMetrics | null>(null);
-  const [upi, setUpi] = useState<UpiConfig | null>(null);
-  const [kycStatus, setKycStatus] = useState<KycStatus>("none");
-  const [kycRejectionReason, setKycRejectionReason] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<WorkerMetrics | null>(snapshot?.metrics ?? null);
+  const [upi, setUpi] = useState<UpiConfig | null>(snapshot?.upi ?? null);
+  const [kycStatus, setKycStatus] = useState<KycStatus>(snapshot?.kyc.status ?? "none");
+  const [kycRejectionReason, setKycRejectionReason] = useState<string | null>(snapshot?.kyc.reason ?? null);
   const [kycDetails, setKycDetails] = useState<{ submittedAt?: string | null; reviewedAt?: string | null; profile?: KycProfile | null }>({});
   const [kycSheetOpen, setKycSheetOpen] = useState(false);
-  const [batches, setBatches] = useState<PayoutBatch[]>([]);
+  const [batches, setBatches] = useState<PayoutBatch[]>(snapshot?.batches ?? []);
   const [requesting, setRequesting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
@@ -263,14 +249,16 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const [savingAuto, setSavingAuto] = useState(false);
   const autoSwitchRef = useRef<HTMLButtonElement | null>(null);
   const loadInFlightRef = useRef(false);
+  const loadControllerRef = useRef<AbortController | null>(null);
   // Which sections have real data (fresh or from this session's snapshot); each renders as soon as its own is in.
-  const [ready, setReady] = useState({ metrics: false, batches: false, upi: false, kyc: false });
-  const [fromSnapshot, setFromSnapshot] = useState(false);
+  const [ready, setReady] = useState({ metrics: !!snapshot, batches: !!snapshot, upi: !!snapshot, kyc: !!snapshot });
+  const [fromSnapshot, setFromSnapshot] = useState(!!snapshot);
   const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE);
+  const [historyRequested, setHistoryRequested] = useState(false);
   const [verified, setVerified] = useState({ metrics: false, batches: false, upi: false, kyc: false });
   const [failures, setFailures] = useState({ metrics: false, batches: false, upi: false, kyc: false });
   // What the creator last saw (this session or their previous visit), to announce what changed since.
-  const seenRef = useRef<SeenState | null>(null);
+  const seenRef = useRef<SeenState | null>(snapshot ? seenFrom(snapshot) : null);
   // Briefly highlights a card when it changes in real time (e.g. UPI verified by the team).
   const [flash, setFlash] = useState<"upi" | "kyc" | null>(null);
   const flashTimer = useRef<number | null>(null);
@@ -286,34 +274,26 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const loadPayoutData = useCallback(async (mode: "initial" | "refresh" = "initial") => {
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
-    if (mode === "initial") {
-      // Paint the last snapshot from this session immediately; fresh data replaces it section by section.
-      const snapshot = readSnapshot(userId);
-      if (snapshot) {
-        setMetrics(snapshot.metrics);
-        setBatches(snapshot.batches);
-        setUpi(snapshot.upi);
-        setKycStatus(snapshot.kyc.status);
-        setKycRejectionReason(snapshot.kyc.reason);
-        setReady({ metrics: true, batches: true, upi: true, kyc: true });
-        setFromSnapshot(true);
-        seenRef.current = seenFrom(snapshot);
-      }
-    } else setRefreshing(true);
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
+    const current = () => !controller.signal.aborted && loadControllerRef.current === controller;
+    if (mode === "refresh") setRefreshing(true);
     setError(null);
 
     const issues: string[] = [];
     const fresh: Partial<PayoutSnapshot> = {};
     const mark = (key: keyof typeof ready) => setReady((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
     const settled = (key: keyof typeof ready, success: boolean) => {
+      if (!current()) return;
       mark(key);
       setVerified(prev => ({ ...prev, [key]: success }));
       setFailures(prev => ({ ...prev, [key]: !success }));
     };
-    const read = (url: string, headers?: HeadersInit) => fetch(url, { headers, cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    const read = (url: string, headers?: HeadersInit) => fetch(url, { headers, cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) });
 
     try {
       const { data } = await payoutSession();
+      if (!current()) return;
       const token = data.session?.access_token;
       if (!token) throw new Error("Your session expired. Sign in again to view payouts.");
       const authHeaders = { Authorization: `Bearer ${token}` };
@@ -325,6 +305,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             const res = await read(`/api/metrics/worker?workerId=${encodeURIComponent(workerId)}`, authHeaders);
             if (!res.ok) throw new Error();
             const json = (await res.json()) as WorkerMetrics;
+            if (!current()) return;
             if (typeof json?.money?.available !== "number" || !Number.isFinite(json.money.available) || json.money.available < 0) throw new Error();
             fresh.metrics = json;
             setMetrics(json);
@@ -340,6 +321,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             const res = await read(`/api/payoutbatches?workerId=${encodeURIComponent(workerId)}`, authHeaders);
             if (!res.ok) throw new Error();
             const json = await res.json();
+            if (!current()) return;
             if (!Array.isArray(json) || !json.every(isPayoutBatch)) throw new Error();
             fresh.batches = json;
             setBatches(fresh.batches);
@@ -356,6 +338,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             const res = await read("/api/upi", authHeaders);
             if (!res.ok) throw new Error();
             fresh.upi = (await res.json()) ?? null;
+            if (!current()) return;
             setUpi(fresh.upi ?? null);
           } catch {
             issues.push("UPI status");
@@ -370,6 +353,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             const res = await read("/api/kyc", authHeaders);
             if (!res.ok) throw new Error();
             const json = (await res.json().catch(() => ({}))) as KycResponse;
+            if (!current()) return;
             if (!json.status || !["none", "pending", "approved", "rejected"].includes(json.status)) throw new Error();
             fresh.kyc = { status: (json.status ?? "none") as KycStatus, reason: json.rejectionReason ?? null };
             setKycStatus(fresh.kyc.status);
@@ -383,8 +367,11 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
         })(),
       ]);
 
-      setLastUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
-      setFromSnapshot(false);
+      if (!current()) return;
+      if (!issues.length) {
+        setLastUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+        setFromSnapshot(false);
+      }
       if (issues.length > 0) setError(`Some payout data could not be refreshed: ${issues.join(", ")}.`);
       // Announce the most important change since the last complete read.
       if (!issues.length && fresh.metrics && fresh.batches && fresh.kyc) {
@@ -400,17 +387,29 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
         writeSnapshot(userId, { metrics: fresh.metrics, batches: fresh.batches, upi: fresh.upi ?? null, kyc: fresh.kyc, at: new Date().toISOString() });
       }
     } catch (err) {
+      if (!current()) return;
       setError(err instanceof Error ? err.message : "Unable to load payout data.");
       setReady({ metrics: true, batches: true, upi: true, kyc: true });
       setVerified({ metrics: false, batches: false, upi: false, kyc: false });
       setFailures({ metrics: true, batches: true, upi: true, kyc: true });
     } finally {
-      loadInFlightRef.current = false;
-      setRefreshing(false);
+      if (loadControllerRef.current === controller) {
+        loadControllerRef.current = null;
+        loadInFlightRef.current = false;
+        if (!controller.signal.aborted) setRefreshing(false);
+      }
     }
   }, [userId, workerId, flashSection]);
 
-  useEffect(() => { void loadPayoutData("initial"); }, [loadPayoutData]);
+  useEffect(() => {
+    void loadPayoutData("initial");
+    return () => {
+      loadControllerRef.current?.abort();
+      loadControllerRef.current = null;
+      loadInFlightRef.current = false;
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    };
+  }, [loadPayoutData]);
 
   // Live updates: the server broadcasts a content-free "changed" signal on this user's private payouts topic
   // whenever their cycles, wallet credits, UPI or KYC change (migration 202610110001). We then re-read through the
@@ -640,7 +639,10 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     setUpiEditorOpen(true);
     requestAnimationFrame(() => upiSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
-  const showHistory = () => historyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const showHistory = () => {
+    setHistoryRequested(true);
+    historyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   type CheckKey = "kyc" | "upi" | "min" | "batch";
   type CheckAction = { label: string; href?: string; onClick?: () => void };
@@ -675,8 +677,8 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           : `You can withdraw manually once every ${MANUAL_WITHDRAWAL_INTERVAL_DAYS} days.`,
     },
   ];
-  const readinessChecks = allReadinessChecks.filter((check) => check.key !== "kyc" || showKycCheck);
-  const checkReady: Record<CheckKey, boolean> = { kyc: ready.kyc, upi: ready.upi, min: ready.metrics, batch: ready.batches };
+  const readinessChecks = allReadinessChecks.filter((check) => check.key !== "kyc" || showKycCheck || (!verified.metrics && !failures.metrics));
+  const checkReady: Record<CheckKey, boolean> = { kyc: ready.kyc && verified.metrics, upi: ready.upi, min: ready.metrics, batch: ready.batches };
   const coreReady = verified.kyc && verified.upi && verified.metrics && verified.batches;
   const hasFailures = Object.values(failures).some(Boolean);
   const checksDone = readinessChecks.filter((c) => c.ok && checkReady[c.key]).length;
@@ -696,7 +698,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const nextAction = nextKey ? actionFor(nextKey) : null;
 
   // Same card as the dashboard (dashboardUi Card).
-  const card = "min-w-0 rounded-xl border border-[#e3e5e1] bg-white shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)]";
+  const card = PAYOUT_CARD_CLASS;
   const actionBtn =
     "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-[#dfe7dc] bg-white px-3 text-[12px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50";
   const renderAction = (action: CheckAction, className = actionBtn) =>
@@ -714,7 +716,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     <div className="min-h-screen bg-[#f3f4f1] text-[#1a201c] [font-family:var(--font-geist-sans)]">
       {/* Same top bar as the dashboard: back to Wallet, section identity, live status and the main action. */}
       <header className="sticky top-0 z-20 border-b border-[#e6ebe2] bg-[#fcfdf9]/90 backdrop-blur-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <div className="mx-auto flex h-[60px] w-full max-w-[1440px] items-center justify-between gap-3 px-3.5 sm:px-5 md:h-[68px] md:px-6 lg:px-7 2xl:px-8">
+        <div className={cx(PAYOUT_CONTAINER_CLASS, "flex h-[60px] items-center justify-between gap-3 md:h-[68px]")}>
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
             <Link
               href="/dashboard?section=wallet"
@@ -740,6 +742,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
               type="button"
               onClick={() => { void loadPayoutData("refresh"); void socialAccounts.refresh(); }}
               disabled={refreshing || !workerId}
+              aria-label="Refresh payouts"
               aria-busy={refreshing}
               title={liveState === "live" ? "Updates appear instantly · tap to refresh" : liveState === "offline" ? "Live updates unavailable; checking every 10 seconds" : "Connecting to live updates"}
               className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center gap-1.5 rounded-full border border-[#e3e5e1] bg-white text-[12px] font-semibold text-[#4b544e] transition hover:bg-[#f3f4f1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-default sm:w-auto sm:px-3"
@@ -749,7 +752,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 <path d="M14.6 3.2v2.9h-2.9M5.4 16.8v-2.9h2.9" />
               </svg>
               <span className="hidden whitespace-nowrap sm:inline">
-                {refreshing || fromSnapshot ? "Refreshing…" : lastUpdatedAt ? `Updated ${lastUpdatedAt}` : "Loading…"}
+                {refreshing ? "Refreshing…" : fromSnapshot ? "Saved data" : hasFailures ? "Refresh needed" : lastUpdatedAt ? `Updated ${lastUpdatedAt}` : "Loading…"}
               </span>
               <span
                 className={cx(
@@ -767,7 +770,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-[1440px] px-3.5 pb-[max(3rem,env(safe-area-inset-bottom))] pt-4 min-[380px]:px-4 sm:px-5 sm:pt-5 md:px-6 lg:px-7 xl:pt-7 2xl:px-8">
+      <main className={PAYOUT_MAIN_CLASS}>
         <PageHeader
           title="Payouts"
           description="Withdraw from your wallet and manage where your payouts go."
@@ -795,11 +798,11 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           </div>
         )}
 
-        <div className="mt-5 flex flex-col gap-4 sm:gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
+        <div className={PAYOUT_GRID_CLASS}>
           {/* Left column (desktop) */}
           <div className="contents lg:flex lg:flex-col lg:gap-5">
             {/* Balance: what can be withdrawn, the one action that fits, and how money leaves the wallet. */}
-            <section aria-labelledby="balance-heading" className={`${card} order-1 overflow-hidden`}>
+            <section aria-labelledby="balance-heading" aria-busy={!ready.metrics} className={`${card} order-1 overflow-hidden`}>
               <div className="p-4 sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 id="balance-heading" className="text-[13px] font-semibold text-[#5f6f65]">
@@ -855,16 +858,21 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                       </div>
                     </div>
                   )
-                ) : null}
+                ) : !ready.metrics ? <Shimmer className="mt-2 h-4 w-36" /> : null}
 
                 {hasFailures ? (
                   <div role="status" className="mt-5 rounded-lg bg-[#fff8ec] p-3.5 text-[13px] leading-5 text-[#825317] ring-1 ring-inset ring-[#f1dea6]">
                     Some payout details are unavailable. Refresh to verify your balance and requirements before withdrawing.
                   </div>
                 ) : !coreReady ? (
-                  <div className="mt-5 flex items-center gap-3" aria-busy="true">
-                    <Shimmer className="h-12 w-48 !rounded-lg" />
-                    <span className="text-[12.5px] text-[#6f7d74]">Checking requirements…</span>
+                  <div className="mt-5 flex min-h-[94px] items-center gap-3 rounded-lg bg-[#fafbf8] p-3.5 ring-1 ring-inset ring-[#e8eee5]" aria-busy="true">
+                    <Shimmer className="hidden h-9 w-9 shrink-0 !rounded-full min-[360px]:block" />
+                    <div className="min-w-0 flex-1">
+                      <span role="status" className="text-[12.5px] text-[#6f7d74]">Checking payout requirements…</span>
+                      <Shimmer className="mt-2 h-4 w-44" />
+                      <Shimmer className="mt-2 h-3 w-full" />
+                    </div>
+                    <Shimmer className="hidden h-10 w-24 shrink-0 !rounded-lg min-[520px]:block" />
                   </div>
                 ) : payoutReadiness.ready ? (
                   <div className="mt-5 grid gap-3">
@@ -984,7 +992,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     )}
                   </div>
                 </dl>
-              ) : null}
+              ) : !hasFailures ? <WithdrawalScheduleLoading /> : null}
 
               {hasMethod ? null : ready.upi ? (
                 <p className="border-t border-[#e8eee5] px-4 py-3 text-[12.5px] text-[#5f6f65] sm:px-6">
@@ -997,7 +1005,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             </section>
 
             {/* Wallet overview: where earnings stand, without repeating the withdrawable balance above. */}
-            <section aria-labelledby="overview-heading" className={`${card} order-3 p-4 sm:p-5`}>
+            <section aria-labelledby="overview-heading" aria-busy={!ready.metrics || !ready.batches} className={`${card} order-3 p-4 sm:p-5`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h2 id="overview-heading" className="text-[14px] font-semibold text-[#1a201c]">Wallet overview</h2>
@@ -1013,14 +1021,14 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                   dot="bg-[#5e8f35]"
                   value={creditedTotal !== undefined ? formatINR(creditedTotal) : "–"}
                   caption={reel?.approvedReels !== undefined ? `${reel.approvedReels} ${reel.approvedReels === 1 ? "reel" : "reels"} credited` : "Approved earnings"}
-                  loading={reelLoading && !ready.metrics}
+                  loading={creditedTotal === undefined && (reelLoading || !ready.metrics)}
                 />
                 <OverviewStat
                   label="In review"
                   dot="bg-[#d9a520]"
                   value={pendingTotal !== undefined ? formatINR(pendingTotal) : "–"}
                   caption={reel?.pendingReels !== undefined ? `${reel.pendingReels} ${reel.pendingReels === 1 ? "reel" : "reels"} · estimate` : "Estimate until reviewed"}
-                  loading={reelLoading && !ready.metrics}
+                  loading={pendingTotal === undefined && (reelLoading || !ready.metrics)}
                 />
                 <OverviewStat
                   label="In payout"
@@ -1095,7 +1103,11 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     </p>
                   </div>
                 )}
-                {ready.batches && batches.slice(0, historyLimit).map((batch) => <PayoutHistoryCard key={batch.id} batch={batch} />)}
+                {ready.batches && batches.length > 0 ? (
+                  <DeferredPayoutContent eager={historyRequested} fallback={<PayoutHistoryLoading rows={Math.min(historyLimit, batches.length)} />}>
+                    <div className="grid gap-3">{batches.slice(0, historyLimit).map((batch) => <PayoutHistoryCard key={batch.id} batch={batch} />)}</div>
+                  </DeferredPayoutContent>
+                ) : null}
                 {ready.batches && batches.length > historyLimit ? (
                   <button
                     type="button"
@@ -1120,19 +1132,19 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     payoutReadiness.ready ? "bg-[#e3f1d6] text-[#2f6a1f]" : "bg-[#fff4d6] text-[#8a5a00]"
                   }`}
                 >
-                  {coreReady ? `${checksDone}/${readinessChecks.length} done` : "Checking…"}
+                  {hasFailures ? "Needs refresh" : coreReady ? `${checksDone}/${readinessChecks.length} done` : "Checking…"}
                 </span>
               </div>
-              <div className={cx("mt-3 grid gap-1", showKycCheck ? "grid-cols-4" : "grid-cols-3")} aria-hidden>
+              <div className={cx("mt-3 grid gap-1", readinessChecks.length === 4 ? "grid-cols-4" : "grid-cols-3")} aria-hidden>
                 {readinessChecks.map((check, index) => (
-                  <span key={check.key} className={`h-1.5 rounded-full transition-colors duration-500 ${!coreReady ? "animate-pulse bg-[#eef1ea]" : index < checksDone ? "bg-[#8db35a]" : "bg-[#ece6d2]"}`} />
+                  <span key={check.key} className={`h-1.5 rounded-full transition-colors duration-500 ${!coreReady ? "motion-safe:animate-pulse bg-[#eef1ea]" : index < checksDone ? "bg-[#8db35a]" : "bg-[#ece6d2]"}`} />
                 ))}
               </div>
               <ul className="mt-3 grid gap-2">
                 {readinessChecks.map((check) => {
                   if (!checkReady[check.key]) {
                     return (
-                      <li key={check.key} className="flex items-start gap-3 rounded-lg bg-[#f8faf5] px-3 py-2.5" aria-busy="true">
+                      <li key={check.key} className={cx("flex items-start gap-3 rounded-lg bg-[#f8faf5] px-3 py-2.5", check.key === "kyc" ? "min-h-[96px]" : "min-h-[64px]")} aria-busy="true">
                         <Shimmer className="mt-0.5 h-6 w-6 !rounded-full" />
                         <span className="min-w-0 flex-1 space-y-1.5 pt-0.5">
                           <Shimmer className="h-3.5 w-40 max-w-full" />
