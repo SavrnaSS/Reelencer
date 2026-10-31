@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import type { AccountEarningsSummary } from "@/lib/creatorEarnings";
+import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
 import { payoutHistoryNotes, payoutHistoryStatus, payoutHistoryTotal, payoutWalletLedger, type PayoutWalletEffect } from "@/lib/payoutHistory";
 import ReelEarningsSummary from "./ReelEarningsSummary";
 import {
@@ -79,9 +80,9 @@ function statusOf(batch: WalletBatch) {
 /** What happened to this payout's money, in a few words, shown under its amount. */
 function walletEffectLabel(batch: WalletBatch) {
   switch (statusOf(batch).effect) {
-    case "held": return "Held from wallet";
-    case "deducted": return String(batch.status).toLowerCase() === "paid" ? "Deducted · paid" : "Deducted · sending";
-    case "returned": return "Returned to wallet";
+    case "held": return "On hold for review";
+    case "deducted": return String(batch.status).toLowerCase() === "paid" ? "Paid out" : "Approved · on its way";
+    case "returned": return "Back in your balance";
     default: return "";
   }
 }
@@ -120,6 +121,14 @@ export default function DashboardWalletView({ loading, payoutBatches, wallet, ac
   const lastPaid = sortedBatches.find((batch) => String(batch.status).toLowerCase() === "paid");
   const lastReturned = sortedBatches.find((batch) => statusOf(batch).effect === "returned");
   const firstLoad = loading && payoutBatches.length === 0;
+  // What the available balance means right now: how far from the minimum, or that it can be withdrawn.
+  const availableNote = ledger.available === undefined
+    ? ""
+    : ledger.available <= 0
+      ? `Approved earnings land here. You can withdraw once you have ${formatMoney(MIN_PAYOUT_REQUEST_INR)} or more.`
+      : ledger.available < MIN_PAYOUT_REQUEST_INR
+        ? `${formatMoney(Math.round((MIN_PAYOUT_REQUEST_INR - ledger.available) * 100) / 100)} more to reach the ${formatMoney(MIN_PAYOUT_REQUEST_INR)} minimum for a withdrawal.`
+        : "All of it is yours to withdraw. Request a payout whenever you're ready.";
   const balanceLoading = ledger.available === undefined && (wallet === null || firstLoad);
 
   return (
@@ -149,22 +158,22 @@ export default function DashboardWalletView({ loading, payoutBatches, wallet, ac
             )}
             <p className="mt-1 text-[12.5px] leading-5 text-[#616a64]">
               {ledger.held > 0
-                ? `${formatMoney(ledger.held)} is held in ${ledger.heldCount === 1 ? "a payout" : `${ledger.heldCount} payouts`} under review. It comes back here if a payout isn't approved.`
+                ? `${formatMoney(ledger.held)} is on hold for ${ledger.heldCount === 1 ? "a payout" : `${ledger.heldCount} payouts`} under review. If ${ledger.heldCount === 1 ? "it isn't" : "one isn't"} approved, the money comes straight back here.`
                 : lastReturned
-                  ? `${formatMoney(batchTotal(lastReturned))} from a rejected payout was returned ${formatRelative(batchUpdated(lastReturned))}.`
-                  : "Requesting a payout moves the amount out of here until the team decides."}
+                  ? `${formatMoney(batchTotal(lastReturned))} from a payout that wasn't approved is back in your balance (returned ${formatRelative(batchUpdated(lastReturned)).replace(/^Just now$/, "just now")}).`
+                  : availableNote}
             </p>
           </div>
 
           <div className="min-w-0 rounded-xl border border-[#ebedea] bg-[#fafbf9] p-3.5 sm:p-4">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[12.5px] font-medium text-[#616a64]">Credited to your wallet</span>
+              <span className="text-[12.5px] font-medium text-[#616a64]">Total credited</span>
               <span className="text-[15px] font-semibold tabular-nums text-[#1a201c]">{ledger.credited !== undefined ? formatMoney(credited) : "–"}</span>
             </div>
             <div
               className="mt-2.5 flex h-2.5 w-full gap-[2px] overflow-hidden rounded-full bg-[#eef0ed]"
               role="img"
-              aria-label={`${formatMoney(ledger.available ?? 0)} available, ${formatMoney(ledger.held)} held in payouts, ${formatMoney(ledger.withdrawn)} withdrawn`}
+              aria-label={`${formatMoney(ledger.available ?? 0)} available, ${formatMoney(ledger.held)} on hold, ${formatMoney(ledger.withdrawn)} withdrawn`}
             >
               {(["available", "held", "withdrawn"] as const).map((key) => {
                 const value = key === "available" ? ledger.available ?? 0 : ledger[key];
@@ -174,8 +183,8 @@ export default function DashboardWalletView({ loading, payoutBatches, wallet, ac
             <dl className="mt-3 grid grid-cols-1 gap-1.5 text-[12.5px] min-[420px]:grid-cols-3 min-[420px]:gap-3">
               {[
                 { key: "available" as const, label: "Available", value: ledger.available, hint: "Ready to withdraw" },
-                { key: "held" as const, label: "In review", value: ledger.held, hint: "Held from wallet" },
-                { key: "withdrawn" as const, label: "Withdrawn", value: ledger.withdrawn, hint: "Approved or paid" },
+                { key: "held" as const, label: "On hold", value: ledger.held, hint: "Awaiting approval" },
+                { key: "withdrawn" as const, label: "Withdrawn", value: ledger.withdrawn, hint: "Paid out or on its way" },
               ].map((row) => (
                 <div key={row.key} className="flex items-center justify-between gap-2 min-[420px]:block">
                   <dt className="flex items-center gap-1.5 text-[#4b544e]">
@@ -397,7 +406,7 @@ function BatchDetails({ batch }: { batch: WalletBatch }) {
     ? [
         { label: "Requested", at: batch.createdAt, done: true },
         { label: "Rejected", at: batch.processedAt, done: true, bad: true },
-        { label: "Returned to wallet", at: batch.processedAt, done: true },
+        { label: "Back in balance", at: batch.processedAt, done: true },
       ]
     : [
         { label: "Requested", at: batch.createdAt, done: true },

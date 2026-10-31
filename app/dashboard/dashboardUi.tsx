@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { formatAmount } from "@/lib/money";
+import { formatMoney as formatRupees } from "@/lib/money";
 
 /*
  * Shared building blocks for the creator dashboard.
@@ -29,8 +29,9 @@ const inrCompact = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 1,
 });
 
+/** "₹49" for whole rupees, "₹12.30" with paise (never "₹12.3"). */
 export function formatMoney(value: number) {
-  return formatAmount(value);
+  return formatRupees(value);
 }
 
 export function formatMoneyCompact(value: number) {
