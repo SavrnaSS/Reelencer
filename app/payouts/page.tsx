@@ -15,6 +15,7 @@ import ReelEarningsSummary from "@/app/dashboard/ReelEarningsSummary";
 import { MetricTile } from "@/app/dashboard/dashboardUi";
 import { CREATOR_HOME_HREF } from "@/lib/routes";
 import { KycRow, KycSheet, type KycProfile } from "./KycPanel";
+import PayoutHistoryCard from "./PayoutHistoryCard";
 
 // Matches the server: weekly payouts pick a weekday, monthly payouts a day of the month (1–28).
 type UpiSchedule = "Weekly" | "Monthly";
@@ -60,6 +61,8 @@ type KycResponse = {
 type PayoutItem = {
   id: string;
   workItemId: string;
+  workItemTitle?: string;
+  reelUrl?: string;
   workerId: string;
   handle: string;
   amountINR: number;
@@ -79,6 +82,8 @@ type PayoutBatch = {
   method: "UPI" | "Bank";
   items: PayoutItem[];
   notes: string[];
+  paymentReference?: string;
+  origin?: "manual" | "auto";
 };
 
 const DEFAULT_UPI: UpiConfig = {
@@ -105,21 +110,6 @@ const sinceLabel = (value?: string | null) => {
   const hours = Math.round(minutes / 60);
   return hours < 24 ? `${hours}h ago` : new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 };
-
-function fmtDate(value?: string | null) {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
-}
-
-function batchStatusTone(status: string) {
-  const v = status.trim().toLowerCase();
-  if (v === "paid") return "bg-[#e3f1d6] text-[#2f6a1f] ring-[#c6e0b0]";
-  if (v === "processing") return "bg-[#e5f1fb] text-[#0f5f8f] ring-[#c3def2]";
-  if (v === "failed") return "bg-[#fdecea] text-[#b42318] ring-[#f6cdc8]";
-  return "bg-[#fff4d6] text-[#8a5a00] ring-[#f1dea6]";
-}
 
 function batchTotal(batch: PayoutBatch) {
   return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
@@ -868,7 +858,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="history-heading" className="text-[18px] font-semibold tracking-[-0.02em] sm:text-[20px]">Payout history</h2>
-                  <p className="mt-0.5 text-[13px] text-[#5f6f65]">Each payout cycle and where it stands.</p>
+                  <p className="mt-0.5 text-[13px] text-[#5f6f65]">Track your withdrawals and included earnings.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#f0f4ec] px-3 py-1 text-[12px] font-bold text-[#41695b]">{ready.batches ? batches.length : "…"}</span>
               </div>
@@ -896,51 +886,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     </p>
                   </div>
                 )}
-                {ready.batches && batches.slice(0, historyLimit).map((batch) => (
-                  <article key={batch.id} className="rounded-[18px] border border-[#e4ebe1] bg-[#fbfcf9] p-4 [contain-intrinsic-size:auto_150px] [content-visibility:auto]">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h3 className="break-words text-[15.5px] font-semibold leading-snug">{batch.cycleLabel}</h3>
-                        <div className="mt-0.5 text-[12px] text-[#5f6f65]">
-                          {batch.periodStart} → {batch.periodEnd} · {batch.method}
-                        </div>
-                      </div>
-                      <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ${batchStatusTone(batch.status)}`}>
-                        {batch.status}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                      <div className="text-[22px] font-semibold tracking-[-0.03em] tabular-nums">{formatINR(batchTotal(batch))}</div>
-                      <div className="text-[12px] text-[#6f7d74]">
-                        {batch.items.length} {batch.items.length === 1 ? "item" : "items"} · Created {fmtDate(batch.createdAt)}
-                        {batch.paidAt ? ` · Paid ${fmtDate(batch.paidAt)}` : ""}
-                      </div>
-                    </div>
-                    {(batch.items.length > 0 || batch.notes?.length > 0) && (
-                      <details className="group mt-3 rounded-[14px] bg-white ring-1 ring-[#e8eee5]">
-                        <summary className="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 text-[13px] font-semibold text-[#41695b] [&::-webkit-details-marker]:hidden">
-                          View details
-                          <span className="transition-transform group-open:rotate-180" aria-hidden>
-                            ▾
-                          </span>
-                        </summary>
-                        <div className="border-t border-[#eef2eb] px-3.5 py-3">
-                          {batch.items.length > 0 && (
-                            <ul className="grid gap-1.5">
-                              {batch.items.map((item) => (
-                                <li key={item.id} className="flex items-center justify-between gap-3 text-[13px] text-[#34483f]">
-                                  <span className="min-w-0 truncate">{item.handle || item.workItemId}</span>
-                                  <span className="shrink-0 font-semibold tabular-nums">{formatINR(item.amountINR)}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          {batch.notes?.length > 0 && <p className="mt-2 text-[12px] text-[#6f7d74]">{batch.notes.join(" · ")}</p>}
-                        </div>
-                      </details>
-                    )}
-                  </article>
-                ))}
+                {ready.batches && batches.slice(0, historyLimit).map((batch) => <PayoutHistoryCard key={batch.id} batch={batch} />)}
                 {ready.batches && batches.length > historyLimit ? (
                   <button
                     type="button"

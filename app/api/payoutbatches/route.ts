@@ -5,6 +5,7 @@ import { resolveWorkerUserId } from "@/lib/api/work";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getDevDashboardPayoutBatches, isDashboardDevMode } from "@/lib/dashboardDevData";
+import { payoutHistoryMetadata, payoutHistoryPostId } from "@/lib/payoutHistoryMetadata";
 
 // Optional: keep responses non-cacheable (good for dashboards)
 const NO_STORE_HEADERS = {
@@ -25,6 +26,8 @@ type DbPayoutBatch = {
   paid_at?: string | null;
   method: "UPI" | "Bank" | string;
   notes?: unknown;
+  origin?: string | null;
+  payment_reference?: string | null;
 };
 
 type DbPayoutItem = {
@@ -41,6 +44,8 @@ type DbPayoutItem = {
 type DbWorkItem = {
   id: string | number;
   public_id?: string | null;
+  title?: string | null;
+  submission?: Record<string, unknown>;
   review?: Record<string, unknown>;
 };
 
@@ -87,6 +92,7 @@ async function handleGET(req: Request) {
       const { data: itemsRaw, error: itemErr } = await sb
         .from("payout_items")
         .select("*")
+        .eq("worker_id", workerUuid)
         .in("batch_id", batchIds);
 
       if (itemErr) {
@@ -101,7 +107,8 @@ async function handleGET(req: Request) {
     if (workItemIds.length > 0) {
       const { data: workItemsRaw, error: workItemErr } = await sb
         .from("work_items")
-        .select("id, public_id, review")
+        .select("id, public_id, title, submission, review")
+        .eq("worker_id", workerUuid)
         .in("id", workItemIds);
 
       if (workItemErr) {
@@ -111,6 +118,15 @@ async function handleGET(req: Request) {
       for (const workItem of (workItemsRaw ?? []) as DbWorkItem[]) {
         workItemMap.set(String(workItem.id), workItem);
       }
+    }
+
+    // Automatic reel credits keep a post reference rather than duplicating its public URL in the ledger.
+    const postIds = [...new Set([...workItemMap.values()].map(payoutHistoryPostId).filter((id): id is string => !!id))];
+    const reelUrls = new Map<string, string>();
+    if (postIds.length > 0) {
+      const { data: posts } = await sb.from("social_account_posts").select("id,url").in("id", postIds);
+      // Public links are optional enrichment. A missing/deleted reel must not hide a valid payment history.
+      for (const post of posts ?? []) reelUrls.set(String(post.id), String(post.url));
     }
 
     // ✅ 3) Group items by batch
@@ -135,6 +151,7 @@ async function handleGET(req: Request) {
         status: it.status,
         reason: it.reason ?? undefined,
         sourceAssignmentId,
+        ...payoutHistoryMetadata(workItem, workItem ? reelUrls.get(payoutHistoryPostId(workItem) ?? "") : undefined),
       });
       itemsByBatch.set(bid, arr);
     }
@@ -152,6 +169,8 @@ async function handleGET(req: Request) {
       method: b.method,
       items: itemsByBatch.get(String(b.id)) ?? [],
       notes: Array.isArray(b.notes) ? b.notes : b.notes ? [String(b.notes)] : [],
+      origin: b.origin === "auto" ? "auto" : "manual",
+      paymentReference: b.payment_reference?.trim() || undefined,
     }));
 
     return NextResponse.json(payload, { headers: NO_STORE_HEADERS });
