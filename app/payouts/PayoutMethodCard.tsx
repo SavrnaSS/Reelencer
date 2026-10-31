@@ -42,7 +42,7 @@ const draftFrom = (config?: PayoutMethodConfig | null): Draft => ({
 
 const cx = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(" ");
 const inputClass =
-  "h-12 w-full rounded-[14px] border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition placeholder:text-[#a3aaa4] focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40 disabled:bg-[#f3f4f1] disabled:text-[#7a827c]";
+  "h-12 w-full rounded-lg border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition placeholder:text-[#a3aaa4] focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40 disabled:bg-[#f3f4f1] disabled:text-[#7a827c]";
 
 function Field({ label, hint, error, valid, children }: { label: string; hint?: ReactNode; error?: string | null; valid?: boolean; children: (id: string, describedBy: string) => ReactNode }) {
   const id = useId();
@@ -164,7 +164,7 @@ export default function PayoutMethodCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className={cx("flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-[11.5px] font-black tracking-tight", state === "verified" ? "bg-[#41695b] text-white" : "bg-[#f0f4ec] text-[#41695b]")}
+            className={cx("flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-[11.5px] font-black tracking-tight", state === "verified" ? "bg-[#41695b] text-white" : "bg-[#f0f4ec] text-[#41695b]")}
             aria-hidden
           >
             {isBank ? (
@@ -192,7 +192,7 @@ export default function PayoutMethodCard({
       </div>
 
       {state === "pending" ? (
-        <div className="mt-4 rounded-[14px] bg-[#f3f7fc] p-3 ring-1 ring-inset ring-[#dbe7f5]">
+        <div className="mt-4 rounded-lg bg-[#f3f7fc] p-3 ring-1 ring-inset ring-[#dbe7f5]">
           <p className="flex items-center gap-2 text-[13px] font-semibold text-[#1d4f8f]">
             <span className="relative flex h-2 w-2" aria-hidden>
               <span className="absolute inline-flex h-full w-full rounded-full bg-[#7fb0e6] opacity-60 motion-safe:animate-ping" />
@@ -217,7 +217,7 @@ export default function PayoutMethodCard({
       ) : null}
 
       {locked && has ? (
-        <p className="mt-3 flex gap-2 rounded-[12px] bg-[#fff8e8] px-3 py-2 text-[12px] leading-5 text-[#7a5200]">
+        <p className="mt-3 flex gap-2 rounded-lg bg-[#fff8e8] px-3 py-2 text-[12px] leading-5 text-[#7a5200]">
           <span aria-hidden>🔒</span>
           Your payout details are locked while a payout is in progress, so it reaches the account it was requested for.
         </p>
@@ -229,16 +229,16 @@ export default function PayoutMethodCard({
         aria-expanded={editorOpen}
         disabled={!ready || failed}
         className={cx(
-          "mt-4 inline-flex h-11 w-full items-center justify-center rounded-[14px] text-[14px] font-semibold transition disabled:opacity-50",
-          !has && !editorOpen ? "bg-[#41695b] text-white hover:bg-[#35584b]" : "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]"
+          "mt-4 inline-flex h-11 w-full items-center justify-center rounded-lg text-[14px] font-semibold transition disabled:opacity-50",
+          !has && !editorOpen ? "bg-[#1f2b24] text-white hover:bg-[#2b3a31]" : "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]"
         )}
       >
         {editorOpen ? "Close" : has ? "Change payout method" : "Add payout method"}
       </button>
 
       {editorOpen ? (
-        <form onSubmit={save} noValidate className="mt-4 space-y-4 rounded-[18px] bg-[#f8faf5] p-4 ring-1 ring-[#e8eee5]">
-          <div role="radiogroup" aria-label="Payout method" className="grid grid-cols-2 gap-1 rounded-[14px] bg-white p-1 ring-1 ring-[#dbe3d7]">
+        <form onSubmit={save} noValidate className="mt-4 space-y-4 rounded-xl bg-[#f8faf5] p-4 ring-1 ring-[#e8eee5]">
+          <div role="radiogroup" aria-label="Payout method" className="grid grid-cols-2 gap-1 rounded-lg bg-white p-1 ring-1 ring-[#dbe3d7]">
             {(["Bank", "UPI"] as const).map((option) => (
               <button
                 key={option}
@@ -380,27 +380,27 @@ export default function PayoutMethodCard({
             </div>
           )}
 
-          <p className="rounded-[12px] bg-white px-3 py-2 text-[12px] leading-5 text-[#5f6f65] ring-1 ring-inset ring-[#e8eee5]">
+          <p className="rounded-lg bg-white px-3 py-2 text-[12px] leading-5 text-[#5f6f65] ring-1 ring-inset ring-[#e8eee5]">
             {locked
               ? "You can change your payout details once the current payout finishes."
               : "A new payout method is verified by the team before payouts use it, usually within a day."}
           </p>
 
           {error ? (
-            <div role="alert" className="rounded-[12px] border border-[#f6cdc8] bg-[#fdecea] px-3 py-2 text-[13px] font-semibold text-[#b42318]">{error}</div>
+            <div role="alert" className="rounded-lg border border-[#f6cdc8] bg-[#fdecea] px-3 py-2 text-[13px] font-semibold text-[#b42318]">{error}</div>
           ) : null}
           <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[1fr_auto]">
             <button
               type="submit"
               disabled={saving || locked || (!valid && draft.method === "UPI")}
-              className="inline-flex h-11 items-center justify-center rounded-[14px] bg-[#41695b] px-5 text-[14px] font-semibold text-white transition hover:bg-[#35584b] disabled:opacity-50"
+              className="inline-flex h-11 items-center justify-center rounded-lg bg-[#1f2b24] px-5 text-[14px] font-semibold text-white transition hover:bg-[#2b3a31] disabled:opacity-50"
             >
               {saving ? "Saving…" : "Save and send for verification"}
             </button>
             <button
               type="button"
               onClick={() => setEditorOpen(false)}
-              className="inline-flex h-11 items-center justify-center rounded-[14px] border border-[#dfe7dc] bg-white px-5 text-[14px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
+              className="inline-flex h-11 items-center justify-center rounded-lg border border-[#dfe7dc] bg-white px-5 text-[14px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
             >
               Cancel
             </button>

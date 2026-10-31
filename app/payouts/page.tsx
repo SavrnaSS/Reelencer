@@ -3,7 +3,7 @@ import { apiFetch as fetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { BrandLogo } from "@/app/_components/BrandLogo";
+import { Icon, PageHeader, buttonClassName, cx } from "@/app/dashboard/dashboardUi";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
 import { formatAmount as formatINR } from "@/lib/money";
@@ -127,10 +127,10 @@ function PayoutsSkeleton() {
         <div className="h-9 w-40 animate-pulse rounded-xl bg-[#e7efe5]" />
         <div className="mt-2 h-4 w-56 animate-pulse rounded-full bg-[#edf3eb]" />
         {/* Same shape as the page: balance card beside the checklist, then the overview. */}
-        <div className="mt-5 grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
-          <div className="h-[280px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
-          <div className="h-[280px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
-          <div className="h-[200px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
+        <div className="mt-5 grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="h-[280px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
+          <div className="h-[280px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
+          <div className="h-[200px] animate-pulse rounded-xl bg-white/80 ring-1 ring-[#e6ebe2]" />
         </div>
       </div>
     </div>
@@ -215,8 +215,8 @@ function describeChange(prev: SeenState, next: SeenState, batches: PayoutBatch[]
     if (!before || before === batch.status) continue;
     const amount = formatINR(batchTotal(batch));
     if (batch.status === "Paid") return { tone: "success", text: `${amount} was paid to your UPI.` };
-    if (batch.status === "Failed") return { tone: "danger", text: `Your ${amount} payout was not approved${batch.notes?.length ? `: ${batch.notes[batch.notes.length - 1]}` : "."}` };
-    if (batch.status === "Processing") return { tone: "success", text: `Your ${amount} payout was approved and is being processed.` };
+    if (batch.status === "Failed") return { tone: "danger", text: `Your ${amount} payout wasn't approved${batch.notes?.length ? ` (${batch.notes[batch.notes.length - 1]})` : ""}. The full ${amount} is back in your wallet.` };
+    if (batch.status === "Processing") return { tone: "success", text: `Your ${amount} payout was approved and is on its way.` };
   }
   if (prev.kyc !== next.kyc) {
     if (next.kyc === "approved") return { tone: "success", text: "Your identity verification (KYC) was approved." };
@@ -231,11 +231,11 @@ export default function PayoutsPage() {
   const { state, retry } = usePayoutIdentity();
   if (state.state === "error") return (
     <main className="flex min-h-screen items-center justify-center bg-[#f3f4f1] p-5">
-      <div role="alert" className="w-full max-w-md rounded-2xl border border-[#e3e5e1] bg-white p-6 text-[#1a201c]">
+      <div role="alert" className="w-full max-w-md rounded-xl border border-[#e3e5e1] bg-white p-6 text-[#1a201c]">
         <h1 className="text-xl font-semibold">Payouts unavailable</h1>
         <p className="mt-2 text-sm leading-6 text-[#616a64]">{state.message}</p>
         <div className="mt-5 flex flex-wrap gap-3">
-          <button type="button" onClick={retry} className="rounded-xl bg-[#244e39] px-4 py-2.5 text-sm font-semibold text-white">Try again</button>
+          <button type="button" onClick={retry} className="rounded-xl bg-[#1f2b24] px-4 py-2.5 text-sm font-semibold text-white">Try again</button>
           <Link href="/dashboard?section=wallet" className="rounded-xl border border-[#e3e5e1] px-4 py-2.5 text-sm font-semibold">Back to Wallet</Link>
         </div>
       </div>
@@ -382,7 +382,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
         })(),
       ]);
 
-      setLastUpdatedAt(new Date().toLocaleTimeString());
+      setLastUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
       setFromSnapshot(false);
       if (issues.length > 0) setError(`Some payout data could not be refreshed: ${issues.join(", ")}.`);
       // Announce the most important change since the last complete read.
@@ -679,7 +679,8 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const nextCheck = nextKey ? readinessChecks.find((c) => c.key === nextKey) : null;
   const nextAction = nextKey ? actionFor(nextKey) : null;
 
-  const card = "min-w-0 rounded-2xl border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]";
+  // Same card as the dashboard (dashboardUi Card).
+  const card = "min-w-0 rounded-xl border border-[#e3e5e1] bg-white shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)]";
   const actionBtn =
     "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-[#dfe7dc] bg-white px-3 text-[12px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50";
   const renderAction = (action: CheckAction, className = actionBtn) =>
@@ -694,74 +695,78 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     );
 
   return (
-    <div className="min-h-screen bg-[#f3f4f1] text-[#1a201c]">
-
+    <div className="min-h-screen bg-[#f3f4f1] text-[#1a201c] [font-family:var(--font-geist-sans)]">
+      {/* Same top bar as the dashboard: back to Wallet, section identity, live status and the main action. */}
       <header className="sticky top-0 z-20 border-b border-[#e6ebe2] bg-[#fcfdf9]/90 backdrop-blur-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <div className="mx-auto grid h-[60px] w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-3.5 sm:h-[68px] sm:px-6 lg:px-8">
-          <Link
-            href="/dashboard?section=wallet"
-            className="inline-flex h-10 w-fit items-center gap-2 rounded-full border border-[#e2e8de] bg-white px-3.5 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
-          >
-            <span aria-hidden>←</span>
-            <span className="hidden min-[380px]:inline">Wallet</span>
-          </Link>
-          <Link href="/" aria-label="Reelencer home" className="flex min-w-0 items-center gap-1.5">
-            <BrandLogo className="h-8 w-8" sizes="32px" />
-            <span className="hidden font-[Georgia,Times_New_Roman,serif] text-[19px] font-bold text-[#20352c] min-[400px]:inline">Reelencer</span>
-          </Link>
-          <Link
-            href={CREATOR_HOME_HREF}
-            className="inline-flex h-10 w-fit items-center justify-self-end rounded-full bg-[#41695b] px-4 text-[13px] font-semibold text-white shadow-[0_12px_24px_-16px_rgba(54,88,75,0.8)] transition hover:bg-[#35584b]"
-          >
-            <span className="sm:hidden">Jobs</span>
-            <span className="hidden sm:inline">My jobs</span>
-          </Link>
+        <div className="mx-auto flex h-[60px] w-full max-w-[1440px] items-center justify-between gap-3 px-3.5 sm:px-5 md:h-[68px] md:px-6 lg:px-7 2xl:px-8">
+          <div className="flex min-w-0 items-center gap-2 md:gap-3">
+            <Link
+              href="/dashboard?section=wallet"
+              aria-label="Back to Wallet"
+              title="Back to Wallet"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#e3e5e1] bg-white text-[#4b544e] transition hover:bg-[#f3f4f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
+            >
+              <Icon.ChevronLeft className="h-5 w-5" />
+            </Link>
+            <span
+              aria-hidden="true"
+              className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#dfe9da] bg-[linear-gradient(160deg,#f3f9ef,#e6f2e0)] text-[#2e7d4f] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(34,45,37,0.06)] md:flex"
+            >
+              <Icon.Wallet className="h-[19px] w-[19px]" />
+            </span>
+            <div className="min-w-0">
+              <div className="hidden truncate text-[11.5px] font-semibold text-[#7a877f] md:block">Wallet</div>
+              <h1 className="truncate text-[16px] font-semibold text-[#20352c] md:text-[20px] md:leading-tight md:tracking-[-0.02em]">Payouts</h1>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { void loadPayoutData("refresh"); void socialAccounts.refresh(); }}
+              disabled={refreshing || !workerId}
+              aria-busy={refreshing}
+              title={liveState === "live" ? "Updates appear instantly · tap to refresh" : liveState === "offline" ? "Live updates unavailable; checking every 10 seconds" : "Connecting to live updates"}
+              className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center gap-1.5 rounded-full border border-[#e3e5e1] bg-white text-[12px] font-semibold text-[#4b544e] transition hover:bg-[#f3f4f1] active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-default sm:w-auto sm:px-3"
+            >
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={cx("h-[18px] w-[18px] shrink-0 sm:h-4 sm:w-4", refreshing && "animate-spin motion-reduce:animate-none")} aria-hidden="true">
+                <path d="M16 10a6 6 0 0 1-10.4 4.1M4 10a6 6 0 0 1 10.4-4.1" />
+                <path d="M14.6 3.2v2.9h-2.9M5.4 16.8v-2.9h2.9" />
+              </svg>
+              <span className="hidden whitespace-nowrap sm:inline">
+                {refreshing || fromSnapshot ? "Refreshing…" : lastUpdatedAt ? `Updated ${lastUpdatedAt}` : "Loading…"}
+              </span>
+              <span
+                className={cx(
+                  "absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white sm:static sm:h-2 sm:w-2 sm:border-0",
+                  refreshing ? "animate-pulse bg-[#d99a06]" : liveState === "live" ? "bg-[#2e7d4f]" : "bg-[#d99a06]"
+                )}
+                aria-hidden="true"
+              />
+              <span className="sr-only">{liveState === "live" ? "Live" : liveState === "offline" ? "Auto-refresh" : "Connecting"}</span>
+            </button>
+            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "hidden h-10 sm:inline-flex")}>
+              My jobs
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-6xl px-3.5 pb-[max(3rem,env(safe-area-inset-bottom))] pt-5 sm:px-6 sm:pt-7 lg:px-8">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-[clamp(1.6rem,6vw,2.25rem)] font-semibold leading-tight tracking-[-0.03em]">Payouts</h1>
-            <p className="mt-2 text-[13px] leading-5 text-[#616a64]">Withdraw from your wallet and manage your payout settings.</p>
-            <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-[#5f6f65]">
-              <span
-                className={`inline-flex items-center gap-1.5 font-semibold ${liveState === "live" ? "text-[#2f6a1f]" : liveState === "offline" ? "text-[#8a6a1f]" : "text-[#6f7d74]"}`}
-                title={liveState === "live" ? "Updates appear instantly" : liveState === "offline" ? "Live updates unavailable; checking every 10 seconds" : "Connecting to live updates"}
-              >
-                <span className="relative flex h-2 w-2" aria-hidden>
-                  {liveState === "live" ? <span className="absolute inline-flex h-full w-full rounded-full bg-[#8db35a] opacity-60 motion-safe:animate-ping" /> : null}
-                  <span className={`relative inline-flex h-2 w-2 rounded-full ${liveState === "live" ? "bg-[#5e8f35]" : liveState === "offline" ? "bg-[#d9a520]" : "bg-[#b9c0ba]"}`} />
-                </span>
-                {liveState === "live" ? "Live" : liveState === "offline" ? "Auto-refresh" : "Connecting"}
-              </span>
-              {fromSnapshot || (refreshing && !lastUpdatedAt) ? <span className="text-[#8a6a1f]">Updating…</span> : lastUpdatedAt ? <span>Synced {lastUpdatedAt}</span> : <span>Loading…</span>}
-              <span className="hidden sm:inline">· {workerId ? `Worker ID ${workerId}` : "Linking your worker profile…"}</span>
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => { void loadPayoutData("refresh"); void socialAccounts.refresh(); }}
-            disabled={refreshing || !workerId}
-            aria-label={refreshing ? "Refreshing" : "Refresh"}
-            className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center gap-2 rounded-full border border-[#dfe7dc] bg-white text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] disabled:opacity-50 sm:w-auto sm:px-4"
-          >
-            <svg viewBox="0 0 24 24" className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" />
-            </svg>
-            <span className="hidden sm:inline">{refreshing ? "Refreshing…" : "Refresh"}</span>
-          </button>
-        </div>
+      <main className="mx-auto w-full max-w-[1440px] px-3.5 pb-[max(3rem,env(safe-area-inset-bottom))] pt-4 min-[380px]:px-4 sm:px-5 sm:pt-5 md:px-6 lg:px-7 xl:pt-7 2xl:px-8">
+        <PageHeader
+          title="Payouts"
+          description="Withdraw from your wallet and manage where your payouts go."
+          meta={workerId ? <span className="rounded-md bg-[#eceeeb] px-1.5 py-0.5 font-mono text-[11px] text-[#4b544e]">{workerId}</span> : null}
+        />
 
         {error && (
-          <div role="alert" className="mt-4 rounded-[16px] border border-[#f1dea6] bg-[#fff8e1] px-4 py-3 text-[13.5px] font-semibold text-[#7a5200]">
+          <div role="alert" className="mt-4 rounded-xl border border-[#f1dea6] bg-[#fff8e1] px-4 py-3 text-[13px] font-semibold text-[#7a5200]">
             {error}
           </div>
         )}
         {notice && (
           <div
             role={notice.tone === "danger" ? "alert" : "status"}
-            className={`mt-4 rounded-[16px] border px-4 py-3 text-[13.5px] font-semibold ${
+            className={`mt-4 rounded-xl border px-4 py-3 text-[13px] font-semibold ${
               notice.tone === "success" ? "border-[#c6e0b0] bg-[#eef7e6] text-[#2f6a1f]" : "border-[#f6cdc8] bg-[#fdecea] text-[#b42318]"
             }`}
           >
@@ -774,7 +779,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           </div>
         )}
 
-        <div className="mt-5 flex flex-col gap-4 sm:gap-5 lg:grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:items-start">
+        <div className="mt-5 flex flex-col gap-4 sm:gap-5 lg:grid lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
           {/* Left column (desktop) */}
           <div className="contents lg:flex lg:flex-col lg:gap-5">
             {/* Balance: what can be withdrawn, the one action that fits, and how money leaves the wallet. */}
@@ -837,12 +842,12 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 ) : null}
 
                 {hasFailures ? (
-                  <div role="status" className="mt-5 rounded-[14px] bg-[#fff8ec] p-3.5 text-[13px] leading-5 text-[#825317] ring-1 ring-inset ring-[#f1dea6]">
+                  <div role="status" className="mt-5 rounded-lg bg-[#fff8ec] p-3.5 text-[13px] leading-5 text-[#825317] ring-1 ring-inset ring-[#f1dea6]">
                     Some payout details are unavailable. Refresh to verify your balance and requirements before withdrawing.
                   </div>
                 ) : !coreReady ? (
                   <div className="mt-5 flex items-center gap-3" aria-busy="true">
-                    <Shimmer className="h-12 w-48 !rounded-[14px]" />
+                    <Shimmer className="h-12 w-48 !rounded-lg" />
                     <span className="text-[12.5px] text-[#6f7d74]">Checking requirements…</span>
                   </div>
                 ) : payoutReadiness.ready ? (
@@ -852,7 +857,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                         type="button"
                         onClick={requestPayout}
                         disabled={requesting || !workerId}
-                        className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[14px] bg-[#244e39] px-6 text-[15px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(36,78,57,0.9)] transition hover:bg-[#1d4030] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#8db35a]/40 disabled:opacity-60 min-[480px]:w-fit"
+                        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#1f2b24] px-5 text-[14px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(36,78,57,0.9)] transition hover:bg-[#2b3a31] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#8db35a]/40 disabled:opacity-60 min-[480px]:w-fit"
                       >
                         {requesting ? "Requesting…" : <span className="tabular-nums">Withdraw {formatINR(payoutReadiness.requestAmount)}</span>}
                         {!requesting && <span aria-hidden>→</span>}
@@ -861,7 +866,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     </div>
                     {!kycOk && lifetimeCredited > 0 ? (
                       // Heads-up before the KYC threshold, so payouts never pause by surprise.
-                      <div className="flex flex-col gap-3 rounded-[14px] bg-[#f8faf5] p-3.5 ring-1 ring-inset ring-[#e8eee5] min-[520px]:flex-row min-[520px]:items-center">
+                      <div className="flex flex-col gap-3 rounded-lg bg-[#f8faf5] p-3.5 ring-1 ring-inset ring-[#e8eee5] min-[520px]:flex-row min-[520px]:items-center">
                         <div className="min-w-0 flex-1">
                           <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] font-semibold text-[#1f2e28]">
                             <span>KYC needed after {kycLimitLabel} earned</span>
@@ -880,7 +885,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                           <button
                             type="button"
                             onClick={() => setKycSheetOpen(true)}
-                            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-[12px] border border-[#dfe7dc] bg-white px-4 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
+                            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[#dfe7dc] bg-white px-4 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
                           >
                             {kycStatus === "rejected" ? "Fix KYC" : "Verify now"} <span aria-hidden>→</span>
                           </button>
@@ -889,7 +894,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     ) : null}
                   </div>
                 ) : (
-                  <div className="mt-5 flex flex-col gap-3 rounded-[14px] bg-[#fffaf0] p-3.5 ring-1 ring-inset ring-[#f1dea6] min-[520px]:flex-row min-[520px]:items-center">
+                  <div className="mt-5 flex flex-col gap-3 rounded-lg bg-[#fffaf0] p-3.5 ring-1 ring-inset ring-[#f1dea6] min-[520px]:flex-row min-[520px]:items-center">
                     <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#8a5a00] ring-1 ring-[#f1dea6] min-[360px]:flex" aria-hidden>
                       <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                         <path d="M6.5 9V7a3.5 3.5 0 0 1 7 0v2M5 9h10v7.5H5z" strokeLinejoin="round" />
@@ -905,7 +910,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                     {nextAction
                       ? renderAction(
                           nextAction,
-                          "inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#244e39] px-4 text-[13.5px] font-semibold text-white transition hover:bg-[#1d4030] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
+                          "inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#1f2b24] px-4 text-[13.5px] font-semibold text-white transition hover:bg-[#2b3a31] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
                         )
                       : null}
                   </div>
@@ -1007,7 +1012,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             <section aria-labelledby="overview-heading" className={`${card} order-3 p-4 sm:p-5`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h2 id="overview-heading" className="text-[17px] font-semibold tracking-[-0.02em] sm:text-[18px]">Wallet overview</h2>
+                  <h2 id="overview-heading" className="text-[14px] font-semibold text-[#1a201c]">Wallet overview</h2>
                   <p className="mt-0.5 text-[13px] text-[#5f6f65]">Your earnings from review to payout.</p>
                 </div>
                 <Link href="/dashboard?section=accounts" className={actionBtn}>
@@ -1045,7 +1050,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 />
               </dl>
               {reel && reel.accountCount > 1 ? (
-                <details className="group mt-3 rounded-[14px] ring-1 ring-inset ring-[#e8eee5]">
+                <details className="group mt-3 rounded-lg ring-1 ring-inset ring-[#e8eee5]">
                   <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3.5 text-[13px] font-semibold text-[#41695b] [&::-webkit-details-marker]:hidden">
                     By account ({reel.accountCount})
                     <span className="transition-transform group-open:rotate-180" aria-hidden>▾</span>
@@ -1073,7 +1078,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             <section ref={historyRef} aria-labelledby="history-heading" className={`${card} order-5 scroll-mt-24 p-4 sm:p-5`}>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 id="history-heading" className="text-[18px] font-semibold tracking-[-0.02em] sm:text-[20px]">Payout history</h2>
+                  <h2 id="history-heading" className="text-[14px] font-semibold text-[#1a201c]">Payout history</h2>
                   <p className="mt-0.5 text-[13px] text-[#5f6f65]">Track your withdrawals and included earnings.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#f0f4ec] px-3 py-1 text-[12px] font-bold text-[#41695b]">{ready.batches ? batches.length : "…"}</span>
@@ -1082,7 +1087,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
               <div className="mt-4 grid gap-3">
                 {!ready.batches &&
                   Array.from({ length: 2 }, (_, i) => (
-                    <div key={i} className="rounded-[18px] border border-[#e4ebe1] bg-[#fbfcf9] p-4" aria-busy="true">
+                    <div key={i} className="rounded-xl border border-[#e4ebe1] bg-[#fbfcf9] p-4" aria-busy="true">
                       <Shimmer className="h-4 w-40" />
                       <Shimmer className="mt-2 h-3 w-56 max-w-full" />
                       <Shimmer className="mt-4 h-6 w-24" />
@@ -1090,7 +1095,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                   ))}
                 {ready.batches && failures.batches && !batches.length ? <p role="status" className="text-sm text-[#825317]">Payout history could not be loaded. Refresh to try again.</p> : null}
                 {ready.batches && !failures.batches && batches.length === 0 && (
-                  <div className="flex flex-col items-center rounded-[18px] border border-dashed border-[#d9e3d6] bg-[#f8fbf5] px-5 py-8 text-center">
+                  <div className="flex flex-col items-center rounded-xl border border-dashed border-[#d9e3d6] bg-[#f8fbf5] px-5 py-8 text-center">
                     <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-[#41695b] ring-1 ring-[#e2e8de]" aria-hidden>
                       <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7">
                         <path d="M3.5 6h13v9.5h-13zM3.5 6l9-2.5V6M13 10.5h1.5" strokeLinejoin="round" />
@@ -1107,7 +1112,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                   <button
                     type="button"
                     onClick={() => setHistoryLimit((n) => n + HISTORY_PAGE * 2)}
-                    className="inline-flex h-11 w-full items-center justify-center rounded-[14px] border border-[#dfe7dc] bg-white text-[13.5px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
+                    className="inline-flex h-11 w-full items-center justify-center rounded-lg border border-[#dfe7dc] bg-white text-[13.5px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]"
                   >
                     Show {Math.min(HISTORY_PAGE * 2, batches.length - historyLimit)} more of {batches.length - historyLimit}
                   </button>
@@ -1121,7 +1126,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             {/* Readiness checklist */}
             <section aria-labelledby="ready-heading" className={`${card} order-2 p-4 transition-shadow duration-500 sm:p-5 ${flash === "kyc" || flash === "upi" ? "!ring-2 !ring-[#8db35a] shadow-[0_0_0_6px_rgba(141,179,90,0.18)]" : ""}`}>
               <div className="flex items-center justify-between gap-3">
-                <h2 id="ready-heading" className="text-[17px] font-semibold tracking-[-0.02em] sm:text-[18px]">Ready to request?</h2>
+                <h2 id="ready-heading" className="text-[14px] font-semibold text-[#1a201c]">Ready to request?</h2>
                 <span
                   className={`rounded-full px-2.5 py-1 text-[12px] font-bold ${
                     payoutReadiness.ready ? "bg-[#e3f1d6] text-[#2f6a1f]" : "bg-[#fff4d6] text-[#8a5a00]"
@@ -1139,7 +1144,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 {readinessChecks.map((check) => {
                   if (!checkReady[check.key]) {
                     return (
-                      <li key={check.key} className="flex items-start gap-3 rounded-[14px] bg-[#f8faf5] px-3 py-2.5" aria-busy="true">
+                      <li key={check.key} className="flex items-start gap-3 rounded-lg bg-[#f8faf5] px-3 py-2.5" aria-busy="true">
                         <Shimmer className="mt-0.5 h-6 w-6 !rounded-full" />
                         <span className="min-w-0 flex-1 space-y-1.5 pt-0.5">
                           <Shimmer className="h-3.5 w-40 max-w-full" />
@@ -1166,7 +1171,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                   return (
                     <li
                       key={check.key}
-                      className={`flex items-start gap-3 rounded-[14px] px-3 py-2.5 transition ${
+                      className={`flex items-start gap-3 rounded-lg px-3 py-2.5 transition ${
                         check.ok ? "bg-[#f4f8f0]" : isNext ? "bg-[#fffaf0] ring-1 ring-inset ring-[#f1dea6]" : "bg-[#f8faf5]"
                       }`}
                     >
@@ -1220,7 +1225,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
             {/* Guidance */}
             <details className={`${card} group order-6 p-4 sm:p-5`} open={ready.batches && batches.length === 0}>
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
-                <h2 className="text-[17px] font-semibold tracking-[-0.02em] sm:text-[18px]">How payouts work</h2>
+                <h2 className="text-[14px] font-semibold text-[#1a201c]">How payouts work</h2>
                 <span className="text-[#7a8a80] transition-transform group-open:rotate-180" aria-hidden>
                   ▾
                 </span>
@@ -1269,7 +1274,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
 
 function OverviewStat({ label, value, caption, dot, loading }: { label: string; value: string; caption: string; dot: string; loading?: boolean }) {
   return (
-    <div className="min-w-0 rounded-[14px] bg-[#f8faf5] px-3.5 py-3 ring-1 ring-inset ring-[#e8eee5]">
+    <div className="min-w-0 rounded-lg bg-[#f8faf5] px-3.5 py-3 ring-1 ring-inset ring-[#e8eee5]">
       <dt className="flex items-center gap-1.5 text-[12px] font-medium text-[#5f6f65]">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} aria-hidden />
         {label}

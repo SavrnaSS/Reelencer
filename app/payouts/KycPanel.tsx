@@ -96,7 +96,7 @@ export function KycRow({ kyc, highlighted, live, onOpen, need }: {
   const action = status === "approved" ? null : status === "pending" ? "View" : status === "rejected" ? "Fix & resubmit" : "Verify now";
 
   return (
-    <li className={`rounded-[14px] px-3 py-2.5 transition ${tone.row}`}>
+    <li className={`rounded-lg px-3 py-2.5 transition ${tone.row}`}>
       <div className="flex items-start gap-3">
         <span className={`relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${tone.icon}`} aria-hidden>
           {status === "approved" ? (
@@ -131,7 +131,7 @@ export function KycRow({ kyc, highlighted, live, onOpen, need }: {
             type="button"
             onClick={onOpen}
             className={`mt-0.5 inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full px-3 text-[12px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 ${
-              status === "pending" ? "border border-[#cfe0f5] bg-white text-[#1f5fa8] hover:bg-[#f5f9fe]" : optional ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#41695b] text-white hover:bg-[#35584b]"
+              status === "pending" ? "border border-[#cfe0f5] bg-white text-[#1f5fa8] hover:bg-[#f5f9fe]" : optional ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#1f2b24] text-white hover:bg-[#2b3a31]"
             }`}
           >
             {action} {status !== "pending" ? <span aria-hidden>→</span> : null}
@@ -247,8 +247,8 @@ function UploadField({
       action={
         <label
           htmlFor={id}
-          className={`inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-[12px] text-[13.5px] font-semibold transition ${
-            value.state === "done" ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#41695b] text-white hover:bg-[#35584b]"
+          className={`inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg text-[13.5px] font-semibold transition ${
+            value.state === "done" ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#1f2b24] text-white hover:bg-[#2b3a31]"
           } ${busy ? "pointer-events-none opacity-60" : ""}`}
         >
           <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -315,7 +315,7 @@ function PhotoCard({
   return (
     <section
       data-camera={dataCamera}
-      className={`flex min-w-0 flex-col rounded-[18px] bg-white p-3 ring-1 transition sm:p-3.5 ${
+      className={`flex min-w-0 flex-col rounded-xl bg-white p-3 ring-1 transition sm:p-3.5 ${
         status === "done" ? "ring-[#c6e0b0]" : status === "error" ? "ring-[#f0b8b1]" : "ring-[#e3e9df]"
       } ${className}`}
     >
@@ -334,7 +334,7 @@ function PhotoCard({
         </span>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${STATUS_CHIP[status].className}`}>{STATUS_CHIP[status].text}</span>
       </header>
-      <div className={`relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-[14px] ${dark ? "bg-[#0f1411]" : "bg-[linear-gradient(160deg,#f6f9f3,#eef3ea)]"}`}>{visual}</div>
+      <div className={`relative mt-3 aspect-[4/3] w-full overflow-hidden rounded-lg ${dark ? "bg-[#0f1411]" : "bg-[linear-gradient(160deg,#f6f9f3,#eef3ea)]"}`}>{visual}</div>
       <ul className="mt-3 space-y-1 text-[12px] leading-[1.35] text-[#5f6f65]">
         {tips.map((tip) => (
           <li key={tip} className="flex gap-1.5">
@@ -523,7 +523,7 @@ function LiveSelfie({ step, value, onChange, error, className }: { step: number;
             {cam.phase !== "review" ? (
               <span className="pointer-events-none absolute left-1/2 top-[50%] h-[66%] w-[42%] -translate-x-1/2 -translate-y-1/2 rounded-[50%] border-[3px] border-dashed border-white/75 shadow-[0_0_0_999px_rgba(15,20,17,0.35)]" aria-hidden />
             ) : null}
-            <span className="absolute inset-x-2.5 top-2.5 flex items-center gap-2 rounded-[12px] bg-white/95 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#20352c] shadow-lg sm:inset-x-3 sm:top-3 sm:px-3 sm:py-2 sm:text-[13px]">
+            <span className="absolute inset-x-2.5 top-2.5 flex items-center gap-2 rounded-lg bg-white/95 px-2.5 py-1.5 text-[12.5px] font-semibold text-[#20352c] shadow-lg sm:inset-x-3 sm:top-3 sm:px-3 sm:py-2 sm:text-[13px]">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#dce78f] text-[12px]" aria-hidden>
                 ✋
               </span>
@@ -580,10 +580,10 @@ function LiveSelfie({ step, value, onChange, error, className }: { step: number;
       action={
         cam.phase === "review" ? (
           <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={retake} disabled={value.state === "uploading"} className="h-11 rounded-[12px] border border-[#dfe7dc] bg-white text-[13.5px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]">
+            <button type="button" onClick={retake} disabled={value.state === "uploading"} className="h-11 rounded-lg border border-[#dfe7dc] bg-white text-[13.5px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1]">
               Retake
             </button>
-            <button type="button" onClick={() => void use()} disabled={value.state === "uploading"} className="h-11 rounded-[12px] bg-[#41695b] text-[13.5px] font-semibold text-white transition hover:bg-[#35584b] disabled:opacity-70">
+            <button type="button" onClick={() => void use()} disabled={value.state === "uploading"} className="h-11 rounded-lg bg-[#41695b] text-[13.5px] font-semibold text-white transition hover:bg-[#35584b] disabled:opacity-70">
               {value.state === "uploading" ? "Uploading…" : "Use this photo"}
             </button>
           </div>
@@ -594,8 +594,8 @@ function LiveSelfie({ step, value, onChange, error, className }: { step: number;
             type="button"
             onClick={() => (done ? retake() : void start())}
             disabled={cam.phase === "starting"}
-            className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-[12px] text-[13.5px] font-semibold transition disabled:opacity-70 ${
-              done ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#41695b] text-white hover:bg-[#35584b]"
+            className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg text-[13.5px] font-semibold transition disabled:opacity-70 ${
+              done ? "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]" : "bg-[#1f2b24] text-white hover:bg-[#2b3a31]"
             }`}
           >
             <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
@@ -610,7 +610,7 @@ function LiveSelfie({ step, value, onChange, error, className }: { step: number;
 }
 
 const inputClass =
-  "h-12 w-full rounded-[14px] border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition placeholder:font-normal placeholder:text-[#a3b0a7] focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40 aria-[invalid=true]:border-[#e8a39b] aria-[invalid=true]:bg-[#fffafa]";
+  "h-12 w-full rounded-lg border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition placeholder:font-normal placeholder:text-[#a3b0a7] focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40 aria-[invalid=true]:border-[#e8a39b] aria-[invalid=true]:bg-[#fffafa]";
 
 const ID_HINTS: Record<(typeof ID_TYPES)[number], { hint: string; placeholder: string; icon: string }> = {
   "National ID": { hint: "Aadhaar or your country's national ID", placeholder: "e.g. 1234 5678 9012", icon: "M3.5 5h13v10h-13zM6.5 12.5h3M6.5 9.5h5" },
@@ -830,7 +830,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
         <div className="border-b border-[#e6ebe2] px-4 pb-3 pt-3 sm:px-6 sm:pb-4 sm:pt-5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#41695b] text-white" aria-hidden>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#41695b] text-white" aria-hidden>
                 <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7">
                   <path d="M10 3.5 15.5 5.5v4c0 3.4-2.3 6-5.5 7-3.2-1-5.5-3.6-5.5-7v-4L10 3.5ZM7.5 10l1.8 1.8L12.8 8.3" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
@@ -880,7 +880,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
         {readOnly ? (
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 sm:px-6">
             <KycRow kyc={kyc} highlighted={false} live onOpen={onClose} />
-            <dl className="grid grid-cols-2 gap-3 rounded-[16px] bg-white p-4 text-[13px] ring-1 ring-[#e6ebe2]">
+            <dl className="grid grid-cols-2 gap-3 rounded-xl bg-white p-4 text-[13px] ring-1 ring-[#e6ebe2]">
               {[
                 ["Name", p.legalName],
                 ["ID", p.idType ? `${p.idType} · ••••${String(p.idNumber ?? "").slice(-4)}` : null],
@@ -899,7 +899,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
           <form onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
             <div ref={bodyRef} className="@container/kyc min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
               {kyc.status === "rejected" && kyc.reason && step !== "review" ? (
-                <p className="mb-4 flex gap-2 rounded-[12px] border border-[#f6cdc8] bg-[#fdecea] px-3 py-2.5 text-[13px] text-[#8e1f1a]">
+                <p className="mb-4 flex gap-2 rounded-lg border border-[#f6cdc8] bg-[#fdecea] px-3 py-2.5 text-[13px] text-[#8e1f1a]">
                   <span aria-hidden className="font-black">!</span>
                   <span>
                     <span className="font-semibold">What to fix: </span>
@@ -969,7 +969,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
                         return (
                           <label
                             key={type}
-                            className={`flex cursor-pointer items-center gap-3 rounded-[14px] border p-3 transition has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-[#dce78f]/50 @[460px]/kyc:flex-col @[460px]/kyc:items-start ${
+                            className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition has-[:focus-visible]:ring-4 has-[:focus-visible]:ring-[#dce78f]/50 @[460px]/kyc:flex-col @[460px]/kyc:items-start ${
                               active ? "border-[#41695b] bg-[#f3f8ee] ring-1 ring-[#41695b]" : "border-[#dbe3d7] bg-white hover:border-[#b9c9b4]"
                             }`}
                           >
@@ -1040,7 +1040,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
                       ["photos", "Photos", [["ID photo", idDoc.state === "done" ? idDoc.name : "Missing"], ["Selfie", selfie.state === "done" ? "Live camera capture" : "Missing"]]],
                     ] as const
                   ).map(([key, title, rows]) => (
-                    <section key={key} className="rounded-[16px] bg-white p-4 ring-1 ring-[#e6ebe2]">
+                    <section key={key} className="rounded-xl bg-white p-4 ring-1 ring-[#e6ebe2]">
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="flex items-center gap-1.5 text-[13.5px] font-semibold">
                           <span className={stepDone(key) ? "text-[#5e8f35]" : "text-[#b42318]"} aria-hidden>
@@ -1072,7 +1072,7 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
               )}
 
               {error ? (
-                <p role="alert" className="mt-4 rounded-[12px] border border-[#f6cdc8] bg-[#fdecea] px-3 py-2 text-[13px] font-semibold text-[#b42318]">
+                <p role="alert" className="mt-4 rounded-lg border border-[#f6cdc8] bg-[#fdecea] px-3 py-2 text-[13px] font-semibold text-[#b42318]">
                   {error}
                 </p>
               ) : null}
@@ -1083,14 +1083,14 @@ export function KycSheet({ kyc, onClose, onSubmitted }: { kyc: KycState; onClose
                 type="button"
                 onClick={() => (stepIndex === 0 ? onClose() : go(STEP_META[stepIndex - 1].key))}
                 disabled={busy}
-                className="inline-flex h-12 flex-1 items-center justify-center gap-1.5 rounded-[14px] border border-[#dfe7dc] bg-white px-4 text-[14px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] sm:flex-none sm:px-5"
+                className="inline-flex h-12 flex-1 items-center justify-center gap-1.5 rounded-lg border border-[#dfe7dc] bg-white px-4 text-[14px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] sm:flex-none sm:px-5"
               >
                 {stepIndex === 0 ? "Cancel" : <><span aria-hidden>←</span> Back</>}
               </button>
               <button
                 type="submit"
                 disabled={busy || uploading}
-                className="inline-flex h-12 flex-[2] items-center justify-center gap-1.5 rounded-[14px] bg-[#41695b] px-5 text-[14px] font-semibold text-white shadow-[0_10px_20px_-12px_rgba(54,88,75,0.9)] transition hover:bg-[#35584b] disabled:opacity-60 sm:ml-auto sm:flex-none sm:min-w-[200px]"
+                className="inline-flex h-12 flex-[2] items-center justify-center gap-1.5 rounded-lg bg-[#41695b] px-5 text-[14px] font-semibold text-white shadow-[0_10px_20px_-12px_rgba(54,88,75,0.9)] transition hover:bg-[#35584b] disabled:opacity-60 sm:ml-auto sm:flex-none sm:min-w-[200px]"
               >
                 {busy ? "Submitting…" : uploading ? "Uploading…" : step === "review" ? (kyc.status === "rejected" ? "Resubmit for review" : "Submit for review") : <>Continue <span aria-hidden>→</span></>}
               </button>

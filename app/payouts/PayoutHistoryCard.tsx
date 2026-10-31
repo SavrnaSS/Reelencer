@@ -29,7 +29,7 @@ export default function PayoutHistoryCard({ batch }: { batch: PayoutHistoryBatch
   const dateLabel = status.tone === "success" && batch.paidAt ? `Paid ${payoutHistoryDate(batch.paidAt, true)}` : `Requested ${payoutHistoryDate(batch.createdAt, true)}`;
 
   return (
-    <article aria-labelledby={headingId} className="min-w-0 overflow-hidden rounded-2xl border border-[#e1e8de] bg-white">
+    <article aria-labelledby={headingId} className="min-w-0 overflow-hidden rounded-xl border border-[#e1e8de] bg-white">
       <div className="p-3.5 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div className="min-w-0">
