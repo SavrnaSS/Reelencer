@@ -39,6 +39,7 @@ import ScreenshotImport from "./ScreenshotImport";
 import ReelEarningsSummary from "./ReelEarningsSummary";
 import AddAccountsPanel, { AccountsRail, AddAccountSheet, useAccountRequests, type SheetMode } from "./AddAccountsPanel";
 import LinkedAccountRecovery from "./LinkedAccountRecovery";
+import ViewMilestoneCard from "./ViewMilestoneCard";
 
 // "Accounts": the social accounts linked to the creator after Content Posting screening, with their reach, growth
 // and per-reel results. Numbers come from the team's insight check-ins (see lib/socialAnalytics).
@@ -665,7 +666,7 @@ function AccountDetail({
   const viewSummary = reelViewSummary(account.posts);
   const cadence = postingCadence(account.posts, now);
   const pace = followerPace(snapshots, now);
-  const milestone = nextMilestone(followers.value, pace, now);
+  const followerMilestone = nextMilestone(followers.value, pace, now);
   const bestDay = bestPostingDay(account.posts);
   const earnings = reelEarnings(account);
   const pay = payoutPhrase(account.payout, account.payoutType);
@@ -687,7 +688,7 @@ function AccountDetail({
           : null,
       pace !== undefined && Math.abs(pace) >= 1
         ? pace > 0
-          ? { kind: "pace", title: "Growth pace", text: `About ${formatCompact(Math.round(pace))} followers a week${milestone?.eta ? `. You'll pass ${formatCompact(milestone.target)} around ${formatDate(milestone.eta)}` : ""}.`, tone: "good" }
+          ? { kind: "pace", title: "Growth pace", text: `About ${formatCompact(Math.round(pace))} followers a week${followerMilestone?.eta ? `. You'll pass ${formatCompact(followerMilestone.target)} around ${formatDate(followerMilestone.eta)}` : ""}.`, tone: "good" }
           : { kind: "pace", title: "Growth pace", text: `Followers dipped about ${formatCompact(Math.round(-pace))} a week lately. More frequent reels usually turn it around.`, tone: "warn" }
         : null,
       bestDay ? { kind: "day", title: "Best day to post", text: `${bestDay.day} reels average ${bestDay.lift.toFixed(1)}× your usual views. Post more on ${bestDay.day}s.`, tone: "good" } : null,
@@ -886,20 +887,7 @@ function AccountDetail({
             <div className="mt-1.5 text-[11.5px] text-[#5d7466]">{pay ? "as listed on the gig" : "See the gig for pay details"}</div>
           )}
         </div>
-        <div role="group" aria-label="Next follower milestone" className={cx("min-w-0 rounded-xl border border-[#ebedea] bg-white p-3.5 sm:p-4", !grid.earningsWideMobile && "col-span-2 lg:col-span-1")}>
-          <div className="text-[12px] font-medium text-[#616a64]">Next milestone</div>
-          <div className="mt-2 break-words text-[22px] font-semibold leading-none tabular-nums text-[#1a201c]">{milestone ? milestone.target.toLocaleString("en-US") : "–"}</div>
-          {milestone ? (
-            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[#eef0ed]" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={milestone.percent} aria-valuetext={`${followers.value?.toLocaleString("en-US")} of ${milestone.target.toLocaleString("en-US")} followers; ${milestone.remaining.toLocaleString("en-US")} to go`} aria-label="Progress to next follower milestone">
-              <div className="h-full rounded-full bg-[linear-gradient(90deg,#2e7d4f,#7fb38f)] transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${milestone.progress * 100}%` }} />
-            </div>
-          ) : null}
-          <div role="status" aria-atomic="true" className="mt-1.5 break-words text-[11.5px] leading-5 text-[#8a928c]">
-            {milestone ? <>{milestone.percent}% there · <span className="inline-block whitespace-nowrap">{milestone.remaining.toLocaleString("en-US")} to go</span></> : "Needs a follower count"}
-          </div>
-          {milestone?.eta ? <p className="mt-0.5 text-[11px] leading-4 text-[#8a928c]">At this pace, around {formatDate(milestone.eta)}</p> : null}
-          {milestone && followers.capturedAt ? <p className="mt-1 text-[11px] leading-4 text-[#8a928c]">Followers measured <time dateTime={followers.capturedAt} title={new Date(followers.capturedAt).toLocaleString()}>{formatRelative(followers.capturedAt)}</time></p> : null}
-        </div>
+        <ViewMilestoneCard account={account} className={!grid.earningsWideMobile ? "col-span-2 lg:col-span-1" : undefined} />
       </section>
       {earnings ? (
         <p className="-mt-1 text-[11.5px] leading-5 text-[#8a928c]">
