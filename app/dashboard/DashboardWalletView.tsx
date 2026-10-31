@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
-import { isOpenPayoutStatus, summarizePayoutBatches, type AccountEarningsSummary } from "@/lib/creatorEarnings";
+import type { AccountEarningsSummary } from "@/lib/creatorEarnings";
+import { payoutHistoryNotes, payoutHistoryStatus, payoutHistoryTotal, payoutWalletLedger, type PayoutWalletEffect } from "@/lib/payoutHistory";
 import ReelEarningsSummary from "./ReelEarningsSummary";
 import {
   Card,
@@ -15,6 +16,7 @@ import {
   Skeleton,
   StatusBadge,
   buttonClassName,
+  type BadgeTone,
   cx,
   formatDate,
   formatMoney,
@@ -32,12 +34,21 @@ type WalletBatch = {
   processedAt?: string;
   paidAt?: string;
   method: string;
+  /** Where it was sent (a UPI ID or a masked bank account) and any team notes, e.g. a rejection reason. */
+  payTo?: string;
+  notes?: string[];
+  origin?: "manual" | "auto";
   items: Array<{ id: string; amountINR: number; status: string; handle?: string }>;
 };
 
 export type DashboardWalletViewProps = {
   loading: boolean;
   payoutBatches: WalletBatch[];
+  /**
+   * The wallet balance from the server (null while loading). Left out entirely (the reel-kit demo), the available
+   * balance is estimated from the earnings summary.
+   */
+  wallet?: { available: number; committed: number } | null;
   accountEarnings: AccountEarningsSummary | null;
   earningsLoading: boolean;
   earningsError?: string;
@@ -46,31 +57,36 @@ export type DashboardWalletViewProps = {
   workerId: string | null;
 };
 
-type BatchFilter = "all" | "pending" | "paid";
+type BatchFilter = "all" | "pending" | "paid" | "returned";
 
-/* Ordinal one-hue ramp, validated (monotone lightness, single hue, light end ≥ 2:1 on white). */
-const SERIES_PENDING = "#7cb68a";
-const SERIES_PAID = "#2e7d4f";
+/* One hue, ordered by how far the money has moved: available → held → withdrawn. */
+const SERIES = { available: "#7cb68a", held: "#d9a520", withdrawn: "#2e7d4f" } as const;
+const BADGE_TONE: Record<PayoutWalletEffect | "approved", BadgeTone> = { held: "attention", approved: "info", deducted: "success", returned: "critical", unknown: "neutral" };
 
 function batchTotal(batch: WalletBatch) {
-  return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
-}
-
-function batchIsPaid(batch: WalletBatch) {
-  return String(batch.status).trim().toLowerCase() === "paid";
-}
-
-function statusLabel(raw: string) {
-  const value = String(raw ?? "").trim();
-  if (!value) return "Pending";
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  return payoutHistoryTotal(batch.items ?? []) ?? 0;
 }
 
 function batchUpdated(batch: WalletBatch) {
   return batch.paidAt ?? batch.processedAt ?? batch.createdAt;
 }
 
-export default function DashboardWalletView({ loading, payoutBatches, accountEarnings, earningsLoading, earningsError, onOpenAccounts, assignmentsCount, workerId }: DashboardWalletViewProps) {
+function statusOf(batch: WalletBatch) {
+  const status = payoutHistoryStatus(String(batch.status ?? ""));
+  return { ...status, tone: BADGE_TONE[status.label === "Approved" ? "approved" : status.effect] };
+}
+
+/** What happened to this payout's money, in a few words, shown under its amount. */
+function walletEffectLabel(batch: WalletBatch) {
+  switch (statusOf(batch).effect) {
+    case "held": return "Held from wallet";
+    case "deducted": return String(batch.status).toLowerCase() === "paid" ? "Deducted · paid" : "Deducted · sending";
+    case "returned": return "Returned to wallet";
+    default: return "";
+  }
+}
+
+export default function DashboardWalletView({ loading, payoutBatches, wallet, accountEarnings, earningsLoading, earningsError, onOpenAccounts, workerId }: DashboardWalletViewProps) {
   const [filter, setFilter] = useState<BatchFilter>("all");
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -78,27 +94,39 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
     () => [...payoutBatches].sort((left, right) => safeTime(batchUpdated(right)) - safeTime(batchUpdated(left))),
     [payoutBatches]
   );
+  const matches = (batch: WalletBatch, which: BatchFilter) => {
+    const effect = statusOf(batch).effect;
+    return which === "all" || (which === "pending" ? effect === "held" || String(batch.status).toLowerCase() === "processing" : which === "paid" ? String(batch.status).toLowerCase() === "paid" : effect === "returned");
+  };
   const counts = useMemo(
     () => ({
       all: sortedBatches.length,
-      pending: sortedBatches.filter((batch) => isOpenPayoutStatus(batch.status)).length,
-      paid: sortedBatches.filter(batchIsPaid).length,
+      pending: sortedBatches.filter((batch) => matches(batch, "pending")).length,
+      paid: sortedBatches.filter((batch) => matches(batch, "paid")).length,
+      returned: sortedBatches.filter((batch) => matches(batch, "returned")).length,
     }),
     [sortedBatches]
   );
-  const visibleBatches = sortedBatches.filter((batch) => (filter === "all" ? true : filter === "paid" ? batchIsPaid(batch) : isOpenPayoutStatus(batch.status)));
-  const payoutSummary = useMemo(() => summarizePayoutBatches(payoutBatches), [payoutBatches]);
+  const visibleBatches = sortedBatches.filter((batch) => matches(batch, filter));
 
-  const lifetime = payoutSummary.credited + payoutSummary.pending;
-  const paidShare = lifetime > 0 ? (payoutSummary.credited / lifetime) * 100 : 0;
-  const lastPaid = sortedBatches.find(batchIsPaid);
+  // The demo has no server wallet: estimate what's left of its credited earnings.
+  const ledgerBase = useMemo(() => payoutWalletLedger(payoutBatches), [payoutBatches]);
+  const estimatedAvailable = wallet === undefined && accountEarnings?.approved !== undefined
+    ? Math.max(0, Math.round((accountEarnings.approved - ledgerBase.held - ledgerBase.withdrawn) * 100) / 100)
+    : undefined;
+  const ledger = useMemo(() => payoutWalletLedger(payoutBatches, wallet?.available ?? estimatedAvailable), [payoutBatches, wallet?.available, estimatedAvailable]);
+  const credited = ledger.credited ?? 0;
+  const share = (value: number) => (credited > 0 ? Math.max(value > 0 ? 1.5 : 0, (value / credited) * 100) : 0);
+  const lastPaid = sortedBatches.find((batch) => String(batch.status).toLowerCase() === "paid");
+  const lastReturned = sortedBatches.find((batch) => statusOf(batch).effect === "returned");
   const firstLoad = loading && payoutBatches.length === 0;
+  const balanceLoading = ledger.available === undefined && (wallet === null || firstLoad);
 
   return (
     <div className="mx-auto w-full max-w-[1440px] space-y-4 sm:space-y-5">
       <PageHeader
         title="Wallet"
-        description="Track what you've earned, what's on its way, and every payout cycle."
+        description="What's yours to withdraw, what's on its way, and every payout."
         actions={
           <Link href="/payouts" className={buttonClassName("secondary")}>
             Payout history & settings
@@ -107,34 +135,93 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
         }
       />
 
-      <ReelEarningsSummary summary={accountEarnings} loading={earningsLoading} error={earningsError} onOpenAccounts={onOpenAccounts} />
+      {/* Balance: where every credited rupee is right now. */}
+      <Card aria-labelledby="wallet-available">
+        <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-center lg:gap-8">
+          <div className="min-w-0">
+            <h2 id="wallet-available" className="text-[12.5px] font-medium text-[#616a64]">Available to withdraw</h2>
+            {balanceLoading ? (
+              <Skeleton className="mt-2 h-10 w-44" />
+            ) : (
+              <div className="mt-1 break-words text-[clamp(1.9rem,7vw,2.6rem)] font-semibold leading-tight tracking-[-0.03em] tabular-nums text-[#1a201c]">
+                {ledger.available !== undefined ? formatMoney(ledger.available) : "–"}
+              </div>
+            )}
+            <p className="mt-1 text-[12.5px] leading-5 text-[#616a64]">
+              {ledger.held > 0
+                ? `${formatMoney(ledger.held)} is held in ${ledger.heldCount === 1 ? "a payout" : `${ledger.heldCount} payouts`} under review. It comes back here if a payout isn't approved.`
+                : lastReturned
+                  ? `${formatMoney(batchTotal(lastReturned))} from a rejected payout was returned ${formatRelative(batchUpdated(lastReturned))}.`
+                  : "Requesting a payout moves the amount out of here until the team decides."}
+            </p>
+          </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <MetricTile label="Paid out" value={formatMoney(payoutSummary.credited)} caption={lastPaid ? `Last paid ${formatRelative(batchUpdated(lastPaid))}` : "Lifetime"} loading={firstLoad} />
-        <MetricTile label="Pending withdrawal" value={formatMoney(payoutSummary.pending)} caption="In open payout cycles" loading={firstLoad} />
-        <MetricTile label="Open payout cycles" value={String(payoutSummary.liveBatches)} caption={`${counts.all} cycles in total`} loading={firstLoad} />
-        <MetricTile label="Assignments" value={String(assignmentsCount)} caption="Feeding your earnings" loading={firstLoad} />
+          <div className="min-w-0 rounded-xl border border-[#ebedea] bg-[#fafbf9] p-3.5 sm:p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[12.5px] font-medium text-[#616a64]">Credited to your wallet</span>
+              <span className="text-[15px] font-semibold tabular-nums text-[#1a201c]">{ledger.credited !== undefined ? formatMoney(credited) : "–"}</span>
+            </div>
+            <div
+              className="mt-2.5 flex h-2.5 w-full gap-[2px] overflow-hidden rounded-full bg-[#eef0ed]"
+              role="img"
+              aria-label={`${formatMoney(ledger.available ?? 0)} available, ${formatMoney(ledger.held)} held in payouts, ${formatMoney(ledger.withdrawn)} withdrawn`}
+            >
+              {(["available", "held", "withdrawn"] as const).map((key) => {
+                const value = key === "available" ? ledger.available ?? 0 : ledger[key];
+                return value > 0 ? <span key={key} className="h-full first:rounded-l-full last:rounded-r-full transition-[width] duration-700" style={{ width: `${share(value)}%`, background: SERIES[key] }} /> : null;
+              })}
+            </div>
+            <dl className="mt-3 grid grid-cols-1 gap-1.5 text-[12.5px] min-[420px]:grid-cols-3 min-[420px]:gap-3">
+              {[
+                { key: "available" as const, label: "Available", value: ledger.available, hint: "Ready to withdraw" },
+                { key: "held" as const, label: "In review", value: ledger.held, hint: "Held from wallet" },
+                { key: "withdrawn" as const, label: "Withdrawn", value: ledger.withdrawn, hint: "Approved or paid" },
+              ].map((row) => (
+                <div key={row.key} className="flex items-center justify-between gap-2 min-[420px]:block">
+                  <dt className="flex items-center gap-1.5 text-[#4b544e]">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: SERIES[row.key] }} aria-hidden="true" />
+                    {row.label}
+                  </dt>
+                  <dd className="font-semibold tabular-nums text-[#1a201c] min-[420px]:mt-0.5">
+                    {row.value !== undefined ? formatMoney(row.value) : "–"}
+                    <span className="ml-1.5 font-normal text-[#9aa29c] min-[420px]:ml-0 min-[420px]:block min-[420px]:text-[11px]">{row.hint}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <MetricTile label="Pending withdrawal" value={formatMoney(ledger.held)} caption={ledger.heldCount ? `${ledger.heldCount} under review` : "Nothing under review"} loading={firstLoad} />
+        <MetricTile label="Paid out" value={formatMoney(ledger.paid)} caption={lastPaid ? `Last paid ${formatRelative(batchUpdated(lastPaid))}` : "Lifetime"} loading={firstLoad} />
       </div>
+
+      <ReelEarningsSummary summary={accountEarnings} loading={earningsLoading} error={earningsError} onOpenAccounts={onOpenAccounts} />
 
       <div className="grid grid-cols-1 items-start gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card aria-labelledby="wallet-cycles">
           <div className="flex flex-col gap-3 border-b border-[#ebedea] p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
             <h2 id="wallet-cycles" className="px-1 text-[14px] font-semibold text-[#1a201c]">
-              Payout cycles
+              Payouts
             </h2>
-            <FilterTabs
-              label="Filter payout cycles"
-              value={filter}
-              onChange={(next) => {
-                setFilter(next);
-                setExpanded(null);
-              }}
-              tabs={[
-                { id: "all", label: "All", count: counts.all },
-                { id: "pending", label: "Pending", count: counts.pending },
-                { id: "paid", label: "Paid", count: counts.paid },
-              ]}
-            />
+            <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none]">
+              <FilterTabs
+                label="Filter payouts"
+                value={filter}
+                onChange={(next) => {
+                  setFilter(next);
+                  setExpanded(null);
+                }}
+                tabs={[
+                  { id: "all", label: "All", count: counts.all },
+                  { id: "pending", label: "Pending", count: counts.pending },
+                  { id: "paid", label: "Paid", count: counts.paid },
+                  { id: "returned", label: "Returned", count: counts.returned },
+                ]}
+              />
+            </div>
           </div>
 
           {firstLoad ? (
@@ -146,11 +233,13 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
           ) : visibleBatches.length === 0 ? (
             <EmptyState
               icon={<Icon.Wallet className="h-5 w-5" />}
-              title={counts.all === 0 ? "No payout cycles yet" : "Nothing here"}
+              title={counts.all === 0 ? "No payouts yet" : "Nothing here"}
               description={
                 counts.all === 0
-                  ? "Earnings from completed assignments are grouped into payout cycles. They'll appear here as soon as the first one is created."
-                  : `You have no ${filter} cycles right now.`
+                  ? "When you withdraw, the payout appears here with every step until it's paid."
+                  : filter === "returned"
+                    ? "No payouts were rejected."
+                    : `You have no ${filter} payouts right now.`
               }
             />
           ) : (
@@ -158,14 +247,14 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
               {/* Table: tablet and up */}
               <div className="hidden overflow-x-auto md:block">
                 <table className="w-full text-[13px]">
-                  <caption className="sr-only">Payout cycles</caption>
+                  <caption className="sr-only">Payouts</caption>
                   <thead>
                     <tr className="border-b border-[#ebedea] bg-[#fafbf9] text-left text-[12px] text-[#616a64]">
                       <th scope="col" className="w-10 py-2.5 pl-4">
                         <span className="sr-only">Expand</span>
                       </th>
-                      <th scope="col" className="py-2.5 pr-3 font-medium">Cycle</th>
-                      <th scope="col" className="hidden px-3 py-2.5 font-medium lg:table-cell">Method</th>
+                      <th scope="col" className="py-2.5 pr-3 font-medium">Payout</th>
+                      <th scope="col" className="hidden px-3 py-2.5 font-medium lg:table-cell">Paid to</th>
                       <th scope="col" className="px-3 py-2.5 font-medium">Status</th>
                       <th scope="col" className="px-3 py-2.5 text-right font-medium">Amount</th>
                       <th scope="col" className="py-2.5 pl-3 pr-5 text-right font-medium">Updated</th>
@@ -174,6 +263,7 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
                   <tbody>
                     {visibleBatches.map((batch) => {
                       const open = expanded === batch.id;
+                      const status = statusOf(batch);
                       return (
                         <Fragment key={batch.id}>
                           <tr
@@ -185,7 +275,7 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
                                 type="button"
                                 aria-expanded={open}
                                 aria-controls={`batch-${batch.id}`}
-                                aria-label={`${open ? "Hide" : "Show"} items in ${batch.cycleLabel}`}
+                                aria-label={`${open ? "Hide" : "Show"} details of ${batch.cycleLabel}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setExpanded(open ? null : batch.id);
@@ -198,21 +288,24 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
                             <td className="py-3 pr-3">
                               <div className="font-semibold text-[#1a201c]">{batch.cycleLabel}</div>
                               <div className="text-[12px] text-[#7a827c]">
-                                {formatDate(batch.periodStart)} – {formatDate(batch.periodEnd)}
+                                {batch.origin === "auto" ? "Automatic" : "Manual"} · requested {formatDate(batch.createdAt)}
                               </div>
                             </td>
-                            <td className="hidden whitespace-nowrap px-3 py-3 text-[#4b544e] lg:table-cell">{batch.method || "—"}</td>
+                            <td className="hidden max-w-[220px] truncate px-3 py-3 text-[#4b544e] lg:table-cell">{batch.payTo || batch.method || "—"}</td>
                             <td className="px-3 py-3">
-                              <StatusBadge status={statusLabel(batch.status)} />
+                              <StatusBadge status={status.label} tone={status.tone} />
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums text-[#1a201c]">{formatMoney(batchTotal(batch))}</td>
+                            <td className="whitespace-nowrap px-3 py-3 text-right">
+                              <div className={cx("font-semibold tabular-nums", status.effect === "returned" ? "text-[#7a827c] line-through decoration-[#b9bfba]" : "text-[#1a201c]")}>{formatMoney(batchTotal(batch))}</div>
+                              <div className={cx("text-[11.5px]", status.effect === "returned" ? "font-medium text-[#2e7d4f]" : "text-[#7a827c]")}>{walletEffectLabel(batch)}</div>
+                            </td>
                             <td className="whitespace-nowrap py-3 pl-3 pr-5 text-right text-[#7a827c]">{formatRelative(batchUpdated(batch))}</td>
                           </tr>
                           {open ? (
                             <tr id={`batch-${batch.id}`} className="border-b border-[#f2f3f1] bg-[#fafbf9]">
                               <td />
                               <td colSpan={5} className="pb-4 pr-5 pt-1">
-                                <BatchItems batch={batch} />
+                                <BatchDetails batch={batch} />
                               </td>
                             </tr>
                           ) : null}
@@ -227,6 +320,7 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
               <ul className="divide-y divide-[#f0f1ef] md:hidden">
                 {visibleBatches.map((batch) => {
                   const open = expanded === batch.id;
+                  const status = statusOf(batch);
                   return (
                     <li key={batch.id}>
                       <button
@@ -238,21 +332,19 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
                       >
                         <span className="min-w-0 flex-1">
                           <span className="flex items-start justify-between gap-2">
-                            <span className="truncate text-[13.5px] font-semibold text-[#1a201c]">{batch.cycleLabel}</span>
-                            <span className="shrink-0 text-[13.5px] font-semibold tabular-nums text-[#1a201c]">{formatMoney(batchTotal(batch))}</span>
+                            <span className="min-w-0 truncate text-[13.5px] font-semibold text-[#1a201c]">{batch.cycleLabel}</span>
+                            <span className={cx("shrink-0 text-[13.5px] font-semibold tabular-nums", status.effect === "returned" ? "text-[#7a827c] line-through decoration-[#b9bfba]" : "text-[#1a201c]")}>{formatMoney(batchTotal(batch))}</span>
                           </span>
                           <span className="mt-1 flex items-center justify-between gap-2">
-                            <span className="truncate text-[12px] text-[#7a827c]">
-                              {formatDate(batch.periodStart)} – {formatDate(batch.periodEnd)}
-                            </span>
-                            <StatusBadge status={statusLabel(batch.status)} />
+                            <StatusBadge status={status.label} tone={status.tone} />
+                            <span className={cx("truncate text-[12px]", status.effect === "returned" ? "font-medium text-[#2e7d4f]" : "text-[#7a827c]")}>{walletEffectLabel(batch)}</span>
                           </span>
                         </span>
                         <Icon.ChevronDown className={cx("mt-0.5 h-4 w-4 shrink-0 text-[#a3aaa4] transition-transform", open && "rotate-180")} />
                       </button>
                       {open ? (
                         <div id={`batch-m-${batch.id}`} className="px-4 pb-4">
-                          <BatchItems batch={batch} />
+                          <BatchDetails batch={batch} />
                         </div>
                       ) : null}
                     </li>
@@ -263,71 +355,83 @@ export default function DashboardWalletView({ loading, payoutBatches, accountEar
           )}
         </Card>
 
-        <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 lg:grid-cols-1">
-          <Card aria-labelledby="wallet-balance">
-            <CardHeader id="wallet-balance" title="Payout breakdown" description="Paid and requested withdrawals" />
-            <div className="px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
-              <div className="text-[26px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c]">{formatMoney(lifetime)}</div>
-              <div
-                className="mt-3 flex h-2.5 w-full gap-[2px] overflow-hidden rounded-full bg-[#eef0ed]"
-                role="img"
-                aria-label={`${formatMoney(payoutSummary.credited)} paid, ${formatMoney(payoutSummary.pending)} pending`}
-              >
-                {payoutSummary.credited > 0 ? <span className="h-full rounded-l-full" style={{ width: `${paidShare}%`, background: SERIES_PAID }} /> : null}
-                {payoutSummary.pending > 0 ? <span className="h-full flex-1 rounded-r-full" style={{ background: SERIES_PENDING }} /> : null}
-              </div>
-              <dl className="mt-3 space-y-1.5 text-[12.5px]">
-                {[
-                  { label: "Paid", value: payoutSummary.credited, color: SERIES_PAID },
-                  { label: "Pending", value: payoutSummary.pending, color: SERIES_PENDING },
-                ].map((row) => (
-                  <div key={row.label} className="flex items-center justify-between gap-3">
-                    <dt className="flex items-center gap-2 text-[#4b544e]">
-                      <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: row.color }} aria-hidden="true" />
-                      {row.label}
-                    </dt>
-                    <dd className="font-semibold tabular-nums text-[#1a201c]">
-                      {formatMoney(row.value)}
-                      <span className="ml-1.5 font-normal text-[#9aa29c]">{lifetime > 0 ? Math.round((row.value / lifetime) * 100) : 0}%</span>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </Card>
-
-          <Card aria-labelledby="wallet-how">
-            <CardHeader id="wallet-how" title="How payouts work" />
-            <ol className="relative mx-4 mb-4 mt-3 space-y-3.5 border-l border-[#e6e8e4] pl-4 sm:mx-5 sm:mb-5">
-              {[
-                ["Earn", "Post reels and submit assigned work for review."],
-                ["Review", "Approved reel earnings credit your wallet automatically. New views require review."],
-                ["Withdraw", "Request a payout from your available balance when eligible."],
-                ["Paid", "The team processes your withdrawal and records the payment."],
-              ].map(([title, body], index) => (
-                <li key={title} className="relative">
-                  <span className="absolute -left-[25px] top-0 flex h-[17px] w-[17px] items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2b5d4a] ring-1 ring-[#cfd5cf]">
-                    {index + 1}
-                  </span>
-                  <div className="text-[13px] font-semibold text-[#1a201c]">{title}</div>
-                  <div className="text-[12.5px] leading-5 text-[#616a64]">{body}</div>
-                </li>
-              ))}
-            </ol>
-            <div className="border-t border-[#ebedea] px-4 py-3 text-[12px] text-[#7a827c] sm:px-5">
-              {workerId ? (
-                <>
-                  Worker ID <span className="font-mono text-[#1a201c]">{workerId}</span>
-                </>
-              ) : (
-                "Sign in to link your worker profile."
-              )}
-            </div>
-          </Card>
-        </div>
+        <Card aria-labelledby="wallet-how">
+          <CardHeader id="wallet-how" title="How withdrawals work" />
+          <ol className="relative mx-4 mb-4 mt-3 space-y-3.5 border-l border-[#e6e8e4] pl-4 sm:mx-5 sm:mb-5">
+            {[
+              ["Request", "The amount moves out of your available balance and is held while the team reviews it."],
+              ["Approved", "Approved payouts leave your wallet for good and are sent to your bank account or UPI ID."],
+              ["Paid", "You'll see the payment here once it's sent."],
+              ["Not approved?", "Every rupee of a rejected payout goes straight back to your available balance."],
+            ].map(([title, body], index) => (
+              <li key={title} className="relative">
+                <span className="absolute -left-[25px] top-0 flex h-[17px] w-[17px] items-center justify-center rounded-full bg-white text-[10px] font-bold text-[#2b5d4a] ring-1 ring-[#cfd5cf]">
+                  {index + 1}
+                </span>
+                <div className="text-[13px] font-semibold text-[#1a201c]">{title}</div>
+                <div className="text-[12.5px] leading-5 text-[#616a64]">{body}</div>
+              </li>
+            ))}
+          </ol>
+          <div className="border-t border-[#ebedea] px-4 py-3 text-[12px] text-[#7a827c] sm:px-5">
+            {workerId ? (
+              <>
+                Worker ID <span className="font-mono text-[#1a201c]">{workerId}</span>
+              </>
+            ) : (
+              "Sign in to link your worker profile."
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );
+}
+
+/** A payout's journey (requested → approved → paid, or → rejected and returned), where it went, and its items. */
+function BatchDetails({ batch }: { batch: WalletBatch }) {
+  const status = statusOf(batch);
+  const rejected = status.effect === "returned";
+  const lower = String(batch.status).toLowerCase();
+  const steps = rejected
+    ? [
+        { label: "Requested", at: batch.createdAt, done: true },
+        { label: "Rejected", at: batch.processedAt, done: true, bad: true },
+        { label: "Returned to wallet", at: batch.processedAt, done: true },
+      ]
+    : [
+        { label: "Requested", at: batch.createdAt, done: true },
+        { label: "Approved", at: batch.processedAt, done: lower === "processing" || lower === "paid" },
+        { label: "Paid", at: batch.paidAt, done: lower === "paid" },
+      ];
+  const notes = payoutHistoryNotes(batch.notes).filter((note) => !/^ETA:/i.test(note));
+  return (
+    <div className="space-y-3">
+      <ol className="grid grid-cols-3 gap-1.5" aria-label="Payout progress">
+        {steps.map((step) => (
+          <li key={step.label} className="min-w-0">
+            <span className={cx("block h-1 rounded-full", step.bad ? "bg-[#e8a39b]" : step.done ? "bg-[#2e7d4f]" : "bg-[#e3e6e2]")} />
+            <span className={cx("mt-1 block truncate text-[11.5px] font-medium", step.done ? "text-[#1a201c]" : "text-[#9aa29c]")}>{step.label}</span>
+            <span className="block truncate text-[11px] text-[#7a827c]">{step.done && step.at ? formatDate(step.at) : step.done ? "" : "Pending"}</span>
+          </li>
+        ))}
+      </ol>
+      <p className={cx("rounded-lg px-3 py-2 text-[12.5px] leading-5", rejected ? "bg-[#eef6ec] text-[#1f5131]" : "bg-white text-[#4b544e] ring-1 ring-inset ring-[#ebedea]")}>
+        {status.detail}
+        {rejected && notes.length ? <span className="block text-[#4b544e]">Reason: {notes.at(-1)}</span> : null}
+        {!rejected && batch.payTo ? <span className="block text-[#7a827c]">To {batch.payTo}</span> : null}
+      </p>
+      <BatchItems batch={batch} />
+    </div>
+  );
+}
+
+/** A payout item: in the payout (held or being sent), paid, or returned to the wallet. */
+function itemStatus(raw: string): { status: string; tone: BadgeTone } {
+  const value = String(raw ?? "").trim().toLowerCase();
+  if (value === "paid") return { status: "Paid", tone: "success" };
+  if (value === "failed") return { status: "Returned", tone: "neutral" };
+  return { status: "In payout", tone: "attention" };
 }
 
 function BatchItems({ batch }: { batch: WalletBatch }) {
@@ -348,7 +452,7 @@ function BatchItems({ batch }: { batch: WalletBatch }) {
           <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-2 text-[12.5px]">
             <span className="min-w-0 truncate text-[#1a201c]">{item.handle ? `@${item.handle.replace(/^@/, "")}` : "Earnings"}</span>
             <span className="flex shrink-0 items-center gap-3">
-              <StatusBadge status={statusLabel(item.status)} />
+              <StatusBadge {...itemStatus(item.status)} />
               <span className="w-20 text-right font-semibold tabular-nums text-[#1a201c]">{formatMoney(Number(item.amountINR ?? 0))}</span>
             </span>
           </li>

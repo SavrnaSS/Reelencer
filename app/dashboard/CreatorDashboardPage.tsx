@@ -1,7 +1,7 @@
 "use client";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
-import { fetchCreatorDashboard } from "@/lib/creatorDashboardClient";
+import { fetchCreatorDashboard, type DashboardWallet } from "@/lib/creatorDashboardClient";
 import { bindCreatorCacheIdentity, clearCreatorDeviceCache, creatorCacheIdentity, creatorProfileData, creatorVideoData, CREATOR_CACHE_CLEARED, CREATOR_CACHE_OWNER, dashboardSnapshot, detachCreatorCacheIdentity, isCreatorCacheIdentity, patchCachedDashboard, readCreatorCache, writeCreatorCache, type DashboardSnapshot } from "@/lib/creatorDeviceCache";
 import { AccountRecoveryNotice } from "./LinkedAccountRecovery";
 import { postingProgress, summarizePayoutBatches } from "@/lib/creatorEarnings";
@@ -3593,6 +3593,8 @@ export default function DashboardPage() {
   const [applications, setApplications] = useState<GigApplication[]>([]);
   const [assignments, setAssignments] = useState<GigAssignment[]>([]);
   const [payoutBatches, setPayoutBatches] = useState<PayoutBatch[]>([]);
+  // Server wallet balance (available, committed to payouts); null until the first dashboard read.
+  const [walletBalance, setWalletBalance] = useState<DashboardWallet | null>(null);
   const socialAccounts = useSocialAccounts(!profileLoading && Boolean(profileUserId || workerId), profileUserId);
   // Linked social accounts + accounts in verification, for the profile's Account card. Both arrive live
   // (social-accounts channel + request refreshes), so links and approvals show up without a reload.
@@ -3749,6 +3751,7 @@ export default function DashboardPage() {
     if (Array.isArray(data.applications)) setApplications(data.applications as GigApplication[]);
     if (Array.isArray(data.assignments)) setAssignments(data.assignments as GigAssignment[]);
     if (Array.isArray(data.payoutBatches)) setPayoutBatches(data.payoutBatches as PayoutBatch[]);
+    if (data.wallet) setWalletBalance(data.wallet);
     if (result.workerId) setWorkerId(result.workerId);
     setUsingSavedData(result.errors.length > 0);
     if (!result.errors.length) setLastSyncedAt(result.checkedAt);
@@ -3918,13 +3921,25 @@ export default function DashboardPage() {
       channels.push(
         supabase
           .channel(`dashboard-assignments-${workerId}`)
-          .on("postgres_changes", { event: "*", schema: "public", table: "gig_assignments", filter: `worker_code=eq.${workerId}` }, scheduleRefresh),
-        supabase
-          .channel(`dashboard-payouts-${workerId}`)
-          .on("postgres_changes", { event: "*", schema: "public", table: "payout_batches", filter: `worker_id=eq.${workerId}` }, scheduleRefresh)
+          .on("postgres_changes", { event: "*", schema: "public", table: "gig_assignments", filter: `worker_code=eq.${workerId}` }, scheduleRefresh)
       );
     }
     channels.forEach((channel) => channel.subscribe());
+    // Payouts and the wallet balance are server-only tables: their changes arrive as a content-free signal on the
+    // creator's private payouts topic (requests, approvals, rejections and returned money, credits, UPI and KYC).
+    let disposed = false;
+    let payoutChannel: ReturnType<typeof supabase.channel> | null = null;
+    void (async () => {
+      const { data } = await supabase.auth.getSession();
+      const session = data.session;
+      if (disposed || !session) return;
+      await supabase.realtime.setAuth(session.access_token);
+      if (disposed) return;
+      payoutChannel = supabase
+        .channel(`payouts:${session.user.id}`, { config: { private: true } })
+        .on("broadcast", { event: "changed" }, scheduleRefresh)
+        .subscribe((status) => { if (status === "SUBSCRIBED") scheduleRefresh(); });
+    })().catch(() => undefined);
 
     // Fallback polling (also covers applications) and instant catch-up when the tab regains focus.
     const intervalId = window.setInterval(() => {
@@ -3949,6 +3964,8 @@ export default function DashboardPage() {
       channels.forEach((channel) => {
         void supabase.removeChannel(channel);
       });
+      disposed = true;
+      if (payoutChannel) void supabase.removeChannel(payoutChannel);
     };
   }, [loading, refreshLiveData, workerId]);
 
@@ -7527,6 +7544,7 @@ export default function DashboardPage() {
         <DashboardWalletView
           loading={loading}
           payoutBatches={payoutBatches}
+          wallet={walletBalance}
           accountEarnings={accountEarnings}
           earningsLoading={earningsLoading}
           earningsError={earningsError}

@@ -3,7 +3,9 @@
 import { apiFetch } from "./api/client";
 import { creatorCacheGeneration, dashboardSnapshot, isCreatorCacheIdentity, readCreatorCache, writeCreatorCache, type DashboardCollections, type DashboardSnapshot } from "./creatorDeviceCache";
 
-type Result = { userId: string; workerId: string | null; data: Partial<DashboardCollections>; errors: string[]; checkedAt: number };
+/** Wallet balance: available to withdraw, and committed to payouts (open or paid). Not cached on the device. */
+export type DashboardWallet = { available: number; committed: number };
+type Result = { userId: string; workerId: string | null; data: Partial<DashboardCollections> & { wallet?: DashboardWallet }; errors: string[]; checkedAt: number };
 const requests = new Map<string, { promise: Promise<Result>; revision: number }>();
 
 /** Polls, realtime notifications and section changes share one request; mutations can queue a fresh follow-up. */

@@ -35,14 +35,53 @@ export function payoutHistoryTotal(items: readonly Pick<PayoutHistoryItem, "amou
   return paise / 100;
 }
 
+/**
+ * What a payout's status means for the creator's wallet. A request holds its amount out of the available balance;
+ * approval and payment take it out for good; a rejected payout returns every rupee to the available balance.
+ * (The database enforces this: request_payout reserves the credits; a rejected cycle's items become Failed and
+ * are released.)
+ */
+export type PayoutWalletEffect = "held" | "deducted" | "returned" | "unknown";
+
 export function payoutHistoryStatus(status: string) {
   switch (status.trim().toLowerCase()) {
-    case "paid": return { label: "Paid", detail: "Payment completed.", tone: "success" as const };
-    case "processing": return { label: "Processing", detail: "Your payment is being processed.", tone: "info" as const };
-    case "failed": return { label: "Not completed", detail: "This payout was not completed. Review the notes below.", tone: "danger" as const };
-    case "draft": return { label: "Requested", detail: "Awaiting review by the payout team.", tone: "pending" as const };
-    default: return { label: "Status unavailable", detail: "Refresh to check this payout’s status.", tone: "neutral" as const };
+    case "paid": return { label: "Paid", detail: "Sent to you. This amount has left your wallet for good.", tone: "success" as const, effect: "deducted" as PayoutWalletEffect };
+    case "processing": return { label: "Approved", detail: "Approved and being sent to you. The amount has left your wallet.", tone: "info" as const, effect: "deducted" as PayoutWalletEffect };
+    case "failed": return { label: "Rejected", detail: "Not approved. The full amount was returned to your wallet.", tone: "danger" as const, effect: "returned" as PayoutWalletEffect };
+    case "draft": return { label: "Requested", detail: "Held from your wallet while the payout team reviews it.", tone: "pending" as const, effect: "held" as PayoutWalletEffect };
+    default: return { label: "Status unavailable", detail: "Refresh to check this payout’s status.", tone: "neutral" as const, effect: "unknown" as PayoutWalletEffect };
   }
+}
+
+/**
+ * Where a creator's credited money is, from the wallet balance and their payouts: available to withdraw, held in a
+ * payout under review, approved or paid (gone for good), and returned from rejected payouts (back in available).
+ */
+export function payoutWalletLedger(batches: ReadonlyArray<{ status: string; items: ReadonlyArray<{ amountINR: number }> }>, available?: number) {
+  const paise = { held: 0, deducted: 0, returned: 0, paid: 0 };
+  let heldCount = 0, returnedCount = 0;
+  for (const batch of batches) {
+    const total = payoutHistoryTotal(batch.items);
+    if (total === undefined) continue;
+    const cents = Math.round(total * 100);
+    const status = payoutHistoryStatus(batch.status);
+    if (status.effect === "held") { paise.held += cents; heldCount++; }
+    else if (status.effect === "deducted") { paise.deducted += cents; if (status.label === "Paid") paise.paid += cents; }
+    else if (status.effect === "returned") { paise.returned += cents; returnedCount++; }
+  }
+  const availablePaise = available !== undefined && Number.isFinite(available) ? Math.round(available * 100) : undefined;
+  return {
+    available: availablePaise === undefined ? undefined : availablePaise / 100,
+    held: paise.held / 100,
+    /** Approved (being sent) and paid: no longer in the wallet. */
+    withdrawn: paise.deducted / 100,
+    paid: paise.paid / 100,
+    returned: paise.returned / 100,
+    heldCount,
+    returnedCount,
+    /** Everything the wallet has received: what's available, held and withdrawn (returned money is in available). */
+    credited: availablePaise === undefined ? undefined : (availablePaise + paise.held + paise.deducted) / 100,
+  };
 }
 
 export function payoutEarningTitle(item: Pick<PayoutHistoryItem, "workItemTitle">) {

@@ -2105,7 +2105,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
         notes: Array.isArray(result.batch?.notes) ? result.batch.notes : batch.notes,
         items: batch.items.map((item) => ({ ...item, ...(action !== "approve" ? { status: action === "reject" ? "Failed" : "Paid" } : {}) })),
       } : batch));
-      setToast({ message: action === "approve" ? "Payout approved for processing" : action === "reject" ? "Payout rejected and removed from requests" : "Payout recorded as paid", tone: "success" });
+      setToast({ message: action === "approve" ? "Payout approved for processing" : action === "reject" ? "Payout rejected. The full amount is back in the creator's available balance" : "Payout recorded as paid", tone: "success" });
       void refreshOverviewCounts({ afterCurrent: true });
       await loadSnapshot();
     } catch (error) {

@@ -82,3 +82,21 @@ test("unauthenticated and cross-user reads fail before a dashboard resource can 
   const denied = await handler()(other, context);
   assert.equal(denied.status, 403);
 });
+
+test("the wallet balance joins the dashboard read as a small object, and a bad balance never hides the lists", async () => {
+  const wallet = (body: unknown) => ({ path: "/api/metrics/worker", read: async () => Response.json(body), pick: (data: Record<string, unknown>) => {
+    const money = data.money as Record<string, unknown> | undefined;
+    if (!Number.isFinite(Number(money?.available))) throw new Error("Wallet unavailable");
+    return { available: Number(money?.available), committed: Number(money?.committed) };
+  } });
+  const ok = await handler({ ...readers(), wallet: wallet({ counts: { total: 3 }, money: { earnings: 9, available: 2026.79, committed: 901.63 } }) })(request(), context);
+  const payload = await ok.json();
+  assert.deepEqual(payload.data.wallet, { available: 2026.79, committed: 901.63 });
+  assert.deepEqual(payload.errors, []);
+  for (const body of [[{ money: { available: 1 } }], { money: { available: "n/a" } }]) {
+    const partial = await (await handler({ ...readers(), wallet: wallet(body) })(request(), context)).json();
+    assert.equal(partial.data.wallet, undefined);
+    assert.deepEqual(partial.errors, ["wallet"]);
+    assert.equal(partial.data.payoutBatches.length, 1);
+  }
+});
