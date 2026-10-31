@@ -67,20 +67,20 @@ export default function NotFoundView() {
             <span className="hidden font-[Georgia,Times_New_Roman,serif] text-[19px] font-bold text-[#20352c] min-[380px]:inline">Reelencer</span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <a href="mailto:support@reelencer.com?subject=Broken%20link" className={buttonClassName("secondary", "md", "hidden h-10 rounded-full sm:inline-flex")}>
+            <a href="mailto:support@reelencer.com?subject=Broken%20link" className={buttonClassName("secondary", "md", "h-10 rounded-full max-sm:hidden")}>
               Contact support
             </a>
-            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "h-10")}>
+            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "h-9 sm:h-10")}>
               My jobs
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col items-center justify-center px-3.5 py-8 min-[380px]:px-4 sm:px-5 sm:py-12 md:px-6 lg:px-7 2xl:px-8">
+      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col items-center justify-center px-3.5 py-5 min-[380px]:px-4 sm:px-5 sm:py-12 md:px-6 lg:px-7 2xl:px-8">
         {/* The art sits straight on the page: side by side with the message on desktop, stacked on phones. */}
-        <section aria-labelledby="not-found-title" className="grid w-full max-w-5xl items-center gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-12">
-          <div className="mx-auto w-full max-w-[440px] sm:max-w-[520px] lg:max-w-none">
+        <section aria-labelledby="not-found-title" className="grid w-full max-w-5xl items-center gap-2 sm:gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:gap-12">
+          <div className="mx-auto w-full max-w-[300px] min-[400px]:max-w-[360px] sm:max-w-[480px] lg:max-w-none">
             <NotFoundIllustration />
           </div>
 
@@ -89,10 +89,10 @@ export default function NotFoundView() {
               <span className="h-1.5 w-1.5 rounded-full bg-[#d03b3b]" aria-hidden="true" />
               Error 404 · Page not found
             </p>
-            <h1 id="not-found-title" className="mx-auto mt-3 max-w-xl text-balance text-[26px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c] sm:text-[32px] lg:mx-0 lg:text-[36px]">
+            <h1 id="not-found-title" className="mx-auto mt-3 max-w-xl text-balance text-[22px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c] min-[400px]:text-[24px] sm:text-[32px] lg:mx-0 lg:text-[36px]">
               This scene didn&apos;t make the final cut
             </h1>
-            <p className="mx-auto mt-2 max-w-md text-pretty text-[14px] leading-6 text-[#616a64] sm:text-[15px] lg:mx-0">
+            <p className="mx-auto mt-2 max-w-md text-pretty text-[13.5px] leading-[1.45rem] text-[#616a64] sm:text-[15px] sm:leading-6 lg:mx-0">
               The page you&apos;re looking for doesn&apos;t exist, was moved, or the link has a typo.
             </p>
 
@@ -118,18 +118,19 @@ export default function NotFoundView() {
               </Link>
             ) : null}
 
-            <div className="mx-auto mt-6 flex w-full max-w-xs flex-col gap-2 sm:max-w-none sm:flex-row sm:justify-center lg:justify-start">
-              <Link href="/" className={buttonClassName("primary", "lg")}>
+            {/* Phones: two equal buttons side by side, so the quick links stay in view. */}
+          <div className="mx-auto mt-5 grid w-full max-w-sm grid-cols-2 gap-2 sm:mt-6 sm:flex sm:max-w-none sm:justify-center lg:justify-start">
+              <Link href="/" className={buttonClassName("primary", "lg", "max-sm:px-3")}>
                 <Icon className="h-4 w-4"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" /></Icon>
                 Back to home
               </Link>
               {back ? (
-                <button type="button" onClick={() => window.history.back()} className={buttonClassName("secondary", "lg")}>
+                <button type="button" onClick={() => window.history.back()} className={buttonClassName("secondary", "lg", "max-sm:px-3")}>
                   <Icon className="h-4 w-4"><path d="M19 12H5M11 6l-6 6 6 6" /></Icon>
                   Go back
                 </button>
               ) : (
-                <Link href={FIND_GIGS_HREF} className={buttonClassName("secondary", "lg")}>
+                <Link href={FIND_GIGS_HREF} className={buttonClassName("secondary", "lg", "max-sm:px-3")}>
                   Browse gigs
                 </Link>
               )}
@@ -137,14 +138,14 @@ export default function NotFoundView() {
           </div>
         </section>
 
-        <nav aria-label="Popular pages" className="mt-8 w-full max-w-5xl sm:mt-10">
+        <nav aria-label="Popular pages" className="mt-7 w-full max-w-5xl sm:mt-10">
           <h2 className="mb-2.5 px-1 text-[12.5px] font-medium text-[#616a64]">Or jump to</h2>
-          <ul className="grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 sm:gap-3 lg:grid-cols-4">
+          <ul className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             {LINKS.map((link) => (
               <li key={link.title} className={styles.rise}>
                 <a
                   href={link.href}
-                  className="group flex h-full items-center gap-3 rounded-xl border border-[#e3e5e1] bg-white p-3.5 shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:-translate-y-0.5 hover:border-[#cfd5cf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
+                  className="group flex h-full flex-col items-start gap-2.5 rounded-xl border border-[#e3e5e1] bg-white p-3 sm:flex-row sm:items-center sm:gap-3 shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:-translate-y-0.5 hover:border-[#cfd5cf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
                 >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#dfe9da] bg-[linear-gradient(160deg,#f3f9ef,#e6f2e0)] text-[#2e7d4f] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(34,45,37,0.06)] transition group-hover:bg-[#2e7d4f] group-hover:bg-none group-hover:text-white">
                     <Icon className="h-[18px] w-[18px]">{link.icon}</Icon>
@@ -153,7 +154,7 @@ export default function NotFoundView() {
                     <span className="block text-[13.5px] font-semibold leading-5 text-[#1a201c]">{link.title}</span>
                     <span className="mt-0.5 block text-[12px] leading-4 text-[#7a827c]">{link.body}</span>
                   </span>
-                  <span className="shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5 group-hover:text-[#616a64]">
+                  <span className="shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5 group-hover:text-[#616a64] max-sm:hidden">
                     <Icon className="h-4 w-4"><path d="m9 6 6 6-6 6" /></Icon>
                   </span>
                 </a>

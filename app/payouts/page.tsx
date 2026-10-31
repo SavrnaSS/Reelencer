@@ -757,7 +757,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
               />
               <span className="sr-only">{liveState === "live" ? "Live" : liveState === "offline" ? "Auto-refresh" : "Connecting"}</span>
             </button>
-            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "hidden h-10 sm:inline-flex")}>
+            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "h-10 max-sm:hidden")}>
               My jobs
             </Link>
           </div>
