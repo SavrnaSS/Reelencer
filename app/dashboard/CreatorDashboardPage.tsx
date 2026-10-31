@@ -3599,7 +3599,7 @@ export default function DashboardPage() {
   // Linked social accounts + accounts in verification, for the profile's Account card. Both arrive live
   // (social-accounts channel + request refreshes), so links and approvals show up without a reload.
   const linkedAccounts = useMemo(() => (socialAccounts.load.state === "ready" ? socialAccounts.load.accounts : []), [socialAccounts.load]);
-  const linkedRequests = useAccountRequests(socialAccounts.load.state === "ready" ? socialAccounts.load.accounts : null);
+  const linkedRequests = useAccountRequests(socialAccounts.load.state === "ready" ? socialAccounts.load.accounts : null, profileUserId);
   const verifyingRequests = useMemo(() => linkedRequests.visible.filter((r) => r.status === "pending" || r.status === "changes_requested"), [linkedRequests.visible]);
   // Minute clock for "New" badges on freshly linked accounts.
   const [minuteNow, setMinuteNow] = useState(() => Date.now());
@@ -7083,7 +7083,7 @@ export default function DashboardPage() {
             <PageHeader title={copy.title} description={copy.description} />
           </DashboardReveal>
           <DashboardReveal delay={90} className="mt-5">
-            <SocialAccountsView state={socialAccounts} onFindGigs={() => navigateFromView("find")} />
+            <SocialAccountsView state={socialAccounts} userId={profileUserId} onFindGigs={() => navigateFromView("find")} />
           </DashboardReveal>
         </section>
       );

@@ -1238,12 +1238,12 @@ function AccountDetail({
   );
 }
 
-export default function SocialAccountsView({ onFindGigs, state }: { onFindGigs: () => void; state: SocialAccountsState }) {
+export default function SocialAccountsView({ onFindGigs, state, userId }: { onFindGigs: () => void; state: SocialAccountsState; userId: string | null }) {
   const { load, refreshing, refresh: refreshAccounts, updateAccount, updatePost, earnings } = state;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheet, setSheet] = useState<SheetMode | null>(null);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
-  const requests = useAccountRequests(load.state === "ready" ? load.accounts : null);
+  const requests = useAccountRequests(load.state === "ready" ? load.accounts : null, userId);
   const refresh = useCallback(() => refreshAccounts(true), [refreshAccounts]);
   // Check deadlines frequently; the server still limits Instagram reads to once per five minutes.
   useVisibleRefresh(refresh, 30_000);

@@ -17,6 +17,7 @@ import type { AccountEarningsSummary } from "@/lib/creatorEarnings";
 import { formatAmount } from "@/lib/money";
 import { formatCompact, metricChange, type LinkedSocialAccount } from "@/lib/socialAnalytics";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
+import { useAccountRequestDismissals } from "@/lib/useAccountRequestDismissals";
 import { Button, Icon, Skeleton, buttonClassName, cx, formatRelative } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
 
@@ -64,8 +65,9 @@ const NO_ACCOUNTS: LinkedSocialAccount[] = [];
  * Request state plus live account counts. Counts are derived from the accounts and requests on screen (not the
  * server's snapshot of them), so meters and seats update the moment a request is sent, withdrawn or approved.
  */
-export function useAccountRequests(accounts: LinkedSocialAccount[] | null) {
+export function useAccountRequests(accounts: LinkedSocialAccount[] | null, userId: string | null) {
   const linkedAccounts = accounts ?? NO_ACCOUNTS;
+  const { isDismissed, dismiss: dismissRejected } = useAccountRequestDismissals(userId);
   const enabled = linkedAccounts.length > 0;
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [now, setNow] = useState(() => Date.now());
@@ -99,9 +101,9 @@ export function useAccountRequests(accounts: LinkedSocialAccount[] | null) {
   const visible = useMemo(
     () =>
       load.state === "ready"
-        ? load.requests.filter((r) => r.status !== "withdrawn" && (isOpen(r) || Date.parse(r.reviewedAt ?? r.createdAt) >= now - KEEP_DECIDED_DAYS * 86_400_000))
+        ? load.requests.filter((r) => r.status !== "withdrawn" && !isDismissed(r) && (isOpen(r) || Date.parse(r.reviewedAt ?? r.createdAt) >= now - KEEP_DECIDED_DAYS * 86_400_000))
         : [],
-    [load, now]
+    [load, now, isDismissed]
   );
   const live = useMemo(() => {
     if (load.state !== "ready" || load.unavailable) return null;
@@ -126,7 +128,7 @@ export function useAccountRequests(accounts: LinkedSocialAccount[] | null) {
           : null;
     return { slots: Math.min(slots, totalLeft), blocked };
   }, [live, load]);
-  return { load, refresh, replace, visible, capacity, live };
+  return { load, refresh, replace, visible, capacity, live, dismissRejected };
 }
 export type AccountRequestsController = ReturnType<typeof useAccountRequests>;
 
@@ -488,6 +490,7 @@ export default function AddAccountsPanel({
 }) {
   const { load, visible, capacity, replace, refresh } = controller;
   const [pitchHidden, setPitchHidden] = useState(false);
+  const [dismissNotice, setDismissNotice] = useState("");
   useEffect(() => {
     // Read after hydration so server and client render the same first frame.
     queueMicrotask(() => {
@@ -510,10 +513,11 @@ export default function AddAccountsPanel({
   if (load.state !== "ready" || load.unavailable) return null;
   const best = [...(controller.live?.eligible ?? [])].sort((a, b) => b.slotsLeft - a.slotsLeft)[0];
   const showPitch = !pitchHidden && !!capacity && !capacity.blocked && !visible.some(isOpen);
-  if (!showPitch && !visible.length) return null;
+  if (!showPitch && !visible.length) return dismissNotice ? <p role="status" className="sr-only">{dismissNotice}</p> : null;
 
   return (
     <section aria-label="Add more accounts" className="@container/addacc space-y-3">
+      <p role="status" aria-atomic="true" className="sr-only">{dismissNotice}</p>
       {showPitch && best ? (
         <PitchCard gig={best} accounts={accounts} requests={visible} earnings={earnings} onAdd={() => onOpenSheet({ kind: "new", sourceAccountId: best.sourceAccountId })} onHide={hidePitch} />
       ) : null}
@@ -546,6 +550,10 @@ export default function AddAccountsPanel({
                   if (next.status === "withdrawn") void refresh();
                 }}
                 onEdit={() => onOpenSheet({ kind: "edit", id: request.id })}
+                onDismiss={request.status === "rejected" ? () => {
+                  controller.dismissRejected(request);
+                  setDismissNotice(`Notice for @${request.handle} dismissed.`);
+                } : undefined}
               />
             ))}
           </ul>
@@ -724,7 +732,7 @@ function OwnershipBox({ request, onChange }: { request: AccountRequestView; onCh
   );
 }
 
-function RequestCard({ request, onChange, onEdit }: { request: AccountRequestView; onChange: (r: AccountRequestView) => void; onEdit: () => void }) {
+function RequestCard({ request, onChange, onEdit, onDismiss }: { request: AccountRequestView; onChange: (r: AccountRequestView) => void; onEdit: () => void; onDismiss?: () => void }) {
   const platform = accountPlatformFor(request.platform);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -740,8 +748,8 @@ function RequestCard({ request, onChange, onEdit }: { request: AccountRequestVie
     }
   };
   return (
-    <li className="flex min-w-0 flex-col gap-3 rounded-xl border border-[#ebedea] bg-white p-3.5 sm:p-4">
-      <div className="flex items-start justify-between gap-3">
+    <li aria-label={`Account verification for @${request.handle}`} className="@container/request flex min-w-0 flex-col gap-3 rounded-xl border border-[#ebedea] bg-white p-3.5 sm:p-4">
+      <div className={cx(onDismiss ? "grid grid-cols-[minmax(0,1fr)_44px] items-start gap-x-2 gap-y-2 @[400px]/request:grid-cols-[minmax(0,1fr)_auto_44px]" : "flex items-start justify-between gap-3")}>
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#eef1ed] text-[#2b5d4a]">
             <PlatformGlyph platform={platform} className="h-5 w-5" />
@@ -753,7 +761,12 @@ function RequestCard({ request, onChange, onEdit }: { request: AccountRequestVie
             <p className="truncate text-[12px] text-[#7a827c]">{request.gigTitle ?? "Content Posting gig"}</p>
           </div>
         </div>
-        <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold", STATUS_CHIP[request.status])}>{REQUEST_STATUS_LABEL[request.status]}</span>
+        <span className={cx("h-fit w-fit shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold", onDismiss && "col-start-1 row-start-2 @[400px]/request:col-start-2 @[400px]/request:row-start-1 @[400px]/request:self-center", STATUS_CHIP[request.status])}>{REQUEST_STATUS_LABEL[request.status]}</span>
+        {onDismiss ? (
+          <button type="button" onClick={onDismiss} aria-label={`Dismiss not approved notice for @${request.handle}`} title="Hide this decision from your dashboard" className="col-start-2 row-start-1 inline-flex h-11 w-11 items-center justify-center rounded-lg text-[#8b938d] transition-colors hover:bg-[#f3f5f1] hover:text-[#34443a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/50 @[400px]/request:col-start-3">
+            <Icon.Close className="h-4 w-4" />
+          </button>
+        ) : null}
       </div>
       <Steps request={request} />
       {request.reviewNote && (request.status === "changes_requested" || request.status === "rejected") ? (
