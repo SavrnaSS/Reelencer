@@ -396,6 +396,42 @@ test('creators can be paid to a verified bank account; changes need verification
   }
 });
 
+test('legacy weekday-only payout days are converted so switching on monthly auto-withdrawal works', async () => {
+  const fix = await readFile('supabase/migrations/202610310006_payout_day_accepts_monthly.sql', 'utf8');
+  await db.exec('begin');
+  try {
+    // Recreate an older database: payout_day as a weekday enum, plus a schedule rule that only knows "Weekly".
+    await db.exec(`alter table public.upi_configs drop constraint upi_configs_payout_schedule_day_check;
+      update public.upi_configs set payout_schedule='Weekly', payout_day='Fri';
+      create type public.legacy_weekday as enum ('Mon','Tue','Wed','Thu','Fri','Sat','Sun');
+      alter table public.upi_configs alter column payout_day drop default;
+      alter table public.upi_configs alter column payout_day type public.legacy_weekday using payout_day::public.legacy_weekday;
+      alter table public.upi_configs add constraint legacy_schedule_check check (payout_schedule in ('Weekly'));`);
+    await db.exec('savepoint before_fix');
+    await assert.rejects(db.query('select public.set_auto_withdrawal($1,true,1)', [worker]));
+    await db.exec('rollback to savepoint before_fix');
+    await db.exec(fix);
+    assert.equal(await scalar<string>("select data_type as value from information_schema.columns where table_name='upi_configs' and column_name='payout_day'"), 'text');
+    assert.equal(await scalar<number>("select count(*)::int as value from pg_constraint where conname='legacy_schedule_check'"), 0);
+    const saved = await scalar<{ payout_schedule: string; payout_day: string; auto_withdraw: boolean }>('select public.set_auto_withdrawal($1,true,1) as value', [worker]);
+    assert.deepEqual([saved.payout_schedule, saved.payout_day, saved.auto_withdraw], ['Monthly', '1', true]);
+    // Odd legacy values are corrected, so later updates (like the team verifying) keep passing the new rule.
+    await db.exec('alter table public.upi_configs drop constraint upi_configs_payout_schedule_day_check');
+    await db.query("update public.upi_configs set payout_schedule='weekly', payout_day='FRIDAY' where worker_id=$1", [worker]);
+    await db.exec(fix);
+    assert.deepEqual((await db.query('select payout_schedule,payout_day from public.upi_configs where worker_id=$1', [worker])).rows[0], { payout_schedule: 'Weekly', payout_day: 'Fri' });
+    await db.exec('alter table public.upi_configs drop constraint upi_configs_payout_schedule_day_check');
+    await db.query("update public.upi_configs set payout_schedule='Monthly', payout_day='05' where worker_id=$1", [worker]);
+    await db.exec(fix);
+    assert.equal(await scalar<string>('select payout_day as value from public.upi_configs where worker_id=$1', [worker]), '5');
+    await db.exec('savepoint bad_day');
+    await assert.rejects(db.query("update public.upi_configs set payout_day='31' where worker_id=$1", [worker]), /check constraint/);
+    await db.exec('rollback to savepoint bad_day');
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
 test('withdrawals reject INR 499.99 and reserve INR 500 exactly once', async () => {
   // Roll back the fixture so unrelated wallet and directory assertions keep their data.
   await db.exec('begin');

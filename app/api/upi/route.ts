@@ -74,8 +74,14 @@ const autoSchema = z.object({ autoWithdraw: z.boolean(), autoDay: z.number().int
 export const PATCH = withApi({ auth: "user", rateLimit: 20 }, async req => {
   const actor = await authenticate(req);
   const parsed = autoSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success) throw new ApiError(400, "Choose an auto-withdrawal day from the 1st to the 28th.");
+  if (!parsed.success) throw new ApiError(400, "Choose a day between the 1st and the 28th for your auto-withdrawal.", "invalid_input");
   const { data, error } = await supabaseAdmin().rpc("set_auto_withdrawal", { p_worker: actor.user.id, p_enabled: parsed.data.autoWithdraw, p_day: parsed.data.autoDay });
+  // Specific, actionable messages instead of a generic database error.
+  if (error?.message === "upi_required") throw new ApiError(400, "Add a bank account or UPI ID before turning on auto-withdrawal.", "upi_required");
+  if (error?.message === "forbidden") throw new ApiError(403, "Your account can't change payout settings right now. Contact support if this continues.", "forbidden");
+  if (error && ["23514", "22P02", "P0001"].includes(error.code ?? "")) {
+    throw new ApiError(409, "We couldn't save your auto-withdrawal setting. Please try again; if it keeps happening, contact support.", "auto_withdrawal_unavailable");
+  }
   databaseError(error);
   return NextResponse.json(response(data));
 });

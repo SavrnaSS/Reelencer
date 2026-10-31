@@ -593,25 +593,38 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     try {
       const { data } = await payoutSession();
       const token = data.session?.access_token;
-      if (!token) throw new Error("Not authenticated");
+      if (!token) throw new Error("Your session has expired. Sign in again to change auto-withdrawal.");
       const res = await fetch("/api/upi", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ autoWithdraw: enabled, autoDay: day }),
       });
       const next = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(next?.error || "Auto-withdrawal could not be updated.");
+      if (!res.ok) throw new Error(next?.error || "We couldn't save your auto-withdrawal setting. Please try again.");
       setUpi(next);
       const first = nextAutoWithdrawalAt(day, autoDoneThisMonth, Date.now(), next.autoWithdrawSince);
+      // Say what will actually happen, including anything that would hold the first payout back.
+      const waitingFor = payoutReadiness.kycRequired
+        ? " Payouts are paused until your KYC is approved, so it starts once it is."
+        : !upiOk
+          ? " It starts once your payout details are verified."
+          : "";
       setNotice({
         tone: "success",
-        text: enabled
-          ? `Auto-withdrawal is on. We'll request what's withdrawable on the ${ordinal(day)} of every month, starting ${shortDate(first)}.`
-          : "Auto-withdrawal is off. You can still withdraw manually once a week.",
+        text: !enabled
+          ? "Auto-withdrawal is off. You can still withdraw yourself once every 7 days."
+          : previous.autoWithdraw
+            ? `Auto-withdrawal day changed to the ${ordinal(day)}. Next withdrawal: ${shortDate(first)}.${waitingFor}`
+            : `Auto-withdrawal is on. On the ${ordinal(day)} of every month, starting ${shortDate(first)}, we'll request your available balance once it's ${formatINR(MIN_PAYOUT_REQUEST_INR)} or more.${waitingFor}`,
       });
     } catch (err) {
       setUpi(previous);
-      setNotice({ tone: "danger", text: err instanceof Error ? err.message : "Auto-withdrawal could not be updated." });
+      setNotice({
+        tone: "danger",
+        text: `${enabled && !previous.autoWithdraw ? "Auto-withdrawal wasn't turned on" : !enabled ? "Auto-withdrawal wasn't turned off" : "Your auto-withdrawal day wasn't changed"}. ${
+          err instanceof Error && err.message ? err.message : "Please try again."
+        }`,
+      });
     } finally {
       setSavingAuto(false);
     }
@@ -990,7 +1003,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                       <>
                         <dd className="mt-1 text-[14px] font-semibold text-[#1f2e28]">{savingAuto ? "Saving…" : "Off"}</dd>
                         <dd className="mt-0.5 text-[12px] leading-5 text-[#6f7d74]">
-                          {hasMethod ? "Turn on to have your balance sent to you every month, on a day you choose." : "Add a bank account or UPI ID to turn on monthly auto-withdrawal."}
+                          {hasMethod ? "Turn it on and we'll withdraw your available balance for you every month, on a day you choose." : "Add a bank account or UPI ID to use monthly auto-withdrawal."}
                         </dd>
                       </>
                     )}
