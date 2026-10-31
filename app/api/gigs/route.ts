@@ -10,6 +10,8 @@ const gigInput = z.object({
   payoutType: z.string().max(80).optional(), gigType: z.string().max(80).optional(),
   verified: z.boolean().optional(), requirements: z.array(z.string().max(12000)).max(80).optional(),
   status: z.enum(["Open", "Paused", "Closed"]).optional(), applicationMode: z.enum(["apply", "proposal"]).optional(),
+  /** Hold for established creators: see lib/newCreatorHold. */
+  newCreatorHold: z.boolean().optional(),
 });
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -59,6 +61,7 @@ function normalizeGigRow(g: Record<string, unknown>) {
     postedAt: postedAt ? new Date(postedAt).toLocaleDateString() : "Posted",
     createdAt: typeof g.created_at === "string" ? g.created_at : postedAt ?? undefined,
     feedPosition: typeof g.feed_position === "number" ? g.feed_position : null,
+    newCreatorHold: g.new_creator_hold === true || g.newCreatorHold === true,
   };
 }
 
@@ -107,6 +110,24 @@ function reelKitRequirementsUpdate(company: unknown, requirements: string[] | un
   return scoped.length !== existing.length ? scoped : undefined;
 }
 
+/**
+ * Saves a gig row. Before the new-creator-hold migration (202610310008) the column is missing: a save that leaves
+ * the hold off still goes through without it; turning the hold on asks for the database update instead.
+ */
+async function withoutMissingHoldColumn<T extends { error: { code?: string } | null }>(
+  row: Record<string, unknown>,
+  save: (row: Record<string, unknown>) => PromiseLike<T>,
+): Promise<T> {
+  const result = await save(row);
+  if (!["PGRST204", "42703"].includes(result.error?.code ?? "")) return result;
+  if (row.new_creator_hold === true) {
+    throw new ApiError(503, "Holding gigs for established creators needs the latest database update. Apply it, then try again.", "schema_outdated");
+  }
+  const { new_creator_hold: _hold, ...rest } = row;
+  void _hold;
+  return save(rest);
+}
+
 async function handlePOST(req: Request) {
   try {
     const parsed = gigInput.safeParse(await req.json());
@@ -124,9 +145,7 @@ async function handlePOST(req: Request) {
         : NextResponse.json({ error: created.error }, { status: 400, headers: NO_STORE_HEADERS });
     }
     const sb = supabaseAdmin();
-    const { data, error } = await sb
-      .from("gigs")
-      .insert({
+    const { data, error } = await withoutMissingHoldColumn({
         id: body.id,
         title: body.title,
         company: body.company,
@@ -140,10 +159,9 @@ async function handlePOST(req: Request) {
         application_mode: body.applicationMode,
         requirements: Array.isArray(body.requirements) ? body.requirements : [],
         status: body.status ?? "Open",
+        new_creator_hold: body.newCreatorHold,
         posted_at: new Date().toISOString(),
-      })
-      .select("*")
-      .single();
+      }, row => sb.from("gigs").insert(row).select("*").single());
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
     }
@@ -186,9 +204,7 @@ async function handlePATCH(req: Request) {
     if (updates.payout !== undefined || updates.payoutType !== undefined) {
       validateViewRate(updates.payout ?? current.payout, updates.payoutType ?? current.payout_type);
     }
-    const { data, error } = await sb
-      .from("gigs")
-      .update({
+    const { data, error } = await withoutMissingHoldColumn({
         title: updates.title,
         company: updates.company,
         verified: updates.verified,
@@ -201,10 +217,8 @@ async function handlePATCH(req: Request) {
         application_mode: updates.applicationMode,
         requirements: Array.isArray(updates.requirements) ? updates.requirements : undefined,
         status: updates.status,
-      })
-      .eq("id", String(body.id))
-      .select("*")
-      .single();
+        new_creator_hold: updates.newCreatorHold,
+      }, row => sb.from("gigs").update(row).eq("id", String(body.id)).select("*").single());
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
     }

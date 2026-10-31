@@ -8,6 +8,7 @@ import { decodePublicWorkerName, sendContentPostingSetupMail } from "@/lib/api/a
 import { isContentPostingType } from "@/lib/accountSetup";
 import { readCurrentApplications } from "@/lib/api/applicationReads";
 import { quotaLimitMessage, type ApplicationQuota } from "@/lib/applicationQuota";
+import { newCreatorHoldMessage } from "@/lib/newCreatorHold";
 import {
   getDevDashboardApplications,
   isDashboardDevMode,
@@ -59,6 +60,16 @@ async function weeklyLimitResponse(sb: ReturnType<typeof supabaseAdmin>, workerU
   );
 }
 
+/** The gig is held for established creators: say when this creator's hold lifts. */
+async function newCreatorHoldResponse(sb: ReturnType<typeof supabaseAdmin>, workerUserId: string, gigId: string) {
+  const { data } = await sb.rpc("new_creator_hold_until", { p_worker: workerUserId, p_gig: gigId });
+  const opensAt = typeof data === "string" ? new Date(data).toISOString() : null;
+  return NextResponse.json(
+    { ok: false, error: newCreatorHoldMessage(opensAt, { withTime: false }), code: "new_creator_hold", opensAt, gigId },
+    { status: 403, headers: NO_STORE_HEADERS },
+  );
+}
+
 async function handlePOST(req: Request) {
   try {
     const body = await req.json();
@@ -98,6 +109,7 @@ async function handlePOST(req: Request) {
       p_actor: actor.user.id, p_worker: workerUserId, p_gig: body.gigId, p_worker_name: workerNameEncoded,
     });
     if (error?.message === "weekly_application_limit") return weeklyLimitResponse(sb, workerUserId);
+    if (error?.message === "new_creator_hold") return newCreatorHoldResponse(sb, workerUserId, String(body.gigId));
     databaseError(error);
     const responsePayload = {
       ...(decodePublicWorkerName(data.worker_name)),

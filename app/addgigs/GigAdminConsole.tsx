@@ -45,6 +45,7 @@ import {
 import { GigSampleVideosField } from "./GigSampleVideosField";
 import { Field, FormSection, Segmented, SwitchRow, inputCls, textareaCls } from "./gigFormUi";
 import { accountPlatformFor, encodeAccountInstructions, parseAccountInstructions, type AccountSetupView } from "@/lib/accountSetup";
+import { NEW_CREATOR_HOLD_DAYS } from "@/lib/newCreatorHold";
 import { MAX_GIG_SAMPLES, encodeGigSample, isSampleLine, parseGigSamples, type GigSample } from "@/lib/gigSamples";
 
 type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
@@ -71,6 +72,8 @@ type Gig = {
   createdAt?: string;
   /** Where creators see this gig in their feed (1 = top), set by the team. */
   feedPosition?: number | null;
+  /** Held for established creators: new accounts wait (see lib/newCreatorHold). */
+  newCreatorHold?: boolean;
   browsePinned?: boolean;
   browsePinRank?: number | null;
   browsePinLabel?: string;
@@ -554,6 +557,7 @@ export default function GigAdminConsole({
     applicationMode: "apply" as GigApplicationMode,
     onboardingRequired: true,
     kycRequired: true,
+    newCreatorHold: false,
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -1060,6 +1064,7 @@ export default function GigAdminConsole({
       requirements: reelKitRequirementsForCompany(form.company, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
+      newCreatorHold: form.newCreatorHold,
       postedAt: nowLabel(),
     };
 
@@ -1122,6 +1127,7 @@ export default function GigAdminConsole({
       applicationMode: "apply",
       onboardingRequired: true,
       kycRequired: true,
+      newCreatorHold: false,
       requirements: "",
       status: "Open",
     });
@@ -1160,6 +1166,7 @@ export default function GigAdminConsole({
       applicationMode: customFields.applicationMode ?? projectFields.applicationMode,
       onboardingRequired: projectFields.onboardingRequired,
       kycRequired: isCustom || isProject ? customFields.kycRequired : projectFields.kycRequired,
+      newCreatorHold: gig.newCreatorHold === true,
       requirements: isCustom || isProject ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
@@ -1219,6 +1226,7 @@ export default function GigAdminConsole({
       requirements: reelKitRequirementsForCompany(form.company, buildRequirementsPayload(form)),
       applicationMode: form.applicationMode,
       status: form.status,
+      newCreatorHold: form.newCreatorHold,
     };
 
     reads.abort("gigs");
@@ -1277,6 +1285,7 @@ export default function GigAdminConsole({
       applicationMode: "apply",
       onboardingRequired: true,
       kycRequired: true,
+      newCreatorHold: false,
       requirements: "",
       status: "Open",
     });
@@ -2359,6 +2368,12 @@ export default function GigAdminConsole({
                   title="Require KYC approval"
                   description="Turn off for lighter gigs that any signed-in worker can unlock."
                 />
+                <SwitchRow
+                  checked={form.newCreatorHold}
+                  onChange={(newCreatorHold) => setForm((prev) => ({ ...prev, newCreatorHold }))}
+                  title="Hold for established creators"
+                  description={`New creators can see this gig but can apply only after they're assigned another project, or ${NEW_CREATOR_HOLD_DAYS} days after joining. They see when it opens for them.`}
+                />
                 {form.gigType !== "Custom" && form.gigType !== "Project" && (
                   <>
                     <Field label="Hiring capacity">
@@ -2436,6 +2451,7 @@ export default function GigAdminConsole({
                         applicationMode: "apply",
                         onboardingRequired: true,
                         kycRequired: true,
+                        newCreatorHold: false,
                         requirements: "",
                         status: "Open",
                       });
@@ -2505,6 +2521,7 @@ export default function GigAdminConsole({
                     <span className="rounded-full bg-[#f0f4ec] px-2 py-0.5 text-[#4d5f55]">{form.gigType === "Custom" ? form.customGigType.trim() || "Custom" : form.gigType}</span>
                     {form.sampleVideos.length ? <span className="rounded-full bg-[#e3f1df] px-2 py-0.5 text-[#1f5131]">▶ {form.sampleVideos.length} {form.sampleVideos.length === 1 ? "sample" : "samples"}</span> : null}
                     {form.kycRequired ? <span className="rounded-full bg-white px-2 py-0.5 text-[#4d5f55] shadow-[0_0_0_1px_#e3e5e1]">KYC</span> : null}
+                    {form.newCreatorHold ? <span className="rounded-full bg-[#fff3dc] px-2 py-0.5 text-[#9a5b00]">Established creators</span> : null}
                   </div>
                 </div>
               </div>
@@ -2903,7 +2920,7 @@ export default function GigAdminConsole({
                               {gig.payout}
                               {gig.payoutType ? <span className="font-medium text-[#41695b]"> · {gig.payoutType}</span> : null}
                             </span>
-                            {[gig.location, gig.workload, gig.gigType ? formatGigTypeLabel(gig.gigType) : "", applicationMode === "proposal" ? "Proposal flow" : "Apply flow", kycRequired ? "KYC required" : "KYC optional"]
+                            {[gig.location, gig.workload, gig.gigType ? formatGigTypeLabel(gig.gigType) : "", applicationMode === "proposal" ? "Proposal flow" : "Apply flow", kycRequired ? "KYC required" : "KYC optional", gig.newCreatorHold ? "Established creators only" : ""]
                               .filter(Boolean)
                               .map((chip) => (
                                 <span key={chip} className="rounded-md border border-[#e3e5e1] bg-[#fafbf9] px-2 py-0.5">

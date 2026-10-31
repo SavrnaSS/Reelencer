@@ -18,6 +18,7 @@ type DevGig = {
   browsePinned?: boolean;
   browsePinRank?: number | null;
   browsePinLabel?: string;
+  newCreatorHold?: boolean;
 };
 
 type DevApplication = {
@@ -240,6 +241,7 @@ function normalizeGig(input: Record<string, unknown>): DevGig {
         ? undefined
         : Number(input.browsePinRank ?? input.browse_pin_rank),
     browsePinLabel: input.browsePinLabel === undefined && input.browse_pin_label === undefined ? undefined : String(input.browsePinLabel ?? input.browse_pin_label),
+    newCreatorHold: Boolean(input.newCreatorHold ?? input.new_creator_hold),
   };
 }
 

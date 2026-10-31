@@ -25,6 +25,7 @@ export function databaseError(error: { code?: string; message?: string } | null)
       active_batch: [409, "A payout is in progress. Your payout details can be changed once it's finished."],
       weekly_limit: [429, "You can withdraw manually once every 7 days. Anything left is also withdrawn automatically each month."],
       kyc_required: [400, "One-time identity verification (KYC) is required for this."],
+      new_creator_hold: [403, "This gig opens once you've been assigned another project, or 20 days after you joined."],
       upi_required: [400, "A verified payout method (bank account or UPI ID) is required."],
       invalid_payout_method: [400, "Check your payout details and try again."],
       minimum_amount: [400, `At least ₹${MIN_PAYOUT_REQUEST_INR.toLocaleString("en-IN")} in eligible earnings is required.`],

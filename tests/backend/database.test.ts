@@ -687,6 +687,42 @@ test('creators can apply to at most two gigs in any rolling seven days', async (
   assert.equal((await quota()).remaining,0);
 });
 
+test('held gigs open to new creators only after another project or 20 days; the team is never held', async () => {
+  const fresh = '44444444-4444-4444-8444-444444444444';
+  const emails = (prefix: string) => JSON.stringify([1, 2, 3, 4, 5].map((n) => `${prefix}${n}@fasterdrop.site`));
+  await db.exec('begin');
+  try {
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'fresh@example.test',now())", [fresh]);
+    await db.query('select public.bootstrap_worker($1)', [fresh]);
+    await db.exec(`insert into public.gigs(id,title,company,workload,payout,gig_type,new_creator_hold) values
+      ('held-a','Held','Team','1','100','Content Creator',true),('held-ec','Held EC','Team','5','100','Email Creator',true),
+      ('open-a','Open','Team','1','100','Content Creator',false)`);
+    const until = await scalar<string>("select public.new_creator_hold_until($1,'held-a') as value", [fresh]);
+    assert.ok(Date.parse(until) > Date.now() + 19 * 86_400_000);
+    await db.exec('savepoint held');
+    await assert.rejects(db.query("select public.submit_gig_application($1,$1,'held-a','x')", [fresh]), /new_creator_hold/);
+    await db.exec('rollback to savepoint held');
+    await assert.rejects(db.query('select public.create_gig_assignment($1,$1,$2,$3::jsonb)', [fresh, 'held-ec', emails('held')]), /new_creator_hold/);
+    await db.exec('rollback to savepoint held');
+    // Unheld gigs are open, and the team can still apply on a new creator's behalf.
+    await db.query("select public.submit_gig_application($1,$1,'open-a','x')", [fresh]);
+    await db.query("select public.submit_gig_application($1,$2,'held-a','by team')", [admin, fresh]);
+    await db.exec("delete from public.gig_applications where gig_id='held-a'");
+    // Being assigned another project lifts the hold.
+    await db.exec("update public.gig_applications set status='Accepted' where gig_id='open-a'");
+    assert.equal(await scalar<string | null>("select public.new_creator_hold_until($1,'held-a') as value", [fresh]), null);
+    await db.query("select public.submit_gig_application($1,$1,'held-a','x')", [fresh]);
+    // So does an account that is 20 days old.
+    await db.exec("update public.gig_applications set status='Pending' where gig_id='open-a'");
+    assert.ok(await scalar<string | null>("select public.new_creator_hold_until($1,'held-ec') as value", [fresh]));
+    await db.query("update public.profiles set created_at=now()-interval '20 days' where id=$1", [fresh]);
+    assert.equal(await scalar<string | null>("select public.new_creator_hold_until($1,'held-ec') as value", [fresh]), null);
+    await db.query('select public.create_gig_assignment($1,$1,$2,$3::jsonb)', [fresh, 'held-ec', emails('heldok')]);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
 test('inbox addresses cannot be claimed across workers or reused after deletion', async () => {
   const code=await scalar<string>('select worker_code as value from public.profiles where id=$1',[other]);
   await db.exec("insert into public.gigs(id,title,company,workload,payout) values('collision','Collision','Team','5','1000')");

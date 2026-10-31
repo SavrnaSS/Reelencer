@@ -92,7 +92,7 @@ export function dashboardSnapshot(value: unknown): DashboardSnapshot {
   });
   const result: DashboardSnapshot = {
     userId: v.userId, workerId: typeof v.workerId === "string" ? v.workerId : null,
-    gigs: (v.gigs as unknown[]).map(value => pick(value, ["id", "title", "company", "verified", "platform", "location", "workload", "payout", "payoutType", "gigType", "requirements", "applicationMode", "status", "postedAt", "browsePinned", "browsePinRank", "browsePinLabel", "feedPosition"])),
+    gigs: (v.gigs as unknown[]).map(value => pick(value, ["id", "title", "company", "verified", "platform", "location", "workload", "payout", "payoutType", "gigType", "requirements", "applicationMode", "status", "postedAt", "browsePinned", "browsePinRank", "browsePinLabel", "feedPosition", "newCreatorHold"])),
     applications,
     assignments: (v.assignments as unknown[]).map(value => pick(value, ["id", "gigId", "workerId", "assignedEmail", "assignedEmails", "status", "submittedAt", "decidedAt", "createdAt", "earningsReleaseStatus", "earningsReleasedAt"])),
     payoutBatches: (v.payoutBatches as unknown[]).map(value => ({ ...pick(value, ["id", "cycleLabel", "periodStart", "periodEnd", "status", "createdAt", "processedAt", "paidAt", "method"]), items: Array.isArray(row(value).items) ? (row(value).items as unknown[]).map(item => pick(item, ["id", "workItemId", "workItemPublicId", "handle", "amountINR", "status", "sourceAssignmentId"])) : [] })),

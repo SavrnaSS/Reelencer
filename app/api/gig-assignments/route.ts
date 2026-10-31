@@ -1,4 +1,5 @@
 import { withApi } from "@/lib/api/route";
+import { newCreatorHoldMessage } from "@/lib/newCreatorHold";
 import { authenticate, workerFilter } from "@/lib/api/auth";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { NextResponse } from "next/server";
@@ -265,6 +266,14 @@ async function handlePOST(req: Request) {
     p_actor: actor.user.id, p_worker: workerId, p_gig: body.gigId, p_emails: assignedEmails,
     p_subject: actor.isAdmin && typeof body.subjectFilter === "string" ? body.subjectFilter.trim().slice(0, 200) : null,
   });
+  if (error?.message === "new_creator_hold") {
+    const { data: until } = await sb.rpc("new_creator_hold_until", { p_worker: workerId, p_gig: body.gigId });
+    const opensAt = typeof until === "string" ? new Date(until).toISOString() : null;
+    return NextResponse.json(
+      { ok: false, error: newCreatorHoldMessage(opensAt, { withTime: false }), code: "new_creator_hold", opensAt, gigId: body.gigId },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
+  }
   databaseError(error);
   return NextResponse.json(await mapAssignmentRow(sb, data), { headers: NO_STORE_HEADERS });
 }

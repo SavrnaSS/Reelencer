@@ -67,6 +67,7 @@ import {
 import { ACCOUNT_SETUP_ANCHOR, accountPlatformFor, payoutPhrase, type AccountSetupView } from "@/lib/accountSetup";
 import { resolveGigApplicationMode, type GigApplicationMode } from "@/lib/gigApplicationMode";
 import { supabase } from "@/lib/supabaseClient";
+import { NEW_CREATOR_HOLD_TITLE, newCreatorHoldMessage, newCreatorHoldUntil } from "@/lib/newCreatorHold";
 import { applicationQuota, formatWait, quotaBlocksGig, quotaCoversGig, quotaLimitMessage, strictestQuota, type ApplicationQuota } from "@/lib/applicationQuota";
 import WeeklyApplicationsMeter, { ApplicationSlotPreview } from "./WeeklyApplicationsMeter";
 
@@ -93,6 +94,8 @@ type Gig = {
   browsePinLabel?: string;
   /** Position in the team's feed order (1 = top). */
   feedPosition?: number | null;
+  /** Held for established creators (see lib/newCreatorHold). */
+  newCreatorHold?: boolean;
 };
 
 type ProposalPayload = {
@@ -3588,6 +3591,8 @@ export default function DashboardPage() {
   const [profileRole, setProfileRole] = useState("Creator");
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [workerId, setWorkerId] = useState<string | null>(null);
+  /** When this creator's account was created: held gigs open 20 days after it. */
+  const [accountCreatedAt, setAccountCreatedAt] = useState<string | null>(null);
   const [workerProfile, setWorkerProfile] = useState<DashboardWorkerProfile | null>(null);
   const [introVideo, setIntroVideo] = useState<IntroVideoMeta | null>(null);
   const [gigs, setGigs] = useState<Gig[]>([]);
@@ -3800,6 +3805,7 @@ export default function DashboardPage() {
       const contactEmail = userMetadataContactEmail(user, nextWorkerId) || usableContactEmail(authEmail, nextWorkerId);
       const name = getDisplayName({ email: authEmail, user_metadata: { name: String(user.user_metadata?.name ?? ""), full_name: String((user.user_metadata as Record<string, unknown>)?.full_name ?? "") } });
       setProfileUserId(scope); setWorkerId(nextWorkerId); setProfileRole("Creator");
+      setAccountCreatedAt(typeof session?.user?.created_at === "string" ? session.user.created_at : null);
       setProfileName(name); setProfileEmail(contactEmail || authEmail); setDirectApplyAuthEmail(contactEmail);
       setProfileLoading(false);
       const savedProfile = readCreatorCache<DashboardWorkerProfile>(scope, "profile");
@@ -4045,11 +4051,43 @@ export default function DashboardPage() {
   // server answer (which can see applications this list can't) wins until its next slot opens.
   const [serverQuota, setServerQuota] = useState<ApplicationQuota | null>(null);
   const weeklyQuota = useMemo(() => strictestQuota(applicationQuota(applications, minuteNow), serverQuota, minuteNow), [applications, serverQuota, minuteNow]);
-  /** Why applying to this gig is blocked right now, or null when it isn't. */
-  const weeklyLimitBlock = useCallback((gigId: string) => (quotaBlocksGig(weeklyQuota, gigId) ? quotaLimitMessage(weeklyQuota, { now: Date.now() }) : null), [weeklyQuota]);
-  const rememberServerQuota = useCallback((failure: { code?: string; quota?: ApplicationQuota | null }) => {
+  // Gigs the server held for established creators on a blocked attempt, with when the hold lifts (it knows the
+  // account age and assignments this page may not).
+  const [serverHolds, setServerHolds] = useState<Record<string, string | null>>({});
+  const rememberServerQuota = useCallback((failure: { code?: string; quota?: ApplicationQuota | null; gigId?: string; opensAt?: string | null }) => {
     if (failure?.code === "weekly_application_limit" && failure.quota) setServerQuota(failure.quota);
+    if (failure?.code === "new_creator_hold" && failure.gigId) {
+      const gigId = String(failure.gigId);
+      setServerHolds((previous) => ({ ...previous, [gigId]: typeof failure.opensAt === "string" ? failure.opensAt : null }));
+    }
   }, []);
+  /** Why applying to this gig is on hold right now, with what to show; null when the creator can apply. */
+  const applyBlockFor = useCallback((gig: Pick<Gig, "id" | "newCreatorHold">) => {
+    const gigId = String(gig.id);
+    const serverHold = Object.prototype.hasOwnProperty.call(serverHolds, gigId);
+    const localOpensAt = newCreatorHoldUntil({ gigId, held: gig.newCreatorHold || serverHold, accountCreatedAt, applications, assignments, now: minuteNow });
+    const serverOpensAt = serverHold && (!serverHolds[gigId] || Date.parse(String(serverHolds[gigId])) > minuteNow) ? serverHolds[gigId] : undefined;
+    if (localOpensAt || serverOpensAt !== undefined) {
+      const opensAt = localOpensAt ?? serverOpensAt ?? null;
+      return {
+        kind: "newCreator" as const,
+        title: NEW_CREATOR_HOLD_TITLE,
+        badge: "New creators wait",
+        message: newCreatorHoldMessage(opensAt, { now: minuteNow }),
+        actionLabel: opensAt ? `Opens in ${formatWait(opensAt, minuteNow)}` : "Opens after your first project",
+      };
+    }
+    if (quotaBlocksGig(weeklyQuota, gigId)) {
+      return {
+        kind: "weekly" as const,
+        title: "Weekly application limit reached",
+        badge: "Weekly limit",
+        message: quotaLimitMessage(weeklyQuota, { now: minuteNow }),
+        actionLabel: `Opens in ${formatWait(weeklyQuota.nextSlotAt, minuteNow)}`,
+      };
+    }
+    return null;
+  }, [accountCreatedAt, applications, assignments, minuteNow, serverHolds, weeklyQuota]);
   const applicationByGigId = useMemo(() => {
     const map = new Map<string, GigApplication>();
     applications.forEach((application) => {
@@ -4478,7 +4516,7 @@ export default function DashboardPage() {
       setProposalError("This application is already in the hiring queue. Track recruiter updates from the status panel.");
       return;
     }
-    const limitBlock = weeklyLimitBlock(String(directApplyTargetGig.id));
+    const limitBlock = applyBlockFor(directApplyTargetGig)?.message ?? null;
     if (limitBlock) {
       setDirectApplyGigId(null);
       setDirectApplyLaunchGigId(null);
@@ -4505,7 +4543,7 @@ export default function DashboardPage() {
     if (!sessionError && !directApplyWorkerEmail && !authContactEmail) {
       setDirectApplyError("Add an email to your profile or login account before submitting this application.");
     }
-  }, [directApplyTargetApplication, directApplyTargetGig?.id, directApplyWorkerEmail, submissionWorkerId, weeklyLimitBlock, workerId]);
+  }, [directApplyTargetApplication, directApplyTargetGig, directApplyWorkerEmail, submissionWorkerId, applyBlockFor, workerId]);
 
   useLayoutEffect(() => {
     if (!directApplyLaunchGigId) return;
@@ -4557,7 +4595,7 @@ export default function DashboardPage() {
       setDirectApplyError("Confirm the application terms before submitting.");
       return;
     }
-    const limitBlock = weeklyLimitBlock(String(directApplyTargetGig.id));
+    const limitBlock = applyBlockFor(directApplyTargetGig)?.message ?? null;
     if (limitBlock) {
       setDirectApplyError(limitBlock);
       return;
@@ -4670,7 +4708,7 @@ export default function DashboardPage() {
     rememberServerQuota,
     selectedGig,
     submissionWorkerId,
-    weeklyLimitBlock,
+    applyBlockFor,
   ]);
 
   const submitDashboardProposal = useCallback(async () => {
@@ -4686,7 +4724,7 @@ export default function DashboardPage() {
     const portfolio = proposalPortfolio.trim();
     const requiresBudget = isProjectGig(selectedGig) || isContentPostingGig(selectedGig) || isCustomGig(selectedGig);
 
-    const limitBlock = weeklyLimitBlock(String(selectedGig.id));
+    const limitBlock = applyBlockFor(selectedGig)?.message ?? null;
     if (limitBlock) {
       setProposalError(limitBlock);
       return;
@@ -4772,7 +4810,7 @@ export default function DashboardPage() {
     selectedGigApplication?.id,
     selectedGigReviewStatus,
     submissionWorkerId,
-    weeklyLimitBlock,
+    applyBlockFor,
     rememberServerQuota,
     workerId,
   ]);
@@ -5481,7 +5519,8 @@ export default function DashboardPage() {
         const startsWorkDirectly = isEmailCreatorGig(selectedGig);
         const hasWorkAssignment = assignmentByGigId.has(String(selectedGig.id));
         // New applications (and revisions of ones no longer counted) wait while this week's slots are used.
-        const detailLimitBlock = !hasWorkAssignment && !applicationLocked ? weeklyLimitBlock(String(selectedGig.id)) : null;
+        const detailBlock = !hasWorkAssignment && !applicationLocked ? applyBlockFor(selectedGig) : null;
+        const detailLimitBlock = detailBlock?.message ?? null;
         const limitNotice = detailLimitBlock ? (
           <div role="status" className="flex items-start gap-2.5 rounded-lg border border-[#f0d9a8] bg-[#fffaf0] px-3.5 py-3 text-[13px] leading-5 text-[#6b4a05]">
             <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -5489,13 +5528,13 @@ export default function DashboardPage() {
               <path d="M12 9v4l2.5 2" />
             </svg>
             <span className="min-w-0">
-              <span className="block font-semibold">Weekly application limit reached</span>
+              <span className="block font-semibold">{detailBlock?.title}</span>
               {detailLimitBlock} You can still read the brief and save it for then.
             </span>
           </div>
         ) : null;
-        const primaryApplicationActionLabel = detailLimitBlock
-          ? `Opens in ${formatWait(weeklyQuota.nextSlotAt, minuteNow)}`
+        const primaryApplicationActionLabel = detailBlock
+          ? detailBlock.actionLabel
           : startsWorkDirectly
           ? hasWorkAssignment || hasApplication
             ? "Open your work"
@@ -6885,14 +6924,15 @@ export default function DashboardPage() {
                   const cardHasAssignment = !!cardAssignment;
                   const cardOpenForApplications = String(gig.status ?? "").trim().toLowerCase() === "open" && !cardHasApplication && !cardHasAssignment;
                   // The weekly limit holds new applications until a slot opens; existing ones stay trackable.
-                  const cardLimitBlocked = cardOpenForApplications && quotaBlocksGig(weeklyQuota, String(gig.id));
+                  const cardBlock = cardOpenForApplications ? applyBlockFor(gig) : null;
+                  const cardLimitBlocked = !!cardBlock;
                   const cardCanApply = cardOpenForApplications && !cardLimitBlocked;
                   const cardWorkflowLabel = cardHasAssignment
                     ? isEmailCreatorGig(gig)
                       ? "In progress"
                       : "Assigned"
-                    : cardLimitBlocked
-                      ? "Weekly limit"
+                    : cardBlock
+                      ? cardBlock.badge
                     : isEmailCreatorGig(gig) && !cardHasApplication
                       ? "Instant approval"
                     : cardHasApplication
@@ -6920,8 +6960,8 @@ export default function DashboardPage() {
                           ? "bg-[#e0ecf8] text-[#1f4a73]"
                           : "bg-[#f1f3f0] text-[#4b544e]";
                   const cardStartsWork = isEmailCreatorGig(gig);
-                  const primaryCardActionLabel = cardLimitBlocked
-                    ? `Opens in ${formatWait(weeklyQuota.nextSlotAt, minuteNow)}`
+                  const primaryCardActionLabel = cardBlock
+                    ? cardBlock.actionLabel
                     : cardStartsWork
                     ? cardHasAssignment || cardHasApplication
                       ? "Open your work"
@@ -7048,7 +7088,7 @@ export default function DashboardPage() {
                             type="button"
                             onClick={openPrimaryCardAction}
                             disabled={!cardCanApply && !cardHasApplication && !cardHasAssignment}
-                            title={cardLimitBlocked ? quotaLimitMessage(weeklyQuota, { now: minuteNow }) : undefined}
+                            title={cardBlock?.message}
                             className={cx(
                               "inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg px-3.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-not-allowed",
                               cardCanApply
@@ -7065,7 +7105,7 @@ export default function DashboardPage() {
                               </svg>
                             ) : null}
                             <span className="truncate">{primaryCardActionLabel}</span>
-                            {cardLimitBlocked ? <span className="sr-only">. {quotaLimitMessage(weeklyQuota, { now: minuteNow })}</span> : <ArrowRightIcon className="h-4 w-4 shrink-0" />}
+                            {cardBlock ? <span className="sr-only">. {cardBlock.message}</span> : <ArrowRightIcon className="h-4 w-4 shrink-0" />}
                           </button>
                         </div>
                       </div>
