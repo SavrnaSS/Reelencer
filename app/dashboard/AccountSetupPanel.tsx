@@ -301,77 +301,81 @@ function useSubmittedBioCheck(applicationId: string, setup: AccountSetupView | u
   return { checking: activity === "active" && !!active?.checking, checkMessage: active?.message, recheck, activity, retryAt };
 }
 
-/** Live status of the account under the username field. */
-function LiveAccountStatus({ preview, code, platformLabel, onCheck, activity, retryAt, notBefore }: { preview: LivePreview; code: string | null; platformLabel: string; onCheck: () => void; activity: PreviewActivity; retryAt?: number; notBefore?: number }) {
-  if (!("handle" in preview)) return null;
-  const shown: ResolvedPreview | undefined = preview.state === "checking" ? preview.previous : preview;
-  const looking = preview.state === "checking" && activity === "active";
-  const verified = shown?.state === "found" && shown.codeFound;
-  const waiting = !looking && notBefore !== undefined;
-  const tone =
-    !shown || (activity === "offline" && !verified) ? "neutral"
-    : shown.state === "found" ? (shown.codeFound ? "good" : shown.isPrivate ? "warn" : "wait")
-    : shown.state === "not_found" ? "bad" : "neutral";
-  const facts = shown?.state === "found"
-    ? [
-        shown.followers !== undefined ? `${formatCompact(shown.followers)} ${shown.followers === 1 ? "follower" : "followers"}` : null,
-        shown.posts !== undefined ? `${formatCompact(shown.posts)} ${shown.posts === 1 ? "post" : "posts"}` : null,
-        shown.isPrivate === undefined ? null : shown.isPrivate ? "Private" : "Public",
-      ].filter(Boolean)
-    : [];
-  const headline = activity === "offline" && !verified
-    ? "You're offline. Bio checks are paused."
-    : looking && shown
-      ? `Checking @${preview.handle}'s bio again…`
-    : !shown
-    ? `Looking up @${preview.handle} on ${platformLabel}…`
-    : shown.state === "found"
-      ? shown.codeFound ? "Code found in the bio. You're ready to verify." : shown.isPrivate ? "This account is private. Make it public before verifying." : `${code ?? "Your code"} isn't in the bio yet.`
-      : shown.state === "not_found" ? `No ${platformLabel} account called @${preview.handle} yet.`
-      : shown.state === "unreadable" ? shown.reason === "rate_limited" || shown.reason === "access_limited" ? `${platformLabel} is limiting access to this bio.` : "We couldn't read this bio yet."
-      : shown.reason === "rate_limited" ? "Bio checks are temporarily paused."
-      : shown.message || "Couldn't look the account up.";
-  const hint = activity === "offline" && !verified
-    ? "Reconnect to the internet and we'll check again automatically."
-    : shown?.state === "found" && !shown.codeFound
-    ? shown.isPrivate ? "Save your code in the bio and leave the profile public. We'll check again automatically." : "Paste it in the bio and save. We'll spot it on our own."
-    : shown?.state === "not_found" ? "Check the spelling, or finish creating the account first."
-    : shown?.state === "unreadable" || shown?.state === "error" ? "Keep the exact code in your saved bio and leave the profile public. We'll retry after a short pause." : null;
+/** How long the creator has to keep typing or cancel before a found account is sent for verification. */
+const AUTO_SEND_MS = 2400;
+
+type PipelineStage = { label: string; detail: ReactNode; state: "done" | "active" | "waiting" | "blocked" };
+
+/**
+ * The automatic verification run under the form: find the account, spot the code in its bio, send it. Each stage
+ * lights up as it happens; the last one counts down and sends on its own, so there's no button to press.
+ */
+function AutoVerifyPipeline({ stages, title, subtitle, countdown, action }: { stages: PipelineStage[]; title: string; subtitle: ReactNode; countdown: string | null; action?: ReactNode }) {
+  const running = stages.some((stage) => stage.state === "active");
+  const complete = stages.every((stage) => stage.state === "done");
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={cx(
-        "@container/bio mt-2 rounded-lg px-3 py-2.5 transition-colors",
-        tone === "good" ? "bg-[#eaf5e6]" : tone === "wait" || tone === "warn" ? "bg-[#fdf6e6]" : tone === "bad" ? "bg-[#fdf0ee]" : "bg-[#f4f6f3]"
-      )}
-    >
-      <div className="grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-2 @[420px]/bio:grid-cols-[20px_minmax(0,1fr)_auto]">
-        <span
-          aria-hidden="true"
-          className={cx(
-            "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full",
-            tone === "good" ? "bg-[#2e7d4f] text-white" : tone === "bad" ? "bg-[#f6d5d0] text-[#8e2b20]" : tone === "neutral" ? "bg-[#e3e7e1] text-[#4b544e]" : "bg-[#f5e3b5] text-[#6b4a05]"
-          )}
-        >
-          {tone === "good" ? <UiIcon.Check className="h-3 w-3" /> : tone === "bad" ? <UiIcon.Close className="h-2.5 w-2.5" /> : looking ? <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+    <div className="@container/pipe relative overflow-hidden rounded-xl bg-[#17211b] text-white shadow-[0_10px_30px_-18px_rgba(15,23,18,0.9)] ring-1 ring-white/[0.06]">
+      {/* Faint grid and glow */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.35] [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:22px_22px]" />
+      <div aria-hidden="true" className="pointer-events-none absolute -right-16 -top-20 h-44 w-44 rounded-full bg-[#4ade80]/[0.12] blur-3xl" />
+      <div className={cx("relative flex items-center gap-3 px-3.5 pt-3.5 @md/pipe:px-4 @md/pipe:pt-4", running && "verify-scan")}>
+        <span className="relative grid h-10 w-10 shrink-0 place-items-center">
+          {running ? <span aria-hidden="true" className="verify-orbit absolute inset-0 rounded-full border-2 border-[#4ade80]/80 border-r-transparent border-b-transparent" /> : null}
+          <span className={cx("grid h-8 w-8 place-items-center rounded-full", complete ? "verify-pop bg-[#4ade80] text-[#0f1a13]" : "verify-glow bg-white/[0.08] text-[#86efac]")}>
+            {complete ? <UiIcon.Check className="h-4 w-4" /> : <UiIcon.Shield className="h-4 w-4" />}
+          </span>
         </span>
-        <div className="min-w-0 flex-1">
-          <p className={cx("break-words text-[12.5px] font-semibold leading-5", tone === "good" ? "text-[#1f5131]" : tone === "bad" ? "text-[#8e2b20]" : tone === "neutral" ? "text-[#3b443e]" : "text-[#6b4a05]")}>{headline}</p>
-          {facts.length ? <p className="break-words text-[11.5px] tabular-nums text-[#616a64]">@{preview.handle} · {facts.join(" · ")}</p> : null}
-          {hint ? <p className="mt-0.5 break-words text-[11.5px] leading-[1.1rem] text-[#616a64]">{hint}</p> : null}
+        <div className="min-w-0 flex-1" role="status" aria-live="polite">
+          <p className="text-[13.5px] font-semibold tracking-[-0.01em] text-white">{title}</p>
+          <p className="text-[11.5px] leading-[1.1rem] text-white/60">{subtitle}</p>
         </div>
-        {shown && tone !== "good" ? (
-          <button type="button" onClick={onCheck} disabled={looking || waiting || activity !== "active"} className="col-start-2 inline-flex min-h-11 w-fit items-center justify-center rounded-md border border-[#dce4d7] bg-white px-3 text-[11.5px] font-semibold text-[#2b5d4a] underline-offset-2 hover:bg-[#f8fbf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-default disabled:text-[#9aa29c] @[420px]/bio:col-start-3 @[420px]/bio:row-start-1">
-            {looking ? "Checking…" : waiting ? "Please wait" : "Check now"}
-          </button>
-        ) : null}
+        <span className="hidden shrink-0 items-center gap-1.5 rounded-full bg-white/[0.06] px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-[#86efac] @md/pipe:inline-flex">
+          <span className={cx("h-1.5 w-1.5 rounded-full bg-[#4ade80]", running && "animate-pulse")} aria-hidden="true" />
+          Auto
+        </span>
       </div>
-      {shown && tone !== "good" && !looking ? (
-        <p className="mt-1.5 flex items-center gap-1.5 pl-[30px] text-[11px] text-[#7a827c]">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa89b]" aria-hidden="true" />
-          {activity === "offline" ? "Waiting for an internet connection" : activity === "hidden" ? "Checks resume when you return to this tab" : retryAt ? <>Next automatic check at <time dateTime={new Date(retryAt).toISOString()}>{new Date(retryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></> : "Automatic checks will resume shortly"}
-        </p>
+
+      <ol className="relative grid gap-0 px-3.5 pb-3.5 pt-3 @md/pipe:px-4 @md/pipe:pb-4 @2xl/pipe:grid-cols-3 @2xl/pipe:gap-3">
+        {stages.map((stage, index) => (
+          <li key={stage.label} className="relative flex min-w-0 gap-3 pb-3 last:pb-0 @2xl/pipe:flex-col @2xl/pipe:gap-2 @2xl/pipe:pb-0">
+            {index < stages.length - 1 ? (
+              <span aria-hidden="true" className={cx("absolute left-[11px] top-7 bottom-0 w-px @2xl/pipe:left-7 @2xl/pipe:right-[-12px] @2xl/pipe:top-[11px] @2xl/pipe:h-px @2xl/pipe:w-auto", stage.state === "done" ? "bg-[#4ade80]/60" : "bg-white/10")} />
+            ) : null}
+            <span
+              aria-hidden="true"
+              className={cx(
+                "relative z-[1] grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10.5px] font-bold",
+                stage.state === "done" ? "verify-pop bg-[#4ade80] text-[#0f1a13]"
+                : stage.state === "active" ? "bg-[#17211b] text-[#86efac] ring-1 ring-[#4ade80]/50"
+                : stage.state === "blocked" ? "bg-[#f87171]/15 text-[#fca5a5] ring-1 ring-[#f87171]/40"
+                : "bg-white/[0.06] text-white/40"
+              )}
+            >
+              {stage.state === "done" ? <UiIcon.Check className="h-3 w-3" />
+                : stage.state === "active" ? <span className="verify-orbit h-3 w-3 rounded-full border-[1.5px] border-current border-t-transparent" />
+                : stage.state === "blocked" ? <UiIcon.Close className="h-2.5 w-2.5" />
+                : index + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={cx("text-[12.5px] font-semibold leading-5", stage.state === "waiting" ? "text-white/50" : stage.state === "blocked" ? "text-[#fecaca]" : "text-white")}>{stage.label}</p>
+              <div className={cx("break-words text-[11.5px] leading-[1.1rem]", stage.state === "blocked" ? "text-[#fca5a5]/90" : "text-white/55")}>{stage.detail}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      {countdown ? (
+        <div className="relative border-t border-white/[0.06] px-3.5 py-2.5 @md/pipe:px-4">
+          <div className="flex items-center justify-between gap-3 text-[11.5px]">
+            <span className="min-w-0 truncate font-semibold text-[#86efac]">{countdown}</span>
+            {action}
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.08]">
+            <div key={countdown} className="verify-countdown h-full rounded-full bg-gradient-to-r from-[#22c55e] to-[#86efac]" style={{ ["--verify-countdown" as string]: `${AUTO_SEND_MS}ms` }} />
+          </div>
+        </div>
+      ) : action ? (
+        <div className="relative flex justify-end border-t border-white/[0.06] px-3.5 py-2.5 @md/pipe:px-4">{action}</div>
       ) : null}
     </div>
   );
@@ -465,7 +469,6 @@ export default function AccountSetupPanel({
   // The profile link follows the username until the creator edits it themselves.
   const [urlTouched, setUrlTouched] = useState(!!setup?.profileUrl);
   const [touched, setTouched] = useState<Partial<Record<keyof AccountOwnershipInput, boolean>>>({});
-  const [confirmed, setConfirmed] = useState(!!setup);
   // The profile link is derived from the username; its field only opens when the creator wants to change it.
   const [linkOpen, setLinkOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(!!setup?.notes);
@@ -479,12 +482,26 @@ export default function AccountSetupPanel({
 
   const errors = validateAccountOwnership(values, platform);
   const visibleError = (key: keyof AccountOwnershipInput) => (touched[key] ? errors[key] : undefined);
-  const ready = Object.keys(errors).length === 0 && confirmed && !!code;
+  // Entering the username is the confirmation (the consent line says so), so a valid one with a code is ready to send.
+  const ready = Object.keys(errors).length === 0 && !!code;
   // Live lookup of the account while the form is open: steps tick off as the account and the code appear.
   const liveHandle = formOpen && readable && !!code && !!values.handle && !errors.handle ? normalizeHandle(values.handle, platform) : null;
   const { preview: live, checkNow, activity: liveActivity, retryAt: liveRetryAt, notBefore: liveNotBefore } = useLivePreview(application.id, liveHandle, code, formOpen && readable);
-  const accountFound = live.state === "found";
-  const codeLive = live.state === "found" && live.codeFound;
+  // While a re-check runs, keep showing what the last one found for this username.
+  const liveShown = live.state === "checking" ? live.previous : isResolved(live) ? live : undefined;
+  const accountFound = liveShown?.state === "found";
+  const codeLive = liveShown?.state === "found" && liveShown.codeFound;
+
+  /* Automatic sending: once the username checks out, it's sent for verification on its own after a short countdown. */
+  const sendKey = JSON.stringify([normalizeHandle(values.handle, platform), values.profileUrl.trim(), values.notes.trim()]);
+  const savedKey = setup ? JSON.stringify([setup.handle, (setup.profileUrl ?? "").trim(), (setup.notes ?? "").trim()]) : null;
+  const [pausedKey, setPausedKey] = useState<string | null>(null);
+  const [failedKey, setFailedKey] = useState<string | null>(null);
+  // Instagram must have answered for this username: found, or limiting lookups (the bio check keeps retrying after
+  // sending). A username that doesn't exist is never sent.
+  const lookupSettled = !readable || (!!liveHandle && !!liveShown && liveShown.handle === liveHandle && liveShown.state !== "not_found");
+  const autoSending = formOpen && ready && !submitting && lookupSettled && liveActivity === "active"
+    && sendKey !== savedKey && sendKey !== pausedKey && sendKey !== failedKey;
 
   const set = (key: keyof AccountOwnershipInput, raw: string) =>
     setValues((prev) => {
@@ -506,8 +523,10 @@ export default function AccountSetupPanel({
   const submit = async () => {
     setTouched({ handle: true, profileUrl: true, notes: true });
     if (!ready || submitting) return;
+    const key = sendKey;
     setSubmitting(true);
     setServerError(null);
+    setFailedKey(null);
     try {
       const response = await fetch(ENDPOINT, {
         method: "POST",
@@ -520,11 +539,20 @@ export default function AccountSetupPanel({
       setJustSent(true);
       onUpdated(payload);
     } catch (error) {
+      // Don't resend the same details on a loop: the creator retries, or changes something.
+      setFailedKey(key);
       setServerError(error instanceof Error ? error.message : "Your account couldn't be sent. Try again.");
     } finally {
       setSubmitting(false);
     }
   };
+  const submitRef = useRef(submit);
+  useEffect(() => { submitRef.current = submit; });
+  useEffect(() => {
+    if (!autoSending) return;
+    const timer = window.setTimeout(() => void submitRef.current(), AUTO_SEND_MS);
+    return () => window.clearTimeout(timer);
+  }, [autoSending, sendKey]);
 
   /* ---------------- Verified ---------------- */
   if (verified) {
@@ -853,9 +881,7 @@ export default function AccountSetupPanel({
               <p id={`${ids.handle}-error`} className="mt-1.5 text-[12px] text-[#b42318]">
                 {visibleError("handle")}
               </p>
-            ) : (
-              <LiveAccountStatus preview={live} code={code} platformLabel={platform.label} onCheck={checkNow} activity={liveActivity} retryAt={liveRetryAt} notBefore={liveNotBefore} />
-            )}
+            ) : null}
           </div>
 
           {showLinkField ? (
@@ -912,6 +938,91 @@ export default function AccountSetupPanel({
       ),
     },
   ];
+
+  /* ---------------- Automatic verification run ---------------- */
+  const handleName = normalizeHandle(values.handle, platform);
+  const shownCodeLabel = code ?? "your code";
+  const failed = failedKey === sendKey;
+  const paused = pausedKey === sendKey && !autoSending;
+  const unchanged = !!setup && sendKey === savedKey;
+  const nextLookup = liveRetryAt && live.state !== "checking" ? (
+    <> Next check at <time dateTime={new Date(liveRetryAt).toISOString()}>{new Date(liveRetryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time>.</>
+  ) : null;
+  const findStage: PipelineStage = !handleOk
+    ? { label: "Find your account", detail: "Enter the username above.", state: "waiting" }
+    : !readable
+      ? { label: `Check @${handleName}`, detail: "The username looks right.", state: "done" }
+      : !liveShown || liveShown.handle !== liveHandle
+        ? { label: `Finding @${handleName} on ${platform.label}`, detail: liveActivity === "offline" ? "You're offline. We'll look it up when you reconnect." : "Looking it up…", state: "active" }
+        : liveShown.state === "found"
+          ? {
+              label: `Found @${handleName}`,
+              detail: [
+                liveShown.followers !== undefined ? `${formatCompact(liveShown.followers)} ${liveShown.followers === 1 ? "follower" : "followers"}` : null,
+                liveShown.posts !== undefined ? `${formatCompact(liveShown.posts)} ${liveShown.posts === 1 ? "post" : "posts"}` : null,
+                liveShown.isPrivate === undefined ? null : liveShown.isPrivate ? "Private" : "Public",
+              ].filter(Boolean).join(" · ") || "The account is live.",
+              state: "done",
+            }
+          : liveShown.state === "not_found"
+            ? { label: `No account called @${handleName}`, detail: <>Check the spelling, or finish creating the account first.{nextLookup}</>, state: "blocked" }
+            : { label: `${platform.label} is limiting lookups`, detail: "We'll send it anyway and keep checking the bio for you.", state: "active" };
+  const codeStage: PipelineStage = !readable
+    ? { label: `The team confirms ${shownCodeLabel}`, detail: "After sending, the reviewer looks for it in your bio.", state: "waiting" }
+    : codeLive
+      ? { label: `${shownCodeLabel} found in the bio`, detail: "Ownership confirmed automatically.", state: "done" }
+      : liveShown?.state === "found" && liveShown.handle === liveHandle
+        ? { label: `Watching the bio for ${shownCodeLabel}`, detail: liveShown.isPrivate ? "Make the account public so we can read the bio." : "Paste it in the bio and save. We'll spot it on our own.", state: "active" }
+        : liveShown && liveShown.handle === liveHandle && liveShown.state !== "not_found"
+          ? { label: `Read the bio for ${shownCodeLabel}`, detail: "We keep checking after it's sent, until the code shows up.", state: "waiting" }
+          : { label: `Spot ${shownCodeLabel} in the bio`, detail: "Starts once the account is found.", state: "waiting" };
+  const sendStage: PipelineStage = submitting
+    ? { label: "Sending for verification", detail: "This takes a few seconds.", state: "active" }
+    : autoSending
+      ? { label: "Sending for verification", detail: "Automatically, in a moment. Keep typing to change anything.", state: "active" }
+      : failed
+        ? { label: "Couldn't send yet", detail: "Try again, or change the details.", state: "blocked" }
+        : paused
+          ? { label: "Sending paused", detail: "Send it whenever you're ready.", state: "waiting" }
+          : unchanged
+            ? { label: "Send for verification", detail: changesRequested ? "Update what the team asked for. Changes send automatically." : "Change the username or link and the update sends automatically.", state: "waiting" }
+            : { label: "Send for verification", detail: readable ? "Starts automatically once the account is found." : "Starts automatically once the username looks right.", state: "waiting" };
+  const pipelineButton = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#86efac]/60 disabled:opacity-50";
+  const sendNow = (label: string) => (
+    <button type="submit" disabled={submitting || !ready} className={cx(pipelineButton, "bg-[#4ade80] text-[#0f1a13] hover:bg-[#86efac]")}>
+      {label}
+      <UiIcon.ChevronRight className="h-3.5 w-3.5" />
+    </button>
+  );
+  const pipeline = {
+    title: submitting ? "Sending for verification…"
+      : autoSending ? "All set. Sending automatically"
+      : findStage.state === "blocked" ? "Account not found"
+      : failed ? "Couldn't send yet"
+      : codeLive ? "Code found. Sending next"
+      : "Automatic verification",
+    subtitle: submitting ? "Hang tight. We're checking the bio as we send it."
+      : autoSending ? "No button needed. You can still cancel."
+      : findStage.state === "blocked" ? "Fix the username and we'll pick it up straight away."
+      : readable ? `We find @${handleOk ? handleName : "your.account"}, spot your code in the bio and send it to the team on our own.`
+      : "Enter the username and we'll send it to the team on our own.",
+    stages: [findStage, codeStage, sendStage],
+    action: autoSending ? (
+      <span className="flex shrink-0 items-center gap-2">
+        <button type="button" onClick={() => setPausedKey(sendKey)} className={cx(pipelineButton, "bg-white/10 text-white hover:bg-white/15")}>
+          Cancel
+        </button>
+        {sendNow("Send now")}
+      </span>
+    ) : failed ? sendNow("Try again")
+      : paused ? sendNow("Send now")
+      : unchanged && changesRequested && ready && !submitting ? sendNow("Resend as is")
+      : findStage.state === "blocked" ? (
+        <button type="button" onClick={checkNow} disabled={live.state === "checking" || liveActivity !== "active" || (liveNotBefore !== undefined && Date.now() < liveNotBefore)} className={cx(pipelineButton, "bg-white/10 text-white hover:bg-white/15")}>
+          {live.state === "checking" ? "Checking…" : "Check again"}
+        </button>
+      ) : null,
+  };
 
   return (
     <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-2xl border border-[#dfe3de] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
@@ -983,15 +1094,13 @@ export default function AccountSetupPanel({
         </ol>
 
         <div className="mt-2 space-y-3 border-t border-[#ebedea] pt-4">
-          <label className="flex cursor-pointer items-start gap-2.5 text-[12.5px] leading-5 text-[#3b443e]">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              onChange={(event) => setConfirmed(event.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-[#c5cbc6] accent-[#1f2b24]"
-            />
-            I own this account and will post the gig&apos;s reels on it once it&apos;s verified.
-          </label>
+          <AutoVerifyPipeline
+            title={pipeline.title}
+            subtitle={pipeline.subtitle}
+            stages={pipeline.stages}
+            countdown={autoSending ? `Sending @${normalizeHandle(values.handle, platform)} for verification…` : null}
+            action={pipeline.action}
+          />
 
           {serverError ? (
             <p id={`${uid}-server-error`} role="alert" className="flex items-start gap-2 rounded-lg border border-[#f3cdc8] bg-[#fdf2f1] px-3 py-2.5 text-[12.5px] text-[#8e1f1a]">
@@ -1000,36 +1109,25 @@ export default function AccountSetupPanel({
             </p>
           ) : null}
 
-          <div className="flex flex-col-reverse gap-3 @md:flex-row @md:items-center @md:justify-between">
-            <p className="flex items-center justify-center gap-1.5 text-[11.5px] text-[#7a827c] @md:justify-start">
-              <UiIcon.Shield className="h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
-              No password needed
+          <div className="flex flex-col gap-2.5 @md:flex-row @md:items-center @md:justify-between">
+            <p className="flex items-start gap-1.5 text-[11.5px] leading-[1.1rem] text-[#7a827c]">
+              <UiIcon.Shield className="mt-px h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
+              <span>No password needed. By adding a username you confirm you own the account and will post the gig&apos;s reels on it.</span>
             </p>
-            <div className="flex flex-col-reverse gap-2 @md:flex-row">
-              {editing ? (
-                <Button
-                  size="lg"
-                  className="w-full @md:w-auto"
-                  onClick={() => {
-                    setEditing(false);
-                    setServerError(null);
-                  }}
-                  disabled={submitting}
-                >
-                  Cancel
-                </Button>
-              ) : null}
-              <Button type="submit" variant="primary" size="lg" className="w-full @md:w-auto" disabled={submitting} aria-disabled={!ready}>
-                {submitting ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
-                {submitting ? (readable ? "Checking bio…" : "Sending…") : changesRequested ? "Resubmit" : editing ? "Save changes" : codeLive && liveHandle ? `Verify @${liveHandle}` : readable ? "Verify account" : "Submit account"}
+            {editing ? (
+              <Button
+                size="md"
+                className="w-full shrink-0 @md:w-auto"
+                onClick={() => {
+                  setEditing(false);
+                  setServerError(null);
+                }}
+                disabled={submitting}
+              >
+                Cancel
               </Button>
-            </div>
+            ) : null}
           </div>
-          {!ready && !submitting ? (
-            <p className="text-center text-[11.5px] text-[#7a827c] @md:text-right">
-              {Object.keys(errors).length ? "Check the username to continue." : !code ? "Loading your code…" : "Confirm you own the account to continue."}
-            </p>
-          ) : null}
         </div>
       </form>
     </section>
