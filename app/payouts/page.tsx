@@ -14,6 +14,7 @@ import {
   autoWithdrawalDay,
   nextAutoWithdrawalAt,
   nextManualWithdrawalAt,
+  payoutKycRequired,
 } from "@/lib/payoutPolicy";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
 import { usePayoutIdentity } from "@/lib/usePayoutIdentity";
@@ -532,8 +533,9 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
       }),
     [approvedEarnings, kycStatus, kycRejectionReason, processingBatch, upi?.verified, lifetimeCredited, nextManualAt]
   );
-  // KYC is needed once, and only for withdrawals over the KYC-free limit.
+  // The identity check appears only after confirmed lifetime wallet credits pass the policy limit.
   const kycBlocking = payoutReadiness.kycRequired;
+  const showKycCheck = verified.metrics && Number.isFinite(lifetimeCredited) && payoutKycRequired(false, lifetimeCredited);
   const kycLimitLabel = formatINR(KYC_FREE_WITHDRAWAL_LIMIT_INR);
   const payoutSummary = useMemo(() => summarizePayoutBatches(batches), [batches]);
   const requestBlockedReason = payoutReadiness.primaryBlocker?.detail ?? null;
@@ -648,7 +650,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     if (key === "min") return minimumOk ? null : { label: "View earnings", href: "/dashboard?section=accounts" };
     return noActiveBatch ? null : { label: "View cycle", onClick: showHistory };
   };
-  const readinessChecks: Array<{ key: CheckKey; ok: boolean; title: string; detail: string }> = [
+  const allReadinessChecks: Array<{ key: CheckKey; ok: boolean; title: string; detail: string }> = [
     { key: "kyc", ok: kycOk || !kycBlocking, title: "Identity verified (KYC)", detail: kycOk ? kycMeta.label : kycMeta.description },
     {
       key: "upi",
@@ -659,7 +661,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     {
       key: "min",
       ok: minimumOk,
-      title: `${formatINR(MIN_PAYOUT_REQUEST_INR)} minimum reached`,
+      title: minimumOk ? `${formatINR(MIN_PAYOUT_REQUEST_INR)} minimum reached` : `Reach ${formatINR(MIN_PAYOUT_REQUEST_INR)} to withdraw`,
       detail: minimumOk ? "Your wallet balance meets the minimum." : `${formatINR(thresholdGap)} more in your wallet needed.`,
     },
     {
@@ -673,6 +675,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           : `You can withdraw manually once every ${MANUAL_WITHDRAWAL_INTERVAL_DAYS} days.`,
     },
   ];
+  const readinessChecks = allReadinessChecks.filter((check) => check.key !== "kyc" || showKycCheck);
   const checkReady: Record<CheckKey, boolean> = { kyc: ready.kyc, upi: ready.upi, min: ready.metrics, batch: ready.batches };
   const coreReady = verified.kyc && verified.upi && verified.metrics && verified.batches;
   const hasFailures = Object.values(failures).some(Boolean);
@@ -877,34 +880,6 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                       </button>
                       {hasMethod ? <span className="min-w-0 truncate text-center text-[12.5px] text-[#6f7d74] min-[480px]:text-left">To {payoutMethodLabel(upi)}{upi?.bank ? " by bank transfer" : " via UPI"}</span> : null}
                     </div>
-                    {!kycOk && lifetimeCredited > 0 ? (
-                      // Heads-up before the KYC threshold, so payouts never pause by surprise.
-                      <div className="flex flex-col gap-3 rounded-lg bg-[#f8faf5] p-3.5 ring-1 ring-inset ring-[#e8eee5] min-[520px]:flex-row min-[520px]:items-center">
-                        <div className="min-w-0 flex-1">
-                          <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] font-semibold text-[#1f2e28]">
-                            <span>KYC needed after {kycLimitLabel} earned</span>
-                            <span className="text-[12px] font-medium text-[#5f6f65] tabular-nums">
-                              {formatINR(lifetimeCredited)} of {kycLimitLabel}
-                            </span>
-                          </p>
-                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e6ebe2]" aria-hidden>
-                            <div className="h-full rounded-full bg-[#d9a520] transition-[width] duration-700" style={{ width: `${Math.min(100, (lifetimeCredited / KYC_FREE_WITHDRAWAL_LIMIT_INR) * 100)}%` }} />
-                          </div>
-                          <p className="mt-1.5 text-[12px] leading-5 text-[#6f7d74]">
-                            {kycStatus === "pending" ? "Your KYC is in review, so payouts won't pause." : "Verify once now so your payouts don't pause when you pass it."}
-                          </p>
-                        </div>
-                        {kycStatus !== "pending" ? (
-                          <button
-                            type="button"
-                            onClick={() => setKycSheetOpen(true)}
-                            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[#dfe7dc] bg-white px-4 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
-                          >
-                            {kycStatus === "rejected" ? "Fix KYC" : "Verify now"} <span aria-hidden>→</span>
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
                   <div className="mt-5 flex flex-col gap-3 rounded-lg bg-[#fffaf0] p-3.5 ring-1 ring-inset ring-[#f1dea6] min-[520px]:flex-row min-[520px]:items-center">
@@ -1148,7 +1123,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                   {coreReady ? `${checksDone}/${readinessChecks.length} done` : "Checking…"}
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-4 gap-1" aria-hidden>
+              <div className={cx("mt-3 grid gap-1", showKycCheck ? "grid-cols-4" : "grid-cols-3")} aria-hidden>
                 {readinessChecks.map((check, index) => (
                   <span key={check.key} className={`h-1.5 rounded-full transition-colors duration-500 ${!coreReady ? "animate-pulse bg-[#eef1ea]" : index < checksDone ? "bg-[#8db35a]" : "bg-[#ece6d2]"}`} />
                 ))}
