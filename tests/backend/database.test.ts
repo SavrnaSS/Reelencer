@@ -432,6 +432,31 @@ test('legacy weekday-only payout days are converted so switching on monthly auto
   }
 });
 
+test('gigs follow the team feed order: new gigs join at the bottom and reorder_gigs saves the whole order', async () => {
+  await db.exec('begin');
+  try {
+    const add = (id: string) => db.query("insert into public.gigs(id,title,company,workload,payout) values($1,$1,'Co','Part time','₹100')", [id]);
+    for (const id of ['feed-a', 'feed-b', 'feed-c']) await add(id);
+    const order = async () => (await db.query<{ id: string }>("select id from public.gigs where id like 'feed-%' order by feed_position nulls last, created_at desc")).rows.map(row => row.id);
+    assert.deepEqual(await order(), ['feed-a', 'feed-b', 'feed-c']);
+    await db.query("select public.reorder_gigs(array['feed-c','feed-a'])");
+    // Gigs left out keep their place after the listed ones; unknown ids are ignored.
+    assert.deepEqual(await order(), ['feed-c', 'feed-a', 'feed-b']);
+    await db.query("select public.reorder_gigs(array['feed-b','missing'])");
+    assert.deepEqual(await order(), ['feed-b', 'feed-c', 'feed-a']);
+    await add('feed-new');
+    assert.deepEqual(await order(), ['feed-b', 'feed-c', 'feed-a', 'feed-new']);
+    await db.query("select public.reorder_gigs(array['feed-b','feed-c','feed-a','feed-new'])");
+    assert.equal(await scalar<number>("select public.reorder_gigs(array['feed-b','feed-c','feed-a','feed-new']) as value"), 0);
+    await db.exec('savepoint duplicate');
+    await assert.rejects(db.query("select public.reorder_gigs(array['feed-a','feed-a'])"), /invalid_gig_order/);
+    await db.exec('rollback to savepoint duplicate');
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated', 'public.reorder_gigs(text[])', 'execute') as value"), false);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
 test('withdrawals reject INR 499.99 and reserve INR 500 exactly once', async () => {
   // Roll back the fixture so unrelated wallet and directory assertions keep their data.
   await db.exec('begin');

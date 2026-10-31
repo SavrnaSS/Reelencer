@@ -57,6 +57,8 @@ function normalizeGigRow(g: Record<string, unknown>) {
     }),
     status: g.status,
     postedAt: postedAt ? new Date(postedAt).toLocaleDateString() : "Posted",
+    createdAt: typeof g.created_at === "string" ? g.created_at : postedAt ?? undefined,
+    feedPosition: typeof g.feed_position === "number" ? g.feed_position : null,
   };
 }
 
@@ -70,7 +72,13 @@ async function handleGET() {
   }
 
   const sb = supabaseAdmin();
-  const { data, error } = await sb.from("gigs").select("*").order("created_at", { ascending: false });
+  // The team's feed order first (gigs.feed_position); newest first only breaks ties. Until the feed-order migration
+  // is applied the column is missing (42703), so the feed falls back to newest first instead of failing.
+  const gigsQuery = () => sb.from("gigs").select("*");
+  let { data, error } = await gigsQuery()
+    .order("feed_position", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: false });
+  if (error?.code === "42703") ({ data, error } = await gigsQuery().order("created_at", { ascending: false }));
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500, headers: NO_STORE_HEADERS });
   }

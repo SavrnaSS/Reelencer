@@ -487,8 +487,21 @@ function withRequestedWorker<T extends { workerId: string }>(rows: T[], workerId
   return [];
 }
 
+/** Gigs in the team's feed order (the array order); new gigs join at the bottom. */
 export function getDevDashboardGigs() {
-  return clone(state().gigs);
+  return clone(state().gigs).map((gig, index) => ({ ...gig, createdAt: gig.postedAt, feedPosition: index + 1 }));
+}
+
+/** Listed gigs move to the top in the given order; the rest keep their relative order after them. */
+export function reorderDevDashboardGigs(ids: readonly string[]) {
+  const store = state();
+  const rank = new Map(ids.map((id, index) => [id, index]));
+  const before = store.gigs.map(gig => gig.id).join("\n");
+  store.gigs = store.gigs
+    .map((gig, index) => ({ gig, index }))
+    .sort((a, b) => (rank.get(a.gig.id) ?? ids.length + a.index) - (rank.get(b.gig.id) ?? ids.length + b.index))
+    .map(entry => entry.gig);
+  return before === store.gigs.map(gig => gig.id).join("\n") ? 0 : store.gigs.length;
 }
 
 export function createDevDashboardGig(input: unknown) {
@@ -507,7 +520,9 @@ export function createDevDashboardGig(input: unknown) {
   }
 
   const store = state();
-  store.gigs = [gig, ...store.gigs.filter((item) => !same(item.id, gig.id))];
+  const existing = store.gigs.findIndex((item) => same(item.id, gig.id));
+  if (existing >= 0) store.gigs[existing] = gig;
+  else store.gigs = [...store.gigs, gig];
   return { ok: true as const, gig: clone(gig) };
 }
 

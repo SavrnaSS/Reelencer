@@ -68,10 +68,18 @@ type Gig = {
   applicationMode?: GigApplicationMode;
   status: GigStatus;
   postedAt: string;
+  createdAt?: string;
+  /** Where creators see this gig in their feed (1 = top), set by the team. */
+  feedPosition?: number | null;
   browsePinned?: boolean;
   browsePinRank?: number | null;
   browsePinLabel?: string;
 };
+
+/** Gigs in the team's feed order; gigs without a position keep their current place at the end (a stable sort). */
+function inFeedOrder<T extends Pick<Gig, "feedPosition">>(list: readonly T[]) {
+  return [...list].sort((a, b) => (a.feedPosition ?? Number.MAX_SAFE_INTEGER) - (b.feedPosition ?? Number.MAX_SAFE_INTEGER));
+}
 
 type GigApplication = {
   id: string;
@@ -485,7 +493,7 @@ export default function GigAdminConsole({
   useEffect(() => { onCountsChange?.(tabCounts); }, [onCountsChange, tabCounts]);
   const [gigQuery, setGigQuery] = useState("");
   const [gigStatusFilter, setGigStatusFilter] = useState<"All" | GigStatus>("All");
-  const [gigSort, setGigSort] = useState<"recent" | "title" | "payout" | "applicants">("recent");
+  const [gigSort, setGigSort] = useState<"feed" | "recent" | "title" | "payout" | "applicants">("feed");
   const applicantsByGig = useMemo(() => {
     const counts = new Map<string, number>();
     apps.forEach((app) => counts.set(String(app.gigId), (counts.get(String(app.gigId)) ?? 0) + 1));
@@ -508,7 +516,8 @@ export default function GigAdminConsole({
     if (gigSort === "title") return [...list].sort((a, b) => a.title.localeCompare(b.title));
     if (gigSort === "payout") return [...list].sort((a, b) => payoutAmount(b.payout) - payoutAmount(a.payout));
     if (gigSort === "applicants") return [...list].sort((a, b) => (applicantsByGig.get(b.id) ?? 0) - (applicantsByGig.get(a.id) ?? 0));
-    return list; // API order = newest first
+    if (gigSort === "recent") return [...list].sort((a, b) => (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0));
+    return inFeedOrder(list);
   }, [applicantsByGig, gigQuery, gigSort, gigStatusFilter, gigs]);
   const getAdminToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -1056,7 +1065,7 @@ export default function GigAdminConsole({
 
     reads.abort("gigs");
     setGigs((prev) => {
-      const next = [payload, ...prev];
+      const next = [...prev, payload];
       writeLS(LS_KEYS.GIGS, next);
       return next;
     });
@@ -1073,7 +1082,7 @@ export default function GigAdminConsole({
         const saved = { ...data, applicationMode: normalizeGigApplicationMode(data) } as Gig;
         const next = previous.some(gig => gig.id === payload.id)
           ? previous.map(gig => gig.id === payload.id ? saved : gig)
-          : [saved, ...previous];
+          : [...previous, saved];
         writeLS(LS_KEYS.GIGS, next);
         return next;
       });
@@ -1302,6 +1311,53 @@ export default function GigAdminConsole({
       void loadApps();
     }
   };
+  const feedOrder = useMemo(() => inFeedOrder(gigs), [gigs]);
+  const [feedOrderSaving, setFeedOrderSaving] = useState(false);
+  const [feedOrderNotice, setFeedOrderNotice] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  const [draggedGigId, setDraggedGigId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  /** Move a gig to a 0-based place in the feed and save the whole order; the list updates at once and rolls back on failure. */
+  const moveGigInFeed = async (gigId: string, toIndex: number) => {
+    const from = feedOrder.findIndex(gig => gig.id === gigId);
+    const target = Math.max(0, Math.min(feedOrder.length - 1, toIndex));
+    if (from < 0 || from === target || feedOrderSaving) return;
+    const ordered = [...feedOrder];
+    const [moved] = ordered.splice(from, 1);
+    ordered.splice(target, 0, moved);
+    const position = new Map(ordered.map((gig, index) => [gig.id, index + 1]));
+    const previous = gigs;
+    reads.abort("gigs");
+    setFeedOrderSaving(true);
+    setFeedOrderNotice(null);
+    setGigs(current => {
+      const next = current.map(gig => ({ ...gig, feedPosition: position.get(gig.id) ?? gig.feedPosition }));
+      writeLS(LS_KEYS.GIGS, next);
+      return next;
+    });
+    try {
+      const res = await fetch("/api/gigs/order", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: ordered.map(gig => gig.id) }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(res.status === 503 && typeof payload?.error === "string" ? payload.error : "");
+      }
+      setFeedOrderNotice({ tone: "success", text: `“${moved.title}” is now #${target + 1} in the creator feed.` });
+    } catch (error) {
+      setGigs(previous);
+      writeLS(LS_KEYS.GIGS, previous);
+      const reason = error instanceof Error && error.message ? error.message : "Please try again.";
+      setFeedOrderNotice({ tone: "danger", text: `The new order couldn't be saved, so nothing changed for creators. ${reason}` });
+    } finally {
+      setFeedOrderSaving(false);
+      reads.abort("gigs");
+      void loadGigs();
+    }
+  };
+
   const updateGigStatus = async (gigId: string, status: GigStatus) => {
     reads.abort("gigs");
     setGigs((prev) => {
@@ -2723,6 +2779,7 @@ export default function GigAdminConsole({
                   aria-label="Sort gigs"
                   className="h-9 w-[8.5rem] shrink-0 rounded-[10px] border border-[#d9ddd8] bg-white px-3 text-[13px] font-semibold sm:w-auto text-[#1a201c] outline-none focus:border-[#7fa58c] focus:ring-2 focus:ring-[#2e7d4f]/20"
                 >
+                  <option value="feed">Feed order</option>
                   <option value="recent">Newest first</option>
                   <option value="title">Title A–Z</option>
                   <option value="payout">Highest payout</option>
@@ -2730,6 +2787,27 @@ export default function GigAdminConsole({
                 </select>
               </div>
             </div>
+
+            {gigSort === "feed" && gigs.length > 1 ? (
+              <div className="mt-3 flex flex-col gap-2 rounded-xl border border-[#dfe7df] bg-[#f6faf5] px-3.5 py-2.5 text-[12.5px] text-[#41695b] sm:flex-row sm:items-center sm:justify-between">
+                <p className="min-w-0">
+                  <span className="font-semibold text-[#1f5131]">Creators see gigs in this order.</span>{" "}
+                  Drag a card, use the arrows, or pick a position. New gigs join at the bottom.
+                </p>
+                {feedOrderSaving ? <span className="shrink-0 font-semibold text-[#2e7d4f]" role="status">Saving order…</span> : null}
+              </div>
+            ) : null}
+            {feedOrderNotice ? (
+              <div
+                role={feedOrderNotice.tone === "danger" ? "alert" : "status"}
+                className={`mt-2 flex items-start justify-between gap-3 rounded-xl border px-3.5 py-2 text-[12.5px] font-medium ${
+                  feedOrderNotice.tone === "success" ? "border-[#c8e0cf] bg-white text-[#1f5131]" : "border-rose-200 bg-rose-50 text-rose-700"
+                }`}
+              >
+                <span className="min-w-0">{feedOrderNotice.text}</span>
+                <button type="button" onClick={() => setFeedOrderNotice(null)} className="shrink-0 font-semibold opacity-70 hover:opacity-100" aria-label="Dismiss">✕</button>
+              </div>
+            ) : null}
 
             {loading && (
               <div className="mt-4 space-y-3" aria-busy="true">
@@ -2758,12 +2836,34 @@ export default function GigAdminConsole({
                 const sampleCount = parseGigSamples(gig.requirements).length;
                 const applicantCount = applicantsByGig.get(gig.id) ?? 0;
                 const saving = browseControlSavingId === gig.id;
+                const feedIndex = feedOrder.findIndex((item) => item.id === gig.id);
+                const reordering = gigSort === "feed" && feedOrder.length > 1;
+                const dropping = reordering && dropTargetId === gig.id && draggedGigId !== gig.id;
                 return (
                   <li
                     key={gig.id}
+                    draggable={reordering && !feedOrderSaving}
+                    onDragStart={reordering ? (event) => {
+                      setDraggedGigId(gig.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", gig.id);
+                    } : undefined}
+                    onDragOver={reordering && draggedGigId ? (event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      if (dropTargetId !== gig.id) setDropTargetId(gig.id);
+                    } : undefined}
+                    onDrop={reordering && draggedGigId ? (event) => {
+                      event.preventDefault();
+                      const dragged = draggedGigId;
+                      setDraggedGigId(null);
+                      setDropTargetId(null);
+                      if (dragged !== gig.id) void moveGigInFeed(dragged, feedIndex);
+                    } : undefined}
+                    onDragEnd={reordering ? () => { setDraggedGigId(null); setDropTargetId(null); } : undefined}
                     className={`relative overflow-hidden rounded-2xl border bg-white shadow-[0_1px_2px_rgba(26,32,28,0.05)] transition hover:shadow-[0_6px_18px_-10px_rgba(26,32,28,0.25)] ${
-                      spotlight.pinned ? "border-[#b9d5c0]" : "border-[#e3e5e1]"
-                    }`}
+                      dropping ? "border-[#2e7d4f] ring-2 ring-[#2e7d4f]/25" : spotlight.pinned ? "border-[#b9d5c0]" : "border-[#e3e5e1]"
+                    } ${draggedGigId === gig.id ? "opacity-50" : ""} ${reordering && !feedOrderSaving ? "md:cursor-grab md:active:cursor-grabbing" : ""}`}
                   >
                     {spotlight.pinned ? <span className="absolute inset-x-0 top-0 h-[3px] bg-[#2e7d4f]" aria-hidden /> : null}
                     <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
@@ -2782,6 +2882,14 @@ export default function GigAdminConsole({
                             {spotlight.pinned ? (
                               <span className="rounded-full bg-[#e3f1df] px-2 py-0.5 text-[11px] font-semibold text-[#1f5131]">
                                 ★ Pinned{spotlight.pinRank ? ` · slot ${spotlight.pinRank}` : ""}
+                              </span>
+                            ) : null}
+                            {feedIndex >= 0 ? (
+                              <span
+                                className="rounded-full border border-[#dfe7df] bg-[#f6faf5] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[#41695b]"
+                                title={gig.status === "Closed" ? "Closed gigs are hidden from creators" : "Position in the creator feed"}
+                              >
+                                #{feedIndex + 1} in feed{gig.status === "Closed" ? " · hidden" : ""}
                               </span>
                             ) : null}
                           </div>
@@ -2843,6 +2951,47 @@ export default function GigAdminConsole({
 
                     {/* Controls: compact labelled pills in one row (2×2 grid on phones) */}
                     <div className="grid grid-cols-2 gap-2 border-t border-[#ebedea] bg-[#fafbf9] px-4 py-2.5 sm:px-5 md:flex md:flex-nowrap md:items-center lg:flex-wrap">
+                      {reordering && feedIndex >= 0 ? (
+                        <div className={`${pillClass.replace("pl-2.5", "")} col-span-2 gap-0 md:shrink-0`}>
+                          <button
+                            type="button"
+                            onClick={() => void moveGigInFeed(gig.id, feedIndex - 1)}
+                            disabled={feedOrderSaving || feedIndex === 0}
+                            aria-label={`Move ${gig.title} up in the feed`}
+                            title="Move up"
+                            className="flex h-full shrink-0 items-center border-r border-[#e3e5e1] px-2.5 font-semibold text-[#1a201c] transition hover:bg-[#f4f7f2] disabled:opacity-35"
+                          >
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden><path d="M10 15V5M5.5 9.5 10 5l4.5 4.5" /></svg>
+                          </button>
+                          <label className="relative flex h-full min-w-0 flex-1 items-center gap-1.5 pl-2.5">
+                            <span className="shrink-0 text-[#8a928c]">Feed</span>
+                            <select
+                              className={pillSelectClass}
+                              value={feedIndex}
+                              disabled={feedOrderSaving}
+                              onChange={(e) => void moveGigInFeed(gig.id, Number(e.target.value))}
+                              aria-label={`Feed position for ${gig.title}`}
+                            >
+                              {feedOrder.map((item, index) => (
+                                <option key={item.id} value={index}>
+                                  {index === 0 ? "#1 · top" : index === feedOrder.length - 1 ? `#${index + 1} · bottom` : `#${index + 1}`}
+                                </option>
+                              ))}
+                            </select>
+                            <PillChevron />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void moveGigInFeed(gig.id, feedIndex + 1)}
+                            disabled={feedOrderSaving || feedIndex === feedOrder.length - 1}
+                            aria-label={`Move ${gig.title} down in the feed`}
+                            title="Move down"
+                            className="flex h-full shrink-0 items-center border-l border-[#e3e5e1] px-2.5 font-semibold text-[#1a201c] transition hover:bg-[#f4f7f2] disabled:opacity-35"
+                          >
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden><path d="M10 5v10M5.5 10.5 10 15l4.5-4.5" /></svg>
+                          </button>
+                        </div>
+                      ) : null}
                       <label className={pillClass}>
                         <span className="shrink-0 text-[#8a928c]">Status</span>
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${GIG_STATUS_DOT[gig.status] ?? "bg-slate-400"}`} aria-hidden />

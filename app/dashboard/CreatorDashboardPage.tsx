@@ -91,6 +91,8 @@ type Gig = {
   browsePinned?: boolean;
   browsePinRank?: number | null;
   browsePinLabel?: string;
+  /** Position in the team's feed order (1 = top). */
+  feedPosition?: number | null;
 };
 
 type ProposalPayload = {
@@ -3986,7 +3988,8 @@ export default function DashboardPage() {
           if (pinnedRank !== 0) return pinnedRank;
           const explicitRank = Number(left.browsePinRank ?? 9999) - Number(right.browsePinRank ?? 9999);
           if (explicitRank !== 0) return explicitRank;
-          return safeTime(right.postedAt) - safeTime(left.postedAt);
+          // The team's feed order, not newest first. Gigs without a position keep the API's order (a stable sort).
+          return Number(left.feedPosition ?? Number.MAX_SAFE_INTEGER) - Number(right.feedPosition ?? Number.MAX_SAFE_INTEGER);
         }),
     [gigs]
   );
