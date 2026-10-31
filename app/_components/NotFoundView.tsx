@@ -7,6 +7,7 @@ import { suggestPage } from "@/lib/notFoundSuggest";
 import { CREATOR_HOME_HREF, FIND_GIGS_HREF } from "@/lib/routes";
 import styles from "./NotFoundView.module.css";
 import { buttonClassName } from "@/app/dashboard/dashboardUi";
+import NotFoundIllustration from "./NotFoundIllustration";
 
 // The 404 screen for both routers (app/not-found.tsx and pages/404.tsx): the missing address, the page it most
 // likely meant, and the main ways back into Reelencer.
@@ -50,35 +51,6 @@ function Icon({ children, className = "h-5 w-5" }: { children: ReactNode; classN
   );
 }
 
-/** "404" as three reel frames; the zero is an empty frame with a play button. */
-function ReelNumber() {
-  const frame = "relative flex h-[6.4rem] w-[4rem] items-center justify-center overflow-hidden rounded-xl border border-[#e3e5e1] bg-white shadow-[0_1px_0_rgba(26,32,28,0.04),0_10px_24px_-14px_rgba(26,32,28,0.25)] sm:h-36 sm:w-[5.6rem] sm:rounded-2xl";
-  const digit = "font-[Georgia,Times_New_Roman,serif] text-[3.6rem] font-bold leading-none text-[#20352c] sm:text-[5rem]";
-  return (
-    <div aria-hidden="true" className="flex items-end justify-center gap-2.5 sm:gap-3.5">
-      <div className={`${styles.frame} ${frame}`} style={{ ["--tilt" as string]: "-6deg" }}>
-        <span className={digit}>4</span>
-      </div>
-      <div className={`${styles.frame} ${frame} border-[#cfe3d4] bg-[linear-gradient(160deg,#f3f9ef,#e6f2e0)]`}>
-        <span className={`${styles.scan} absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-transparent via-[#2e7d4f]/15 to-transparent`} />
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1f2b24] text-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] sm:h-12 sm:w-12">
-          <svg viewBox="0 0 24 24" className="ml-0.5 h-4 w-4 sm:h-5 sm:w-5" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></svg>
-        </span>
-        <span className="absolute left-2 top-2 flex items-center gap-1 text-[8.5px] font-bold uppercase tracking-[0.14em] text-[#4b544e] sm:left-2.5 sm:top-2.5 sm:text-[9.5px]">
-          <span className={`${styles.blink} h-1.5 w-1.5 rounded-full bg-[#d03b3b]`} />
-          Rec
-        </span>
-        <span className="absolute inset-x-2 bottom-2 h-[3px] overflow-hidden rounded-full bg-[#dfe9da] sm:inset-x-2.5 sm:bottom-2.5">
-          <span className="block h-full w-1/3 rounded-full bg-[#2e7d4f]" />
-        </span>
-      </div>
-      <div className={`${styles.frame} ${frame}`} style={{ ["--tilt" as string]: "6deg" }}>
-        <span className={digit}>4</span>
-      </div>
-    </div>
-  );
-}
-
 export default function NotFoundView() {
   // Read on the client only, so the server and client markup match.
   const path = useSyncExternalStore(noop, readPath, () => "");
@@ -107,9 +79,11 @@ export default function NotFoundView() {
 
       <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col items-center justify-center px-3.5 py-8 min-[380px]:px-4 sm:px-5 sm:py-12 md:px-6 lg:px-7 2xl:px-8">
         <section aria-labelledby="not-found-title" className="w-full max-w-2xl rounded-xl border border-[#e3e5e1] bg-white px-4 py-8 text-center shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] sm:px-10 sm:py-11">
-          <ReelNumber />
+          <div className="mx-auto w-full max-w-[500px]">
+            <NotFoundIllustration />
+          </div>
 
-          <p className="mt-7 inline-flex items-center gap-1.5 rounded-full bg-[#fde4e1] px-2.5 py-1 text-[12px] font-medium text-[#8e1f1a] sm:mt-9">
+          <p className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-[#fde4e1] px-2.5 py-1 text-[12px] font-medium text-[#8e1f1a] sm:mt-6">
             <span className="h-1.5 w-1.5 rounded-full bg-[#d03b3b]" aria-hidden="true" />
             Error 404 · Page not found
           </p>

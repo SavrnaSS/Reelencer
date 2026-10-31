@@ -1,18 +1,10 @@
-.frame { animation: float 6s ease-in-out infinite; }
-.frame:nth-child(2) { animation-delay: -2s; }
-.frame:nth-child(3) { animation-delay: -4s; }
-.scan { animation: scan 2.8s ease-in-out infinite; }
-.blink { animation: blink 1.6s steps(2, start) infinite; }
 .rise { animation: rise .6s cubic-bezier(.2, .8, .2, 1) both; }
 .rise:nth-child(2) { animation-delay: .06s; }
 .rise:nth-child(3) { animation-delay: .12s; }
 .rise:nth-child(4) { animation-delay: .18s; }
 
-@keyframes float { 0%, 100% { transform: translateY(0) rotate(var(--tilt, 0deg)); } 50% { transform: translateY(-10px) rotate(var(--tilt, 0deg)); } }
-@keyframes scan { 0%, 100% { transform: translateY(-100%); opacity: 0; } 15%, 85% { opacity: 1; } 50% { transform: translateY(260%); } }
-@keyframes blink { to { visibility: hidden; } }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .frame, .scan, .blink, .rise { animation: none; }
+  .rise { animation: none; }
 }
