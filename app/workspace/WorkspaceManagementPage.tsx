@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus } from "@/lib/payoutReadiness";
-import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
+import { MIN_PAYOUT_REQUEST_INR, nextManualWithdrawalAt } from "@/lib/payoutPolicy";
 import { FIND_GIGS_HREF, findGigHref } from "@/lib/routes";
 import { compareWorkDeadlines, formatWorkDeadline, getWorkTiming, parseWorkDate, workDurationMinutes, type WorkTiming } from "@/lib/workDates";
 
@@ -125,6 +125,7 @@ type PayoutBatch = {
   method: "UPI" | "Bank";
   items: PayoutItem[];
   notes: string[];
+  origin?: "manual" | "auto";
 };
 
 type GigAssignment = {
@@ -1905,8 +1906,12 @@ export default function MarketplaceWorkerPage() {
         eligibleItemCount: eligiblePayoutItems.length,
         eligibleAmount: eligiblePayoutTotal,
         minimumAmount: MIN_PAYOUT_REQUEST_INR,
+        lifetimeCredited: approvedForPayout.reduce((sum, it) => sum + it.rewardINR, 0),
+        nextManualAt: nextManualWithdrawalAt(
+          payoutBatches.filter((b) => b.origin !== "auto" && b.status !== "Failed").map((b) => b.createdAt).sort().at(-1)
+        ),
       }),
-    [kycStatus, kycRejection, upi.verified, hasProcessingPayout, hasDraftPayout, eligiblePayoutItems.length, eligiblePayoutTotal]
+    [kycStatus, kycRejection, upi.verified, hasProcessingPayout, hasDraftPayout, eligiblePayoutItems.length, eligiblePayoutTotal, approvedForPayout, payoutBatches]
   );
   const processingEta = useMemo(() => {
     const hit = payoutBatches.find((b) => b.status === "Processing");
@@ -2579,7 +2584,7 @@ export default function MarketplaceWorkerPage() {
         </div>
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           <span className="rounded-full border border-[#d9e4de] bg-white px-3 py-1.5 text-[#617166]">Workspace access remains active</span>
-          <span className="rounded-full border border-[#d9e4de] bg-white px-3 py-1.5 text-[#617166]">Payout release requires approved KYC</span>
+          <span className="rounded-full border border-[#d9e4de] bg-white px-3 py-1.5 text-[#617166]">KYC needed once earnings pass ₹1,000</span>
         </div>
         {kycStatus === "pending" && (
           <div className="mt-4 flex flex-wrap gap-2">

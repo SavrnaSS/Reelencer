@@ -18,6 +18,6 @@ export const HOME_FAQ = [
   },
   {
     q: "How and when do I get paid?",
-    a: "Approved work moves into your payouts, where you can see what's pending, approved, and paid. Identity verification (KYC) may be required before your first withdrawal.",
+    a: "Approved work moves into your payouts, where you can see what's pending, approved, and paid. You can withdraw without identity verification until your earnings pass ₹1,000 in total; after that, payouts pause until you complete a one-time KYC check.",
   },
 ] as const;

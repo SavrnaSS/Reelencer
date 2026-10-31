@@ -165,13 +165,16 @@ test('work rejects foreign ownership and invalid state transitions', async () =>
 });
 
 test('payout requires KYC and server verification; concurrent retries reserve earnings once', async () => {
-  await assert.rejects(db.query('select public.request_payout($1)',[worker]),/kyc_required/);
-  await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'approved','Test','1990-01-01','123','Test','ID','123','test','test')",[worker]);
+  await assert.rejects(db.query('select public.request_payout($1)',[worker]),/upi_required/);
   await db.query("select public.save_upi_config($1,'worker@bank','Weekly','Fri')",[worker]);
   assert.equal(await scalar<boolean>('select verified as value from public.upi_configs where worker_id=$1',[worker]),false);
   await assert.rejects(db.query('select public.request_payout($1)',[worker]),/upi_required/);
   await assert.rejects(db.query("select public.verify_upi_config($1,$1,'worker@bank',true)",[worker]),/forbidden/);
   await db.query("select public.verify_upi_config($1,$2,'worker@bank',true)",[admin,worker]);
+  // The only credit is INR 1,200, over the KYC-free limit: nothing can be withdrawn until KYC is approved.
+  await assert.rejects(db.query('select public.request_payout($1)',[worker]),/kyc_required/);
+  assert.equal(await scalar<number>('select count(*)::int as value from public.payout_batches where worker_id=$1',[worker]),0);
+  await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'approved','Test','1990-01-01','123','Test','ID','123','test','test')",[worker]);
   const results = await Promise.all([scalar<{batchId:string}>('select public.request_payout($1) as value',[worker]),scalar<{batchId:string}>('select public.request_payout($1) as value',[worker])]);
   batch=results[0].batchId;
   assert.equal(results[1].batchId,batch);
@@ -193,9 +196,204 @@ test('payout transitions require admin, approval and a payment reference; paid i
   await db.query("select public.transition_payout($1,$2,'mark-paid','UTR-TEST-001')",[admin,batch]);
   assert.equal(await scalar<string>('select status as value from public.payout_items where batch_id=$1',[batch]),'Paid');
   await assert.rejects(db.query("select public.transition_payout($1,$2,'reject','test')",[admin,batch]),/invalid_transition/);
+  // Manual withdrawals are limited to one every 7 days.
+  await assert.rejects(db.query('select public.request_payout($1)',[worker]),/weekly_limit/);
+  await db.query("update public.payout_batches set created_at=created_at-interval '8 days' where worker_id=$1",[worker]);
   await assert.rejects(db.query('select public.request_payout($1)',[worker]),/minimum_amount/);
   await db.query("select public.save_upi_config($1,'changed@bank','Weekly','Fri')",[worker]);
   assert.equal(await scalar<boolean>('select verified as value from public.upi_configs where worker_id=$1',[worker]),false);
+});
+
+test('without KYC payouts work until the wallet has received INR 1,000, then every payout waits for KYC', async () => {
+  await db.exec('begin');
+  try {
+    const owner = '66666666-6666-4666-8666-666666666666';
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'nokyc@example.test',now())", [owner]);
+    await db.query('select public.bootstrap_worker($1)', [owner]);
+    await db.query("select public.save_upi_config($1,'nokyc@bank','Monthly','1')", [owner]);
+    await db.query("select public.verify_upi_config($1,$2,'nokyc@bank',true)", [admin, owner]);
+    const credit = (code: string, amount: number) => db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values($1,$2,'Credit',$3,'Approved')", [code, owner, amount]);
+    const tryRequest = async (pattern: RegExp) => {
+      await db.exec('savepoint attempt');
+      await assert.rejects(db.query('select public.request_payout($1)', [owner]), pattern);
+      await db.exec('rollback to savepoint attempt');
+    };
+    // Exactly INR 1,000 in total: no KYC needed, and the whole balance is withdrawn and paid.
+    await credit('WI-NOKYC-1', 400);
+    await credit('WI-NOKYC-2', 600);
+    const first = await scalar<{ batchId: string; amount: number }>('select public.request_payout($1) as value', [owner]);
+    assert.equal(Number(first.amount), 1000);
+    await db.query("select public.transition_payout($1,$2,'approve')", [admin, first.batchId]);
+    await db.query("select public.transition_payout($1,$2,'mark-paid','UTR-NOKYC')", [admin, first.batchId]);
+    // One more credit takes the lifetime total past INR 1,000: the new INR 500 is blocked, even though the balance is small.
+    await credit('WI-NOKYC-3', 500);
+    await db.query("update public.payout_batches set created_at=created_at-interval '8 days' where worker_id=$1", [owner]);
+    await tryRequest(/kyc_required/);
+    assert.equal(await scalar<boolean>('select public.payout_kyc_required($1) as value', [owner]), true);
+    // The monthly auto-withdrawal is blocked the same way.
+    await db.query("select public.set_auto_withdrawal($1,true,1)", [owner]);
+    await db.query("update public.upi_configs set auto_withdraw_since=date_trunc('month',now())-interval '1 day' where worker_id=$1", [owner]);
+    await scalar('select public.auto_request_payouts(1000) as value');
+    assert.equal(await scalar<number>("select count(*)::int as value from public.payout_batches where worker_id=$1 and origin='auto'", [owner]), 0);
+    // A rejected KYC doesn't count; an approved one releases every payout.
+    await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'rejected','Test','1990-01-01','123','Test','ID','123','test','test')", [owner]);
+    await tryRequest(/kyc_required/);
+    await db.query("update public.worker_kyc set status='approved' where user_id=$1", [owner]);
+    assert.equal(await scalar<boolean>('select public.payout_kyc_required($1) as value', [owner]), false);
+    const released = await scalar<{ amount: number }>('select public.request_payout($1) as value', [owner]);
+    assert.equal(Number(released.amount), 500);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
+test('a payout opened before the wallet passed INR 1,000 cannot be approved or paid until KYC is approved', async () => {
+  await db.exec('begin');
+  try {
+    const owner = '77777777-7777-4777-8777-777777777777';
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'limit@example.test',now())", [owner]);
+    await db.query('select public.bootstrap_worker($1)', [owner]);
+    await db.query("select public.save_upi_config($1,'limit@bank','Monthly','1')", [owner]);
+    await db.query("select public.verify_upi_config($1,$2,'limit@bank',true)", [admin, owner]);
+    await db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values('WI-LIMIT-1',$1,'Credit',300,'Approved'),('WI-LIMIT-2',$1,'Credit',300,'Approved')", [owner]);
+    const open = await scalar<{ batchId: string; amount: number }>('select public.request_payout($1) as value', [owner]);
+    assert.equal(Number(open.amount), 600);
+    await db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values('WI-LIMIT-3',$1,'Credit',500,'Approved')", [owner]);
+    await db.exec('savepoint approve');
+    await assert.rejects(db.query("select public.transition_payout($1,$2,'approve')", [admin, open.batchId]), /kyc_required/);
+    await db.exec('rollback to savepoint approve');
+    // The team can still reject it; approving KYC lets it through.
+    await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'approved','Test','1990-01-01','123','Test','ID','123','test','test')", [owner]);
+    await db.query("select public.transition_payout($1,$2,'approve')", [admin, open.batchId]);
+    // KYC revoked between approval and payment: the money isn't sent.
+    await db.query("update public.worker_kyc set status='rejected' where user_id=$1", [owner]);
+    await db.exec('savepoint pay');
+    await assert.rejects(db.query("select public.transition_payout($1,$2,'mark-paid','UTR-LIMIT')", [admin, open.batchId]), /kyc_required/);
+    await db.exec('rollback to savepoint pay');
+    await db.query("update public.worker_kyc set status='approved' where user_id=$1", [owner]);
+    await db.query("select public.transition_payout($1,$2,'mark-paid','UTR-LIMIT')", [admin, open.batchId]);
+    assert.equal(await scalar<string>('select status as value from public.payout_batches where id=$1', [open.batchId]), 'Paid');
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.payout_kyc_required(uuid)','execute') as value"), false);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
+test('monthly auto-withdrawals open one cycle per creator per month and leave manual withdrawals to their own weekly limit', async () => {
+  await db.exec('begin');
+  try {
+    // The run may also open cycles for other fixtures' creators; everything is rolled back afterwards.
+    const creators: string[] = [];
+    const setup = async (id: string, label: string, day: string, credits: number[]) => {
+      await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())", [id, `${label}@example.test`]);
+      await db.query('select public.bootstrap_worker($1)', [id]);
+      await db.query("select public.save_upi_config($1,$2,'Monthly',$3)", [id, `${label}@bank`, day]);
+      await db.query("select public.verify_upi_config($1,$2,$3,true)", [admin, id, `${label}@bank`]);
+      // Switched on before this month began, so this month's date counts.
+      await db.query("select public.set_auto_withdrawal($1,true,$2)", [id, Number(day)]);
+      await db.query("update public.upi_configs set auto_withdraw_since=date_trunc('month',now())-interval '1 day' where worker_id=$1", [id]);
+      for (const [index, amount] of credits.entries()) {
+        await db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values($1,$2,'Credit',$3,'Approved')", [`WI-AUTO-${label}-${index}`, id, amount]);
+      }
+      creators.push(id);
+    };
+    const due = '88888888-8888-4888-8888-888888888881', small = '88888888-8888-4888-8888-888888888882', later = '88888888-8888-4888-8888-888888888883';
+    const todayIst = await scalar<number>("select extract(day from (now() at time zone 'Asia/Kolkata'))::int as value");
+    await setup(due, 'autodue', '1', [600, 300]);
+    await setup(small, 'autosmall', '1', [200]);
+    await setup(later, 'autolater', '28', [700]);
+    // Switched off: never withdrawn automatically. Switched on today for the 1st: waits for next month's 1st.
+    const off = '88888888-8888-4888-8888-888888888884', fresh = '88888888-8888-4888-8888-888888888885';
+    await setup(off, 'autooff', '1', [800]);
+    await db.query("select public.set_auto_withdrawal($1,false,1)", [off]);
+    assert.equal(await scalar<string | null>("select auto_withdraw_since::text as value from public.upi_configs where worker_id=$1", [off]), null);
+    await setup(fresh, 'autofresh', '1', [800]);
+    await db.query("update public.upi_configs set auto_withdraw_since=now() where worker_id=$1", [fresh]);
+    const auto = (id: string) => db.query<{ origin: string; total: string }>(
+      "select b.origin, sum(i.amount_inr)::text as total from public.payout_batches b join public.payout_items i on i.batch_id=b.id where b.worker_id=$1 group by b.id, b.origin", [id]);
+    await scalar('select public.auto_request_payouts(1000) as value');
+    assert.deepEqual((await auto(due)).rows, [{ origin: 'auto', total: '900.00' }]);
+    assert.match(await scalar<string>("select cycle_label as value from public.payout_batches where worker_id=$1", [due]), /^Monthly auto-withdrawal/);
+    assert.deepEqual((await auto(small)).rows, [], 'below the minimum, nothing is sent');
+    assert.equal((await auto(later)).rows.length, todayIst >= 28 ? 1 : 0, 'the chosen day decides when the month\'s run happens');
+    assert.deepEqual((await auto(off)).rows, [], 'switched off');
+    assert.equal((await auto(fresh)).rows.length, todayIst === 1 ? 1 : 0, 'a date before it was switched on is skipped');
+    await db.exec('savepoint bad_day');
+    await assert.rejects(db.query("select public.set_auto_withdrawal($1,true,29)", [due]), /invalid_input/);
+    await db.exec('rollback to savepoint bad_day');
+    // Running again in the same month creates nothing new, even after the cycle is paid and new credits arrive.
+    const cycle = await scalar<string>("select id::text as value from public.payout_batches where worker_id=$1", [due]);
+    await db.query("select public.transition_payout($1,$2,'approve')", [admin, cycle]);
+    await db.query("select public.transition_payout($1,$2,'mark-paid','UTR-AUTO')", [admin, cycle]);
+    await db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values('WI-AUTO-NEW',$1,'Credit',550,'Approved')", [due]);
+    await scalar('select public.auto_request_payouts(1000) as value');
+    assert.equal((await auto(due)).rows.length, 1);
+    // The automatic cycle doesn't use up the creator's manual withdrawal for the week. (The new credit takes the
+    // creator past INR 1,000 in total, so KYC is approved first.)
+    await db.query("insert into public.worker_kyc(user_id,status,legal_name,dob,phone,address,id_type,id_number,id_doc_path,selfie_path) values($1,'approved','Test','1990-01-01','123','Test','ID','123','test','test')", [due]);
+    const manual = await scalar<{ amount: number; origin: string }>('select public.request_payout($1) as value', [due]);
+    assert.equal(Number(manual.amount), 550);
+    assert.equal(manual.origin, 'manual');
+    assert.equal(await scalar<boolean>("select has_function_privilege('service_role','public.create_payout_batch(uuid,text)','execute') as value"), false);
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.set_auto_withdrawal(uuid,boolean,integer)','execute') as value"), false);
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.auto_request_payouts(integer)','execute') as value"), false);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
+test('creators can be paid to a verified bank account; changes need verification again and payouts snapshot the account', async () => {
+  await db.exec('begin');
+  try {
+    const owner = '99999999-9999-4999-8999-999999999991';
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'bank@example.test',now())", [owner]);
+    await db.query('select public.bootstrap_worker($1)', [owner]);
+    const save = (method: string, upi: string | null, holder: string | null, account: string | null, ifsc: string | null) =>
+      scalar<Record<string, unknown>>('select public.save_payout_method($1,$2,$3,$4,$5,$6) as value', [owner, method, upi, holder, account, ifsc]);
+    const rejects = async (args: [string, string | null, string | null, string | null, string | null], pattern: RegExp) => {
+      await db.exec('savepoint bad');
+      await assert.rejects(db.query('select public.save_payout_method($1,$2,$3,$4,$5,$6)', [owner, ...args]), pattern);
+      await db.exec('rollback to savepoint bad');
+    };
+    for (const args of [
+      ['Bank', null, 'A', '123456789012', 'HDFC0001234'], ['Bank', null, 'Asha Rao', '12345678', 'HDFC0001234'],
+      ['Bank', null, 'Asha Rao', '123456789012', 'HDFC1001234'], ['Bank', null, 'Asha 2 Rao', '123456789012', 'HDFC0001234'],
+      ['UPI', 'not-a-upi', null, null, null], ['Cheque', null, null, null, null],
+    ] as Array<[string, string | null, string | null, string | null, string | null]>) await rejects(args, /invalid_payout_method/);
+    const saved = await save('Bank', null, '  Asha   Rao ', '1234 5678 9012', 'hdfc0001234');
+    assert.equal(saved.upi_id, 'bank:HDFC0001234:123456789012');
+    assert.equal(saved.bank_holder_name, 'Asha Rao');
+    assert.equal(saved.method, 'Bank');
+    assert.equal(saved.verified, false);
+    // Not verified yet: no payouts.
+    await db.query("insert into public.work_items(public_id,worker_id,title,reward_inr,status) values('WI-BANK-1',$1,'Credit',600,'Approved')", [owner]);
+    await db.exec('savepoint unverified');
+    await assert.rejects(db.query('select public.request_payout($1)', [owner]), /upi_required/);
+    await db.exec('rollback to savepoint unverified');
+    // The team verifies the exact account they reviewed.
+    await db.exec('savepoint stale');
+    await assert.rejects(db.query("select public.verify_upi_config($1,$2,'bank:HDFC0001234:999999999999',true)", [admin, owner]), /not_found|invalid/);
+    await db.exec('rollback to savepoint stale');
+    await db.query("select public.verify_upi_config($1,$2,'bank:HDFC0001234:123456789012',true)", [admin, owner]);
+    // Saving the same details again keeps the verification.
+    assert.equal((await save('Bank', null, 'Asha Rao', '123456789012', 'HDFC0001234')).verified, true);
+    const payout = await scalar<{ batchId: string; method: string }>('select public.request_payout($1) as value', [owner]);
+    assert.equal(payout.method, 'Bank');
+    const batch = await db.query<{ method: string; upi_id_snapshot: string; payee_name_snapshot: string }>('select method,upi_id_snapshot,payee_name_snapshot from public.payout_batches where id=$1', [payout.batchId]);
+    assert.deepEqual(batch.rows[0], { method: 'Bank', upi_id_snapshot: 'bank:HDFC0001234:123456789012', payee_name_snapshot: 'Asha Rao' });
+    // Locked while the payout is open, even for a different account holder name.
+    await rejects(['Bank', null, 'Asha R', '123456789012', 'HDFC0001234'], /active_batch/);
+    await rejects(['UPI', 'asha@okhdfcbank', null, null, null], /active_batch/);
+    await db.query("select public.transition_payout($1,$2,'approve')", [admin, payout.batchId]);
+    await db.query("select public.transition_payout($1,$2,'mark-paid','UTR-BANK')", [admin, payout.batchId]);
+    // Switching to UPI clears the bank details and needs verification again.
+    const upi = await save('UPI', 'asha@okhdfcbank', null, null, null);
+    assert.deepEqual([upi.method, upi.upi_id, upi.bank_account_number, upi.verified], ['UPI', 'asha@okhdfcbank', null, false]);
+    assert.equal(await scalar<number>("select count(*)::int as value from public.audit_events where actor_id=$1 and action='payout_method_saved'", [owner]), 2);
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.save_payout_method(uuid,text,text,text,text,text)','execute') as value"), false);
+  } finally {
+    await db.exec('rollback');
+  }
 });
 
 test('withdrawals reject INR 499.99 and reserve INR 500 exactly once', async () => {
@@ -549,6 +747,7 @@ test('view claims freeze evidence, reserve growth once, support review decisions
   await db.query("select public.verify_upi_config($1,$2,'changed@bank',true)", [admin, worker]);
   const activeBatches = await db.query<{ id: string }>("select id from public.payout_batches where worker_id=$1 and status in ('Draft','Processing')", [worker]);
   for (const row of activeBatches.rows) await db.query("select public.transition_payout($1,$2,'reject','Finish prior test fixture')", [admin, row.id]);
+  await db.query("update public.payout_batches set created_at=created_at-interval '8 days' where worker_id=$1", [worker]);
   const withdrawal = await scalar<{ batchId: string }>('select public.request_payout($1) as value', [worker]);
   assert.equal(Number(await scalar<string>("select sum(i.amount_inr) as value from public.payout_items i join public.work_items w on w.id=i.work_item_id where i.batch_id=$1 and w.review->>'source'='view_payout_claim'", [withdrawal.batchId])), 1790);
   assert.equal(await scalar<number>("select count(*)::int as value from public.payout_items i join public.work_items w on w.id=i.work_item_id where i.batch_id=$1 and w.review->>'source'='view_payout_claim'", [withdrawal.batchId]), 3);

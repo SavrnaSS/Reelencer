@@ -22,7 +22,9 @@ export type WorkerDirectoryRecord = {
   linkedAccountCount?: number;
   /** Earned on linked accounts but not credited yet: view growth since the last credit and open claims. */
   pendingINR?: number;
+  /** Payout destination key: a UPI ID or bank:<IFSC>:<account number>. */
   upiId?: string;
+  upiHolderName?: string;
   upiVerified?: boolean;
 };
 

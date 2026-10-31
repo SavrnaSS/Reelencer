@@ -3,6 +3,7 @@ import { authenticate } from "@/lib/api/auth";
 import { resolveWorkerUserId } from "@/lib/api/work";
 // app/api/payoutbatches/route.ts
 import { NextResponse } from "next/server";
+import { destinationLabel } from "@/lib/payoutDestination";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getDevDashboardPayoutBatches, isDashboardDevMode } from "@/lib/dashboardDevData";
 import { payoutHistoryMetadata, payoutHistoryPostId } from "@/lib/payoutHistoryMetadata";
@@ -27,6 +28,7 @@ type DbPayoutBatch = {
   method: "UPI" | "Bank" | string;
   notes?: unknown;
   origin?: string | null;
+  upi_id_snapshot?: string | null;
   payment_reference?: string | null;
 };
 
@@ -170,6 +172,8 @@ async function handleGET(req: Request) {
       items: itemsByBatch.get(String(b.id)) ?? [],
       notes: Array.isArray(b.notes) ? b.notes : b.notes ? [String(b.notes)] : [],
       origin: b.origin === "auto" ? "auto" : "manual",
+      // Where it was sent, with a bank account number masked.
+      payTo: destinationLabel(b.upi_id_snapshot) || undefined,
       paymentReference: b.payment_reference?.trim() || undefined,
     }));
 

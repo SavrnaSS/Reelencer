@@ -39,3 +39,17 @@ test("worker erasure and social sync run independently and both requests finish 
   await assert.rejects(worker.scheduled({}, { ...env, WORKER_PURGE_URL: "https://example.test/api/jobs/worker-purge" }), /job failed/);
   assert.deepEqual(paths.sort(), ['/api/jobs/social-sync','/api/jobs/worker-purge']);
 });
+
+test("monthly auto-withdrawals are triggered once an hour, at minute five", async () => {
+  const paths: string[] = [];
+  globalThis.fetch = async (input) => { paths.push(new URL(String(input)).pathname); return new Response('{}'); };
+  const withAuto = { ...env, AUTO_WITHDRAWAL_URL: "https://example.test/api/jobs/auto-withdrawals" };
+  await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 1, 3, 4) }, withAuto);
+  assert.deepEqual(paths, ['/api/jobs/social-sync']);
+  paths.length = 0;
+  await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 1, 3, 5) }, withAuto);
+  assert.deepEqual(paths.sort(), ['/api/jobs/auto-withdrawals', '/api/jobs/social-sync']);
+  paths.length = 0;
+  await assert.rejects(worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 1, 3, 5) }, { ...withAuto, AUTO_WITHDRAWAL_URL: "https://example.test/api/jobs/auto-withdrawals?x=1" }), /HTTPS auto-withdrawal job URL/);
+  assert.deepEqual(paths, ['/api/jobs/social-sync'], "a misconfigured job URL is never called");
+});

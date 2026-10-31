@@ -17,6 +17,8 @@ export type PayoutHistoryBatch = {
   periodEnd: string;
   method: string;
   origin?: "auto" | "manual";
+  /** Where it was sent: a UPI ID or a masked bank account. */
+  payTo?: string;
   items: PayoutHistoryItem[];
   notes?: string[];
   paymentReference?: string;

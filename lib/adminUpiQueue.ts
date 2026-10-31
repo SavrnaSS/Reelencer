@@ -6,7 +6,10 @@ export type AdminPendingUpiConfig = {
   workerId: string;
   workerCode: string;
   workerName: string;
+  /** Destination key: a UPI ID or bank:<IFSC>:<account number>. */
   upiId: string;
+  method: "UPI" | "Bank";
+  bankHolderName?: string;
   verified: false;
   updatedAt?: string;
   payoutSchedule: string;
@@ -16,6 +19,8 @@ export type AdminPendingUpiConfig = {
 type PendingRow = {
   worker_id: string;
   upi_id: string;
+  method: string | null;
+  bank_holder_name: string | null;
   updated_at: string | null;
   payout_schedule: string | null;
   payout_day: string | null;
@@ -31,7 +36,7 @@ export async function loadAdminPendingUpiQueue(sb: SupabaseClient, limit: number
   let upiConfigs: AdminPendingUpiConfig[] = [];
   for (;;) {
     let query = sb.from("upi_configs")
-      .select("worker_id,upi_id,updated_at,payout_schedule,payout_day,profile:profiles!inner(worker_code,display_name,role,active)")
+      .select("worker_id,upi_id,method,bank_holder_name,updated_at,payout_schedule,payout_day,profile:profiles!inner(worker_code,display_name,role,active)")
       .eq("verified", false).neq("upi_id", "")
       .eq("profile.role", "Worker").eq("profile.active", true)
       .order("worker_id", { ascending: true }).limit(PAGE_SIZE);
@@ -56,6 +61,8 @@ export async function loadAdminPendingUpiQueue(sb: SupabaseClient, limit: number
       workerCode: row.profile.worker_code || row.worker_id,
       workerName: row.profile.display_name?.trim() || row.profile.worker_code || "Creator",
       upiId: row.upi_id,
+      method: row.method === "Bank" ? "Bank" as const : "UPI" as const,
+      bankHolderName: row.bank_holder_name ?? undefined,
       verified: false as const,
       updatedAt: row.updated_at ?? undefined,
       payoutSchedule: row.payout_schedule ?? "Weekly",

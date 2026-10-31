@@ -41,7 +41,7 @@ export default function PayoutHistoryCard({ batch }: { batch: PayoutHistoryBatch
           </span>
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[#6f7d74]">
-          <span>{batch.method}</span><span aria-hidden="true">·</span>
+          <span className="min-w-0 break-all">{batch.payTo ? `To ${batch.payTo}` : batch.method}</span><span aria-hidden="true">·</span>
           <span>{batch.origin === "auto" ? "Automatic withdrawal" : "Manual withdrawal"}</span>
         </div>
         <p className="mt-1 text-[12px] leading-5 text-[#52665a]">{status.detail}</p>

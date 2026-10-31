@@ -35,5 +35,6 @@ export async function availableWalletBalance(workerId: string) {
     if (reserved.has(credit.id)) committed += paise;
     else available += paise;
   }
+  // available + committed is everything the wallet has ever been credited (it decides when KYC becomes required).
   return { available: available / 100, committed: committed / 100 };
 }

@@ -27,7 +27,7 @@ async function handleGET(req: Request) {
   if (pending) return json(200, { ok: true, ...await loadAdminPendingUpiQueue(sb, limit) });
   const upiRes = await sb
     .from("upi_configs")
-    .select("worker_id,upi_id,verified,verified_at,updated_at,payout_schedule,payout_day");
+    .select("worker_id,upi_id,method,bank_holder_name,verified,verified_at,updated_at,payout_schedule,payout_day");
   if (upiRes.error) return json(500, { ok: false, error: upiRes.error.message });
 
   const workerIds = Array.from(new Set((upiRes.data ?? []).map((u) => String(u.worker_id ?? "")).filter(Boolean)));
@@ -43,7 +43,10 @@ async function handleGET(req: Request) {
       workerId: String(u.worker_id ?? ""),
       workerCode: profileById.get(String(u.worker_id ?? ""))?.worker_code ?? undefined,
       workerName: profileById.get(String(u.worker_id ?? ""))?.display_name ?? undefined,
+      // The destination key: a UPI ID or bank:<IFSC>:<account number> (the team needs the full details to pay).
       upiId: String(u.upi_id ?? ""),
+      method: u.method === "Bank" ? "Bank" : "UPI",
+      bankHolderName: u.bank_holder_name ?? undefined,
       verified: !!u.verified,
       verifiedAt: u.verified_at ?? undefined,
       updatedAt: u.updated_at ?? undefined,
@@ -58,7 +61,7 @@ export const GET = withApi({ auth: "admin" }, handleGET);
 export const PATCH = withApi({ auth: "admin" }, async req => {
   const actor = await authenticate(req);
   const body = await req.json();
-  if (typeof body.workerId !== "string" || typeof body.upiId !== "string" || typeof body.verified !== "boolean") throw new ApiError(400, "Worker, UPI ID and verification decision are required.");
+  if (typeof body.workerId !== "string" || typeof body.upiId !== "string" || typeof body.verified !== "boolean") throw new ApiError(400, "Worker, payout destination and verification decision are required.");
   const userId = await resolveWorkerUserId(body.workerId);
   const { data, error } = await supabaseAdmin().rpc("verify_upi_config", { p_actor: actor.user.id, p_worker: userId, p_upi: body.upiId, p_verified: body.verified });
   databaseError(error);

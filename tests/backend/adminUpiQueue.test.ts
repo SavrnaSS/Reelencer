@@ -131,7 +131,7 @@ test("creator saves return the atomic RPC result without a second timestamp upda
   administrator = false;
   const response = await PUT(mutation("/api/upi", "PUT", { upiId: "new@bank", payoutSchedule: "Weekly", payoutDay: "Fri" }), context);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { upiId: "new@bank", verified: false, updatedAt: "2026-10-30T02:00:00Z", payoutSchedule: "Weekly", payoutDay: "Fri" });
+  assert.deepEqual(await response.json(), { method: "UPI", upiId: "new@bank", verified: false, updatedAt: "2026-10-30T02:00:00Z", payoutSchedule: "Weekly", payoutDay: "Fri", autoWithdraw: false });
   assert.deepEqual(rpcBodies, [{ p_worker: admin, p_upi: "new@bank", p_schedule: "Weekly", p_day: "Fri" }]);
   assert.deepEqual(reads, []);
 });

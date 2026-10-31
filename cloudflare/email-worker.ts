@@ -6,7 +6,9 @@ type EmailMessage = {
   headers: Headers;
   setReject(reason: string): void;
 };
-type Environment = { GIG_INGEST_URL: string; GIG_INGEST_SECRET: string; SOCIAL_SYNC_URL?: string; WORKER_PURGE_URL?: string; CRON_SECRET?: string };
+type Environment = { GIG_INGEST_URL: string; GIG_INGEST_SECRET: string; SOCIAL_SYNC_URL?: string; WORKER_PURGE_URL?: string; AUTO_WITHDRAWAL_URL?: string; CRON_SECRET?: string };
+// Hourly jobs run on this minute of each hour (the cron itself fires every minute).
+const HOURLY_MINUTE = 5;
 
 async function runJob(rawUrl: string, expectedPath: string, label: string, secret: string) {
   const target = new URL(rawUrl);
@@ -16,12 +18,14 @@ async function runJob(rawUrl: string, expectedPath: string, label: string, secre
 }
 
 const worker = {
-  async scheduled(_event: unknown, env: Environment) {
+  async scheduled(event: { scheduledTime?: number }, env: Environment) {
     if (!env.SOCIAL_SYNC_URL) throw new Error("Configure SOCIAL_SYNC_URL before enabling the social sync cron.");
     if (!env.CRON_SECRET || env.CRON_SECRET.length < 32) throw new Error("Configure the application's CRON_SECRET for social sync.");
     const results = await Promise.allSettled([
       runJob(env.SOCIAL_SYNC_URL, "/api/jobs/social-sync", "social sync", env.CRON_SECRET),
       ...(env.WORKER_PURGE_URL ? [runJob(env.WORKER_PURGE_URL, "/api/jobs/worker-purge", "worker purge", env.CRON_SECRET)] : []),
+      ...(env.AUTO_WITHDRAWAL_URL && event.scheduledTime !== undefined && new Date(event.scheduledTime).getUTCMinutes() === HOURLY_MINUTE
+        ? [runJob(env.AUTO_WITHDRAWAL_URL, "/api/jobs/auto-withdrawals", "auto-withdrawal", env.CRON_SECRET)] : []),
     ]);
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { destinationLabel, parseDestination } from "@/lib/payoutDestination";
 import dynamic from "next/dynamic";
 import AdminNavigationDrawer from "./AdminNavigationDrawer";
 import WorkerAccessPanel from "./WorkerAccessPanel";
@@ -193,7 +194,10 @@ type ApiSnapshot = {
 type UpiConfig = {
   workerId: string;
   workerCode?: string;
+  /** Payout destination key: a UPI ID or bank:<IFSC>:<account number>. */
   upiId: string;
+  method?: "UPI" | "Bank";
+  bankHolderName?: string;
   verified: boolean;
   verifiedAt?: string;
   payoutSchedule?: string;
@@ -275,9 +279,24 @@ type AdminPayoutBatch = {
   processedAt?: string;
   paidAt?: string;
   method: string;
+  /** The destination snapshotted when the payout was requested, and the bank account holder. */
+  payTo?: string;
+  payeeName?: string;
   notes?: string[];
   items: AdminPayoutItem[];
 };
+
+/** "UPI name@bank" or "Bank A/c 1234567890 · HDFC0001234 · Holder": everything needed to send the payment. */
+function payoutDestinationText(key?: string, holder?: string) {
+  if (!key) return "";
+  return parseDestination(key)?.method === "Bank" ? `Bank ${destinationLabel(key, { full: true, holder })}` : `UPI ${key}`;
+}
+/** Whether the payout can be paid as requested: its destination must still be the creator's verified one. */
+function payToStatus(batch: AdminPayoutBatch, upi?: UpiConfig | null) {
+  if (!upi?.upiId) return "No payout method";
+  if (batch.payTo && batch.payTo !== upi.upiId) return "Changed since request";
+  return upi.verified ? "Verified" : "Unverified";
+}
 
 type ScheduleConfig = {
   times: string[];
@@ -1383,7 +1402,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
     if (fresh.length) {
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
       setToast({
-        message: fresh.length === 1 ? `New UPI to verify: ${fresh[0].upiId}${fresh[0].workerCode ? ` (${fresh[0].workerCode})` : ""}` : `${fresh.length} new UPIs to verify`,
+        message: fresh.length === 1 ? `New payout details to verify: ${payoutDestinationText(fresh[0].upiId, fresh[0].bankHolderName)}${fresh[0].workerCode ? ` (${fresh[0].workerCode})` : ""}` : `${fresh.length} new payout details to verify`,
         tone: "success",
       });
       toastTimerRef.current = window.setTimeout(() => setToast(null), 5000);
@@ -2126,7 +2145,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       invalidateAdminUpiQueue(adminId);
       setUpiConfigs((prev) => prev.map((u) => (u.workerId === upi.workerId && u.upiId === upi.upiId ? { ...u, verified: true, verifiedAt: new Date().toISOString() } : u)));
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-      setToast({ message: `UPI ${upi.upiId} verified. The creator sees it instantly.`, tone: "success" });
+      setToast({ message: `${payoutDestinationText(upi.upiId, upi.bankHolderName)} verified. The creator sees it instantly.`, tone: "success" });
       toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
       void loadUpiConfigs();
     } else setToast({ message: res?.error || "UPI verification failed", tone: "danger" });
@@ -2332,6 +2351,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
       resubmitCount: workItems.filter(item => isWorkerMatch(worker, item) && isResubmission(item)).length,
       approvedINR: getWorkerApprovedEarnings(worker),
       upiId: upi?.upiId,
+      upiHolderName: upi?.bankHolderName,
       upiVerified: upi?.verified === true,
     };
   }), [workers, getWorkerUpi, linkedByWorker, accountsForWorker, workItems, isWorkerMatch, isCountedSubmission, isResubmission, getWorkerApprovedEarnings]);
@@ -2586,15 +2606,15 @@ function AdminConsole({ adminId }: { adminId: string }) {
                       access={<WorkerAccessPanel worker={selectedWorker} onChanged={loadSnapshot} />}
                       profile={
                         <div className="space-y-4">
-                          <Card title="Payment details" subtitle="UPI verification and payout preferences" compact>
+                          <Card title="Payment details" subtitle="Bank account or UPI ID, and its verification" compact>
                             {(() => {
                               const upi = getWorkerUpi(selectedWorker);
                               if (!upi?.upiId) return null;
                               return (
                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                                  <span className="break-all">UPI: {upi.upiId}</span>
+                                  <span className="break-all">{payoutDestinationText(upi.upiId, upi.bankHolderName)}</span>
                                   <Chip tone={upi.verified ? "success" : "warn"}>{upi.verified ? "Verified" : "Unverified"}</Chip>
-                                {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified UPI</button>}
+                                {!upi.verified && <button type="button" className="font-semibold text-sky-700 underline" onClick={(event) => { event.stopPropagation(); void verifyWorkerUpi(upi); }} onKeyDown={(event) => event.stopPropagation()}>Confirm verified</button>}
                                   {upi.payoutSchedule && upi.payoutDay && (
                                     <span className="text-[11px] text-slate-400">
                                       {upi.payoutSchedule} • {upi.payoutDay}
@@ -2603,7 +2623,7 @@ function AdminConsole({ adminId }: { adminId: string }) {
                                 </div>
                               );
                             })()}
-                            {!getWorkerUpi(selectedWorker)?.upiId ? <p className="text-sm text-slate-500">No UPI details added yet.</p> : null}
+                            {!getWorkerUpi(selectedWorker)?.upiId ? <p className="text-sm text-slate-500">No bank account or UPI ID added yet.</p> : null}
                           </Card>
                           <div className="rounded-md border border-slate-200 bg-white p-3">
                             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2942,11 +2962,11 @@ function AdminConsole({ adminId }: { adminId: string }) {
                               </dd>
                               <dt className="text-slate-500">Method</dt>
                               <dd className="truncate text-right text-slate-900">{b.method}</dd>
-                              {upi?.upiId ? (
+                              {b.payTo || upi?.upiId ? (
                                 <>
-                                  <dt className="text-slate-500">UPI</dt>
-                                  <dd className="truncate text-right text-slate-900">
-                                    {upi.upiId} · {upi.verified ? "Verified" : "Unverified"}
+                                  <dt className="text-slate-500">Pay to</dt>
+                                  <dd className="break-words text-right text-slate-900">
+                                    {payoutDestinationText(b.payTo ?? upi?.upiId, b.payTo ? b.payeeName : upi?.bankHolderName)} · {payToStatus(b, upi)}
                                   </dd>
                                 </>
                               ) : null}
@@ -2999,9 +3019,9 @@ function AdminConsole({ adminId }: { adminId: string }) {
                                   <div className="text-sm font-extrabold text-slate-900">
                                     {b.workerName ?? "Worker"} ({b.workerCode ?? b.workerId})
                                   </div>
-                                  {upi?.upiId && (
-                                    <div className="mt-1 text-xs text-slate-500">
-                                      UPI: {upi.upiId} • {upi.verified ? "Verified" : "Unverified"}
+                                  {(b.payTo || upi?.upiId) && (
+                                    <div className="mt-1 break-words text-xs text-slate-500">
+                                      Pay to {payoutDestinationText(b.payTo ?? upi?.upiId, b.payTo ? b.payeeName : upi?.bankHolderName)} • {payToStatus(b, upi)}
                                     </div>
                                   )}
                                 </td>

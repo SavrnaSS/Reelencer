@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { destinationLabel, parseDestination } from "@/lib/payoutDestination";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
 import { workerDeletionLabel } from "@/lib/workerDeletion";
 import {
@@ -38,6 +39,8 @@ function UpiReview({ worker, onVerify }: { worker: WorkerDirectoryRecord; onVeri
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (open) confirm.current?.focus(); }, [open]);
   const cancel = () => { setOpen(false); review.current?.focus(); };
+  const kind = parseDestination(worker.upiId)?.method === "Bank" ? "Bank" : "UPI";
+  const label = destinationLabel(worker.upiId, { full: true, holder: worker.upiHolderName });
   const verify = async () => {
     if (running.current || !worker.upiId) return;
     running.current = true;
@@ -49,12 +52,12 @@ function UpiReview({ worker, onVerify }: { worker: WorkerDirectoryRecord; onVeri
     }
   };
   return <div className={`${styles.upiReview} ${open ? styles.upiReviewOpen : ""}`}>
-    <span className={styles.chipPending}>UPI unverified<button ref={review} type="button" disabled={busy} aria-expanded={open} aria-controls={panelId} aria-label={`Review payout UPI for ${worker.name}`} onClick={() => open ? cancel() : setOpen(true)}>Review</button></span>
+    <span className={styles.chipPending}>{kind} unverified<button ref={review} type="button" disabled={busy} aria-expanded={open} aria-controls={panelId} aria-label={`Review payout ${kind === "UPI" ? "UPI" : "bank account"} for ${worker.name}`} onClick={() => open ? cancel() : setOpen(true)}>Review</button></span>
     {open ? <div id={panelId} className={styles.upiConfirmation} onKeyDown={event => { if (event.key === "Escape" && !busy) { event.stopPropagation(); cancel(); } }}>
-      <strong>Verify payout UPI for {worker.name}</strong>
-      <code>{worker.upiId}</code>
-      <p>Confirm only after checking this exact payout address.</p>
-      <div><button type="button" disabled={busy} onClick={cancel}>Cancel</button><button ref={confirm} type="button" disabled={busy} aria-label={`Confirm ${worker.upiId} as verified for ${worker.name}`} onClick={() => void verify()}>{busy ? "Verifying…" : "Confirm verified"}</button></div>
+      <strong>Verify payout {kind === "UPI" ? "UPI" : "bank account"} for {worker.name}</strong>
+      <code>{label}</code>
+      <p>{kind === "UPI" ? "Confirm only after checking this exact payout address." : "Confirm only after checking these exact bank details; the holder’s name should match the creator’s KYC."}</p>
+      <div><button type="button" disabled={busy} onClick={cancel}>Cancel</button><button ref={confirm} type="button" disabled={busy} aria-label={`Confirm ${label} as verified for ${worker.name}`} onClick={() => void verify()}>{busy ? "Verifying…" : "Confirm verified"}</button></div>
     </div> : null}
   </div>;
 }
@@ -171,7 +174,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
               <span className={activity ? styles.activity : styles.noActivity}>{activity || "No work yet"}</span>
               {worker.resubmitCount > 0 ? <span className={styles.chipWarn}>{worker.resubmitCount} {worker.resubmitCount === 1 ? "resubmit" : "resubmits"}</span> : null}
               {worker.upiId ? worker.upiVerified
-                ? <span className={styles.chipOk} title={`UPI ${worker.upiId}`}>UPI verified</span>
+                ? <span className={styles.chipOk} title={destinationLabel(worker.upiId, { full: true, holder: worker.upiHolderName })}>{parseDestination(worker.upiId)?.method === "Bank" ? "Bank verified" : "UPI verified"}</span>
                 : <UpiReview key={`${worker.id}:${worker.upiId}`} worker={worker} onVerify={onVerifyUpi} />
                 : null}
             </div>

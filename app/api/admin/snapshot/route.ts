@@ -25,6 +25,6 @@ export const GET=withApi({auth:'admin'},async()=>{
     accounts:(accounts.data??[]).map(a=>({id:a.id,handle:a.handle,niche:a.niche,ownerTeam:a.owner_team,policyTier:a.policy_tier,health:a.health,rules:a.rules,allowedAudios:a.allowed_audios,requiredHashtags:a.required_hashtags})),
     assignments:[...unique.values()],
     workItems:(items.data??[]).map(row=>workItemResponse(row,codes.get(row.worker_id)??row.worker_id)),
-    upiConfigs:(upi.data??[]).map(row=>({workerId:row.worker_id,workerCode:codes.get(row.worker_id),upiId:row.upi_id,verified:row.verified,verifiedAt:row.verified_at,payoutSchedule:row.payout_schedule,payoutDay:row.payout_day})),
+    upiConfigs:(upi.data??[]).map(row=>({workerId:row.worker_id,workerCode:codes.get(row.worker_id),upiId:row.upi_id,method:row.method??'UPI',bankHolderName:row.bank_holder_name??undefined,verified:row.verified,verifiedAt:row.verified_at,payoutSchedule:row.payout_schedule,payoutDay:row.payout_day})),
   });
 });

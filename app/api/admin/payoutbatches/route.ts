@@ -60,6 +60,9 @@ async function handleGET(req: Request) {
         processedAt: b.processed_at ?? undefined,
         paidAt: b.paid_at ?? undefined,
         method: b.method ?? "UPI",
+        // Where this payout must be sent, as requested (destination key + account holder for bank transfers).
+        payTo: b.upi_id_snapshot ?? undefined,
+        payeeName: b.payee_name_snapshot ?? undefined,
         notes: Array.isArray(b.notes) ? b.notes : b.notes ? [String(b.notes)] : [],
         items: itemsByBatch.get(String(b.id)) ?? [],
       };

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { LEGAL, legalPartyLabel } from "@/lib/legal";
 import { publicPageMetadata } from "@/lib/site";
 import { formatAmount } from "@/lib/money";
-import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
+import { KYC_FREE_WITHDRAWAL_LIMIT_INR, MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
 import { Bullets, ContactCard, Glyph, LegalPage, MailLink, Note, Section, type IconName } from "@/app/_components/legal/LegalPage";
 
 export const metadata: Metadata = publicPageMetadata({
@@ -15,6 +15,7 @@ export const metadata: Metadata = publicPageMetadata({
 // Keep the effective date in step with any change to these terms.
 const EFFECTIVE = { iso: "2026-10-30", label: "30 October 2026" };
 const PAYOUT_MINIMUM = formatAmount(MIN_PAYOUT_REQUEST_INR);
+const KYC_FREE_LIMIT = formatAmount(KYC_FREE_WITHDRAWAL_LIMIT_INR);
 
 const SECTIONS = [
   { id: "agreement", title: "Agreeing to these terms" },
@@ -178,7 +179,7 @@ export default function TermsPage() {
         <div className="rounded-xl border border-[#d8e8dc] bg-[#f3f9f4] p-4">
           <div className="text-[13.5px] font-semibold text-[#173d2a]">To request a payout, you need:</div>
           <ul className="mt-2 grid gap-1.5 text-[13.5px] leading-6 text-[#2c4a37] sm:grid-cols-2">
-            {[`At least ${PAYOUT_MINIMUM} in approved earnings`, "Approved identity verification (KYC)", "A UPI ID verified by our team", "No other payout already in progress"].map((item) => (
+            {[`At least ${PAYOUT_MINIMUM} in approved earnings`, `One-time identity verification (KYC) once your earnings pass ${KYC_FREE_LIMIT} in total`, "A UPI ID verified by our team", "No other payout already in progress"].map((item) => (
               <li key={item} className="flex gap-2">
                 <Glyph name="check" className="mt-[3px] h-4 w-4 shrink-0 text-[#2e7d4f]" />
                 {item}
@@ -188,7 +189,7 @@ export default function TermsPage() {
         </div>
         <Bullets
           items={[
-            <><strong>Payout schedule:</strong> choose weekly (on a weekday) or monthly (on a day from the 1st to the 28th) in Payouts. We process requests in line with your schedule, but timing can vary with reviews and bank or UPI delays.</>,
+            <><strong>Withdrawals:</strong> you can request a withdrawal yourself once every 7 days. If you switch on auto-withdrawal in Payouts, we also request whatever is withdrawable each month on the day you choose (the 1st to the 28th, India time), when it meets the minimum. You can switch it off at any time. Timing can vary with reviews and bank or UPI delays.</>,
             <><strong>Your UPI ID:</strong> payouts go to the UPI ID verified when you made the request. A new UPI ID has to be verified again before it can be paid. We aren&apos;t responsible for payments sent to a UPI ID you gave us that turns out to be wrong.</>,
             <><strong>Failed payments:</strong> if a payment fails, for example because the UPI ID can&apos;t receive it, the amount returns to your approved earnings and you can request it again.</>,
             <><strong>Charges:</strong> any charges your bank or UPI app applies are outside our control.</>,

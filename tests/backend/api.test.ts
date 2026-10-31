@@ -20,6 +20,8 @@ let confirmed = true;
 let active = true;
 let registeredAdmin = true;
 let blockedIp = false;
+let autoWithdrawalBody: Record<string, unknown> | null = null;
+let payoutMethodBody: Record<string, unknown> | null = null;
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 
 before(() => {
@@ -50,6 +52,15 @@ before(() => {
     if(url.pathname==='/rest/v1/worker_ip_blocks') return json(blockedIp ? [{user_id:other}] : []);
     if(url.pathname==='/rest/v1/gigs') return json([{id:'gig-1',status:'Open',gig_type:'Project'}]);
     if(url.pathname==='/rest/v1/gig_applications') return json([]);
+    if(url.pathname==='/rest/v1/rpc/save_payout_method') {
+      payoutMethodBody=JSON.parse(String(init?.body));
+      const bank=payoutMethodBody?.p_method==='Bank';
+      return json({upi_id:bank?`bank:${payoutMethodBody?.p_ifsc}:${payoutMethodBody?.p_account}`:payoutMethodBody?.p_upi,method:payoutMethodBody?.p_method,bank_holder_name:payoutMethodBody?.p_holder,bank_account_number:payoutMethodBody?.p_account,bank_ifsc:payoutMethodBody?.p_ifsc,verified:false,payout_schedule:'Monthly',payout_day:'1'});
+    }
+    if(url.pathname==='/rest/v1/rpc/set_auto_withdrawal') {
+      autoWithdrawalBody=JSON.parse(String(init?.body));
+      return json({upi_id:'worker@bank',verified:true,payout_schedule:'Monthly',payout_day:String(autoWithdrawalBody?.p_day),auto_withdraw:autoWithdrawalBody?.p_enabled,auto_withdraw_since:'2026-10-31T02:30:00Z'});
+    }
     if(url.pathname==='/rest/v1/rpc/worker_metrics') return json({money:{earnings:3064.09,pending:1622.64}});
     if(url.pathname==='/rest/v1/work_items') return json([{id:'available',reward_inr:'64.09'},{id:'paid',reward_inr:'1000.00'},{id:'reserved',reward_inr:'2000.00'}]);
     if(url.pathname==='/rest/v1/payout_items') return json([{id:'p1',work_item_id:'paid'},{id:'p2',work_item_id:'reserved'}]);
@@ -310,4 +321,47 @@ test('view authenticity evidence and review are admin-only and browser-supplied 
     const result=await POST(req('/api/view-payout-claims','POST',JSON.stringify(input),'admin'),ctx);
     assert.equal(result.status,400);
   }
+});
+
+test('creators switch monthly auto-withdrawal on for their own account and invalid days never reach the database',async()=>{
+  const { PATCH }=await import('../../app/api/upi/route');
+  autoWithdrawalBody=null;
+  for (const body of ['{"autoWithdraw":true,"autoDay":29}','{"autoWithdraw":"yes","autoDay":1}','{"autoDay":1}','not json']) {
+    assert.equal((await PATCH(req('/api/upi','PATCH',body,'worker'),ctx)).status,400);
+  }
+  assert.equal(autoWithdrawalBody,null);
+  const response=await PATCH(req('/api/upi','PATCH',JSON.stringify({autoWithdraw:true,autoDay:5}),'worker'),ctx);
+  assert.equal(response.status,200);
+  assert.deepEqual(autoWithdrawalBody,{p_worker:worker,p_enabled:true,p_day:5});
+  const saved=await response.json();
+  assert.equal(saved.autoWithdraw,true);
+  assert.equal(saved.payoutDay,'5');
+  assert.equal(saved.autoWithdrawSince,'2026-10-31T02:30:00Z');
+  assert.equal((await PATCH(req('/api/upi','PATCH',JSON.stringify({autoWithdraw:false,autoDay:5})),ctx)).status,401);
+});
+
+test('creators save a bank account with normalised details, and the full account number never comes back',async()=>{
+  const { PUT }=await import('../../app/api/upi/route');
+  payoutMethodBody=null;
+  for (const body of [
+    {method:'Bank',accountHolder:'Asha Rao',accountNumber:'12345678',ifsc:'HDFC0001234'},
+    {method:'Bank',accountHolder:'Asha Rao',accountNumber:'123456789012',ifsc:'HDFC1001234'},
+    {method:'Bank',accountHolder:'4sha',accountNumber:'123456789012',ifsc:'HDFC0001234'},
+    {method:'UPI',upiId:'nope'},
+    {method:'Cheque'},
+  ]) {
+    const response=await PUT(req('/api/upi','PUT',JSON.stringify(body),'worker'),ctx);
+    assert.equal(response.status,400,JSON.stringify(body));
+  }
+  assert.equal(payoutMethodBody,null,'invalid details never reach the database');
+  const response=await PUT(req('/api/upi','PUT',JSON.stringify({method:'Bank',accountHolder:'  Asha   Rao ',accountNumber:'1234 5678 9012',ifsc:'hdfc0001234'}),'worker'),ctx);
+  assert.equal(response.status,200);
+  assert.deepEqual(payoutMethodBody,{p_worker:worker,p_method:'Bank',p_upi:null,p_holder:'Asha Rao',p_account:'123456789012',p_ifsc:'HDFC0001234'});
+  const saved=await response.json();
+  assert.equal(saved.method,'Bank');
+  assert.equal(saved.upiId,'');
+  assert.deepEqual(saved.bank,{holderName:'Asha Rao',accountNumberMasked:'••••9012',ifsc:'HDFC0001234'});
+  assert.equal(JSON.stringify(saved).includes('123456789012'),false);
+  const upi=await PUT(req('/api/upi','PUT',JSON.stringify({method:'UPI',upiId:'asha@okhdfcbank'}),'worker'),ctx);
+  assert.equal((await upi.json()).upiId,'asha@okhdfcbank');
 });

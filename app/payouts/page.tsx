@@ -7,14 +7,20 @@ import { BrandLogo } from "@/app/_components/BrandLogo";
 import { supabase } from "@/lib/supabaseClient";
 import { buildPayoutReadiness, describeKycStatus, type KycStatus } from "@/lib/payoutReadiness";
 import { formatAmount as formatINR } from "@/lib/money";
-import { MIN_PAYOUT_REQUEST_INR } from "@/lib/payoutPolicy";
+import {
+  KYC_FREE_WITHDRAWAL_LIMIT_INR,
+  MANUAL_WITHDRAWAL_INTERVAL_DAYS,
+  MIN_PAYOUT_REQUEST_INR,
+  autoWithdrawalDay,
+  nextAutoWithdrawalAt,
+  nextManualWithdrawalAt,
+} from "@/lib/payoutPolicy";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
 import { usePayoutIdentity } from "@/lib/usePayoutIdentity";
 import { summarizePayoutBatches } from "@/lib/creatorEarnings";
-import ReelEarningsSummary from "@/app/dashboard/ReelEarningsSummary";
-import { MetricTile } from "@/app/dashboard/dashboardUi";
 import { CREATOR_HOME_HREF } from "@/lib/routes";
 import { KycRow, KycSheet, type KycProfile } from "./KycPanel";
+import PayoutMethodCard, { hasPayoutMethod, payoutMethodLabel, type PayoutMethodConfig } from "./PayoutMethodCard";
 import PayoutHistoryCard from "./PayoutHistoryCard";
 
 // Matches the server: weekly payouts pick a weekday, monthly payouts a day of the month (1–28).
@@ -34,6 +40,7 @@ type WorkerMetrics = {
     pending?: number;
     available?: number;
     committed?: number;
+    /** The part of the balance a withdrawal without KYC can include. */
   };
   sla?: {
     met?: number;
@@ -41,13 +48,13 @@ type WorkerMetrics = {
   };
 };
 
-type UpiConfig = {
-  upiId: string;
-  verified: boolean;
-  verifiedAt?: string;
-  updatedAt?: string;
+// Payout method (bank account or UPI ID, see PayoutMethodCard) plus the auto-withdrawal settings.
+type UpiConfig = PayoutMethodConfig & {
   payoutSchedule: UpiSchedule;
   payoutDay: PayoutDay;
+  /** Monthly auto-withdrawal, switched on by the creator; it only acts on dates from `autoWithdrawSince`. */
+  autoWithdraw?: boolean;
+  autoWithdrawSince?: string;
 };
 
 type KycResponse = {
@@ -83,41 +90,32 @@ type PayoutBatch = {
   items: PayoutItem[];
   notes: string[];
   paymentReference?: string;
+  /** "auto" for the monthly automatic withdrawal; manual requests are limited to one every 7 days. */
   origin?: "manual" | "auto";
+  /** Where it was sent: a UPI ID or a masked bank account. */
+  payTo?: string;
 };
 
-const DEFAULT_UPI: UpiConfig = {
-  upiId: "",
-  verified: false,
-  payoutSchedule: "Weekly",
-  payoutDay: "Fri",
-};
-
-const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
-const WEEK_DAY_NAMES: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
 const MONTH_DAYS = Array.from({ length: 28 }, (_, i) => String(i + 1));
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
-/** "Weekly on Fridays" / "Monthly on the 5th". */
+/** "Auto-withdraws on the 5th of every month". */
 function scheduleLabel(schedule: string, day: string) {
-  return schedule === "Monthly" ? `Monthly on the ${ordinal(Number(day) || 1)}` : `Weekly on ${WEEK_DAY_NAMES[day] ?? day}s`;
+  return `Auto-withdraws on the ${ordinal(autoWithdrawalDay(schedule, day))} of every month`;
 }
-const sinceLabel = (value?: string | null) => {
-  const t = value ? Date.parse(value) : NaN;
-  if (!Number.isFinite(t)) return null;
-  const minutes = Math.round((Date.now() - t) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
-};
+const IST = "Asia/Kolkata";
+const shortDate = (value: Date) => value.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: IST });
+const shortDateTime = (value: Date) =>
+  value.toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: IST });
+/** "in 3d 4h" / "in 5h 20m" / "in 12m". */
+function countdown(to: Date, now: number) {
+  const minutes = Math.max(1, Math.ceil((to.getTime() - now) / 60_000));
+  const days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60), mins = minutes % 60;
+  return days ? `in ${days}d ${hours}h` : hours ? `in ${hours}h ${mins}m` : `in ${mins}m`;
+}
+const istMonth = (value: number) => new Date(value + 5.5 * 3_600_000).toISOString().slice(0, 7);
 
 function batchTotal(batch: PayoutBatch) {
   return (batch.items ?? []).reduce((sum, item) => sum + Number(item.amountINR ?? 0), 0);
-}
-
-function isValidUpi(upi: string) {
-  const text = String(upi ?? "").trim();
-  return text.length >= 5 && text.length <= 100 && /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+$/.test(text);
 }
 
 /** Each section loads independently after the signed-in account is verified. */
@@ -128,10 +126,11 @@ function PayoutsSkeleton() {
       <div className="mx-auto w-full max-w-6xl px-3.5 pt-6 sm:px-6 lg:px-8">
         <div className="h-9 w-40 animate-pulse rounded-xl bg-[#e7efe5]" />
         <div className="mt-2 h-4 w-56 animate-pulse rounded-full bg-[#edf3eb]" />
-        <div className="mt-5 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="h-[104px] animate-pulse rounded-[16px] bg-white/80 ring-1 ring-[#e6ebe2]" />
-          ))}
+        {/* Same shape as the page: balance card beside the checklist, then the overview. */}
+        <div className="mt-5 grid gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+          <div className="h-[280px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
+          <div className="h-[280px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
+          <div className="h-[200px] animate-pulse rounded-2xl bg-white/80 ring-1 ring-[#e6ebe2]" />
         </div>
       </div>
     </div>
@@ -210,6 +209,9 @@ const seenFrom = (s: { metrics: WorkerMetrics | null; batches: PayoutBatch[]; up
 function describeChange(prev: SeenState, next: SeenState, batches: PayoutBatch[], kycReason: string | null): { tone: "success" | "danger"; text: string } | null {
   for (const batch of batches) {
     const before = prev.batches[batch.id];
+    if (!before && batch.origin === "auto") {
+      return { tone: "success", text: `Your monthly auto-withdrawal of ${formatINR(batchTotal(batch))} was requested. The team reviews it next.` };
+    }
     if (!before || before === batch.status) continue;
     const amount = formatINR(batchTotal(batch));
     if (batch.status === "Paid") return { tone: "success", text: `${amount} was paid to your UPI.` };
@@ -257,9 +259,8 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
   const [upiEditorOpen, setUpiEditorOpen] = useState(false);
-  const [upiDraft, setUpiDraft] = useState<UpiConfig>(DEFAULT_UPI);
-  const [savingUpi, setSavingUpi] = useState(false);
-  const [upiError, setUpiError] = useState<string | null>(null);
+  const [savingAuto, setSavingAuto] = useState(false);
+  const autoSwitchRef = useRef<HTMLButtonElement | null>(null);
   const loadInFlightRef = useRef(false);
   // Which sections have real data (fresh or from this session's snapshot); each renders as soon as its own is in.
   const [ready, setReady] = useState({ metrics: false, batches: false, upi: false, kyc: false });
@@ -494,11 +495,26 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     if (kycStatus !== "approved") queueMicrotask(() => setKycSheetOpen(true));
   }, [ready.kyc, kycStatus]);
 
+  // Ticks once a minute so the weekly limit unlocks and countdowns stay current without a refresh.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    setUpiDraft(upi ?? DEFAULT_UPI);
-  }, [upi]);
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const lastManualAt = useMemo(
+    () => batches.filter((batch) => batch.origin !== "auto" && batch.status !== "Failed").map((batch) => batch.createdAt).sort().at(-1) ?? null,
+    [batches]
+  );
+  const nextManualAt = useMemo(() => nextManualWithdrawalAt(lastManualAt, now), [lastManualAt, now]);
+  const autoDay = autoWithdrawalDay(upi?.payoutSchedule, upi?.payoutDay);
+  const autoDoneThisMonth = batches.some((batch) => batch.origin === "auto" && istMonth(Date.parse(batch.createdAt)) === istMonth(now));
+  const autoOn = upi?.autoWithdraw === true;
+  const nextAutoAt = useMemo(() => nextAutoWithdrawalAt(autoDay, autoDoneThisMonth, now, upi?.autoWithdrawSince), [autoDay, autoDoneThisMonth, now, upi?.autoWithdrawSince]);
+  const autoIsToday = shortDate(nextAutoAt) === shortDate(new Date(now));
 
   const approvedEarnings = metrics?.money?.available ?? 0;
+  // Everything the wallet has been credited: available, in a payout or paid out. Past the limit, KYC is required.
+  const lifetimeCredited = approvedEarnings + (metrics?.money?.committed ?? 0);
   const processingBatch = useMemo(() => batches.find((batch) => batch.status === "Processing" || batch.status === "Draft") ?? null, [batches]);
   const kycMeta = useMemo(() => describeKycStatus(kycStatus, kycRejectionReason), [kycStatus, kycRejectionReason]);
   const payoutReadiness = useMemo(
@@ -511,9 +527,14 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
         eligibleItemCount: approvedEarnings > 0 ? 1 : 0,
         eligibleAmount: approvedEarnings,
         minimumAmount: MIN_PAYOUT_REQUEST_INR,
+        lifetimeCredited,
+        nextManualAt,
       }),
-    [approvedEarnings, kycStatus, kycRejectionReason, processingBatch, upi?.verified]
+    [approvedEarnings, kycStatus, kycRejectionReason, processingBatch, upi?.verified, lifetimeCredited, nextManualAt]
   );
+  // KYC is needed once, and only for withdrawals over the KYC-free limit.
+  const kycBlocking = payoutReadiness.kycRequired;
+  const kycLimitLabel = formatINR(KYC_FREE_WITHDRAWAL_LIMIT_INR);
   const payoutSummary = useMemo(() => summarizePayoutBatches(batches), [batches]);
   const requestBlockedReason = payoutReadiness.primaryBlocker?.detail ?? null;
   const thresholdGap = Math.max(0, MIN_PAYOUT_REQUEST_INR - approvedEarnings);
@@ -537,7 +558,11 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload?.error || "Unable to request payout.");
-      setNotice({ tone: "success", text: "Payout request submitted. Admin review will continue in the next payout cycle." });
+      const amount = Number(payload?.amount);
+      setNotice({
+        tone: "success",
+        text: `${Number.isFinite(amount) && amount > 0 ? `${formatINR(amount)} payout requested.` : "Payout request submitted."} The team reviews it in the next payout cycle.`,
+      });
       await loadPayoutData("refresh");
     } catch (err) {
       setNotice({ tone: "danger", text: err instanceof Error ? err.message : "Unable to request payout." });
@@ -546,57 +571,57 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     }
   };
 
-  const saveAndVerifyUpi = async () => {
-    setUpiError(null);
-    if (!isValidUpi(upiDraft.upiId)) {
-      setUpiError("Enter a valid UPI ID like name@okhdfcbank.");
-      return;
-    }
 
-    setSavingUpi(true);
+  const kycOk = kycStatus === "approved";
+  const hasMethod = hasPayoutMethod(upi);
+  const upiOk = hasMethod && Boolean(upi?.verified);
+  const minimumOk = approvedEarnings >= MIN_PAYOUT_REQUEST_INR;
+  const noActiveBatch = !processingBatch;
+  const reel = socialAccounts.earnings;
+  const reelLoading = socialAccounts.load.state === "loading";
+  const reelError = socialAccounts.load.state === "error" ? socialAccounts.load.message : socialAccounts.load.state === "ready" ? socialAccounts.load.refreshError : undefined;
+  // Reel wallet totals when linked accounts exist; otherwise the wallet's own approved/pending totals.
+  const creditedTotal = reel?.accountCount ? reel.approved : metrics?.money?.earnings;
+  const pendingTotal = reel?.accountCount ? reel.pending : metrics?.money?.pending;
+
+  // Auto-withdrawal switch and day: applied at once (optimistically), rolled back if the server refuses.
+  const saveAutoWithdrawal = async (enabled: boolean, day: number) => {
+    if (!upi || !hasPayoutMethod(upi) || savingAuto) return;
+    const previous = upi;
+    setUpi({ ...upi, autoWithdraw: enabled, payoutSchedule: "Monthly", payoutDay: String(day), autoWithdrawSince: enabled ? new Date().toISOString() : undefined });
+    setSavingAuto(true);
     try {
       const { data } = await payoutSession();
       const token = data.session?.access_token;
       if (!token) throw new Error("Not authenticated");
-
-      const upiChanged = upiDraft.upiId.trim() !== (upi?.upiId ?? "");
-      const payload = { upiId: upiDraft.upiId.trim(), payoutSchedule: upiDraft.payoutSchedule, payoutDay: upiDraft.payoutDay };
-
       const res = await fetch("/api/upi", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ autoWithdraw: enabled, autoDay: day }),
       });
       const next = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(next?.error || "Unable to update UPI configuration.");
-
+      if (!res.ok) throw new Error(next?.error || "Auto-withdrawal could not be updated.");
       setUpi(next);
-      setUpiDraft(next);
-      setUpiEditorOpen(false);
+      const first = nextAutoWithdrawalAt(day, autoDoneThisMonth, Date.now(), next.autoWithdrawSince);
       setNotice({
         tone: "success",
-        text: upiChanged ? "UPI saved. The team will verify it, and this page updates the moment they do." : `Payout schedule updated: ${scheduleLabel(next.payoutSchedule, next.payoutDay).toLowerCase()}.`,
+        text: enabled
+          ? `Auto-withdrawal is on. We'll request what's withdrawable on the ${ordinal(day)} of every month, starting ${shortDate(first)}.`
+          : "Auto-withdrawal is off. You can still withdraw manually once a week.",
       });
-      await loadPayoutData("refresh");
     } catch (err) {
-      setUpiError(err instanceof Error ? err.message : "Unable to update UPI configuration.");
+      setUpi(previous);
+      setNotice({ tone: "danger", text: err instanceof Error ? err.message : "Auto-withdrawal could not be updated." });
     } finally {
-      setSavingUpi(false);
+      setSavingAuto(false);
     }
   };
-
-  const kycOk = kycStatus === "approved";
-  const upiOk = Boolean(upi?.verified);
-  const minimumOk = approvedEarnings >= MIN_PAYOUT_REQUEST_INR;
-  const noActiveBatch = !processingBatch;
-  const reel = socialAccounts.earnings;
+  const focusAutoSwitch = () => {
+    autoSwitchRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    autoSwitchRef.current?.focus({ preventScroll: true });
+  };
 
   const openUpiEditor = () => {
-    setUpiDraft(upi ?? DEFAULT_UPI);
-    setUpiError(null);
     setUpiEditorOpen(true);
     requestAnimationFrame(() => upiSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
@@ -606,17 +631,17 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
   type CheckAction = { label: string; href?: string; onClick?: () => void };
   const actionFor = (key: CheckKey): CheckAction | null => {
     if (key === "kyc") return kycOk ? null : { label: kycStatus === "pending" ? "View status" : kycStatus === "rejected" ? "Fix KYC" : "Verify now", onClick: () => setKycSheetOpen(true) };
-    if (key === "upi") return upiOk ? null : { label: upi?.upiId ? "Edit UPI" : "Add UPI", onClick: openUpiEditor };
+    if (key === "upi") return upiOk ? null : { label: hasMethod ? "View details" : "Add details", onClick: openUpiEditor };
     if (key === "min") return minimumOk ? null : { label: "View earnings", href: "/dashboard?section=accounts" };
     return noActiveBatch ? null : { label: "View cycle", onClick: showHistory };
   };
   const readinessChecks: Array<{ key: CheckKey; ok: boolean; title: string; detail: string }> = [
-    { key: "kyc", ok: kycOk, title: "Identity verified (KYC)", detail: kycOk ? kycMeta.label : kycMeta.description },
+    { key: "kyc", ok: kycOk || !kycBlocking, title: "Identity verified (KYC)", detail: kycOk ? kycMeta.label : kycMeta.description },
     {
       key: "upi",
       ok: upiOk,
-      title: "Payout UPI verified",
-      detail: upi?.upiId ? `${upi.upiId}${upiOk ? "" : " · waiting for verification"}` : "Add a UPI ID to receive payouts.",
+      title: upi?.bank ? "Payout bank account verified" : "Payout method verified",
+      detail: hasMethod ? `${payoutMethodLabel(upi)}${upiOk ? "" : " · waiting for verification"}` : "Add a bank account or UPI ID to receive payouts.",
     },
     {
       key: "min",
@@ -626,9 +651,13 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
     },
     {
       key: "batch",
-      ok: noActiveBatch,
-      title: noActiveBatch ? "No payout in progress" : "A payout is in progress",
-      detail: noActiveBatch ? "You can open a new request." : `A ${processingBatch?.status.toLowerCase()} cycle is already active.`,
+      ok: noActiveBatch && !nextManualAt,
+      title: !noActiveBatch ? "A payout is in progress" : nextManualAt ? "Weekly manual withdrawal used" : "No payout in progress",
+      detail: !noActiveBatch
+        ? `A ${processingBatch?.status.toLowerCase()} cycle is already active.`
+        : nextManualAt
+          ? `Next one opens ${shortDateTime(nextManualAt)} (${countdown(nextManualAt, now)}).`
+          : `You can withdraw manually once every ${MANUAL_WITHDRAWAL_INTERVAL_DAYS} days.`,
     },
   ];
   const checkReady: Record<CheckKey, boolean> = { kyc: ready.kyc, upi: ready.upi, min: ready.metrics, batch: ready.batches };
@@ -644,14 +673,12 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
       ? "kyc"
       : blockerCode.startsWith("upi")
         ? "upi"
-        : blockerCode === "active_batch"
+        : blockerCode === "active_batch" || blockerCode === "weekly_limit"
           ? "batch"
           : "min";
   const nextCheck = nextKey ? readinessChecks.find((c) => c.key === nextKey) : null;
   const nextAction = nextKey ? actionFor(nextKey) : null;
 
-  const inputClass =
-    "mt-2 h-12 w-full rounded-[14px] border border-[#dbe3d7] bg-white px-4 text-[16px] font-medium text-[#1f2e28] outline-none transition focus:border-[#8db35a] focus:ring-4 focus:ring-[#dce78f]/40";
   const card = "min-w-0 rounded-2xl border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]";
   const actionBtn =
     "inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-[#dfe7dc] bg-white px-3 text-[12px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50";
@@ -747,114 +774,303 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           </div>
         )}
 
-        <div className="mt-5">
-          <ReelEarningsSummary summary={reel} loading={socialAccounts.load.state === "loading"} error={socialAccounts.load.state === "error" ? socialAccounts.load.message : socialAccounts.load.state === "ready" ? socialAccounts.load.refreshError : undefined} />
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4" aria-label="Payout summary">
-          <MetricTile label="Available balance" value={metrics ? formatINR(approvedEarnings) : "–"} caption={failures.metrics ? "Balance could not be refreshed" : "From approved earnings"} loading={!ready.metrics} />
-          <MetricTile label="Paid out" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.credited)} caption="Lifetime" loading={!ready.batches} />
-          <MetricTile label="Pending withdrawal" value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.pending)} caption="In open payout cycles" loading={!ready.batches} />
-          <MetricTile label="Open payout cycles" value={failures.batches && !batches.length ? "–" : String(payoutSummary.liveBatches)} caption={`${batches.length} cycles in total`} loading={!ready.batches} />
-        </div>
-
         <div className="mt-5 flex flex-col gap-4 sm:gap-5 lg:grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:items-start">
           {/* Left column (desktop) */}
           <div className="contents lg:flex lg:flex-col lg:gap-5">
-            {/* Balance */}
-            <section aria-labelledby="balance-heading" className="relative order-1 overflow-hidden rounded-2xl bg-[#244e39] p-5 text-white shadow-sm sm:p-6">
-              <span className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-[#dce78f]/20 blur-3xl" />
-              <div className="relative">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 id="balance-heading" className="text-[12px] font-semibold uppercase tracking-[0.16em] text-white/70">
-                    Available to withdraw
+            {/* Balance: what can be withdrawn, the one action that fits, and how money leaves the wallet. */}
+            <section aria-labelledby="balance-heading" className={`${card} order-1 overflow-hidden`}>
+              <div className="p-4 sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 id="balance-heading" className="text-[13px] font-semibold text-[#5f6f65]">
+                    Wallet balance
                   </h2>
-                  {upi?.upiId ? (
-                    <span className="truncate rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/80">
-                      {upi.payoutSchedule} · {upi.payoutDay}
-                    </span>
+                  {hasMethod ? (
+                    <button
+                      type="button"
+                      onClick={focusAutoSwitch}
+                      title={autoOn ? scheduleLabel(upi.payoutSchedule, upi.payoutDay) : "Monthly auto-withdrawal is off"}
+                      className={`inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11.5px] font-semibold ring-1 ring-inset transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 ${
+                        autoOn ? "bg-[#e3f1d6] text-[#2f6a1f] ring-[#c6e0b0] hover:bg-[#d8ecc6]" : "bg-[#f3f4f1] text-[#5f6f65] ring-[#e2e6df] hover:bg-[#eceee9]"
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${autoOn ? "bg-[#5e8f35]" : "bg-[#a3aaa4]"}`} aria-hidden />
+                      {autoOn ? `Auto on · ${ordinal(autoDay)}` : "Auto off"}
+                    </button>
                   ) : null}
                 </div>
                 {ready.metrics ? (
-                  <div className="mt-1 break-words text-[clamp(2.2rem,9vw,3.25rem)] font-semibold leading-tight tracking-[-0.04em] tabular-nums">{metrics ? formatINR(approvedEarnings) : "Unavailable"}</div>
+                  <div className="mt-1 break-words text-[clamp(2rem,8vw,3rem)] font-semibold leading-tight tracking-[-0.04em] text-[#14241c] tabular-nums">
+                    {metrics ? formatINR(approvedEarnings) : "Unavailable"}
+                  </div>
                 ) : (
-                  <span className="mt-2 block h-12 w-44 animate-pulse rounded-xl bg-white/15" aria-label="Loading balance" />
+                  <Shimmer className="mt-2 h-12 w-44 !rounded-xl" />
                 )}
 
-                {metrics ? <div className="mt-4">
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[12px] text-white/75">
-                    <span>
-                      {minimumOk ? "Minimum reached" : <>Minimum to request <span className="font-semibold text-white">{formatINR(MIN_PAYOUT_REQUEST_INR)}</span></>}
-                    </span>
-                    <span className="font-semibold text-[#dce78f]">{minimumOk ? "100%" : `${formatINR(thresholdGap)} to go`}</span>
-                  </div>
-                  <div
-                    className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/15"
-                    role="progressbar"
-                    aria-valuenow={minimumProgress}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-label="Progress to minimum payout"
-                  >
-                    <div className="h-full rounded-full bg-[linear-gradient(90deg,#c7d870,#dce78f)] transition-[width] duration-700" style={{ width: `${Math.max(minimumProgress, approvedEarnings > 0 ? 3 : 0)}%` }} />
-                    {[25, 50, 75].map((mark) => (
-                      <span key={mark} className="absolute top-0 h-full w-px bg-[#1b3b30]/40" style={{ left: `${mark}%` }} aria-hidden />
-                    ))}
-                  </div>
-                </div> : null}
+                {metrics ? (
+                  minimumOk ? (
+                    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-[#5f6f65]">
+                      <span className="inline-flex items-center gap-1.5 font-semibold text-[#2f6a1f]">
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#5e8f35]" aria-hidden />
+                        Above the minimum
+                      </span>
+                    </p>
+                  ) : (
+                    <div className="mt-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[12.5px] text-[#5f6f65]">
+                        <span>
+                          Minimum to withdraw <span className="font-semibold text-[#1f2e28]">{formatINR(MIN_PAYOUT_REQUEST_INR)}</span>
+                        </span>
+                        <span className="font-semibold text-[#41695b] tabular-nums">{formatINR(thresholdGap)} to go</span>
+                      </div>
+                      <div
+                        className="mt-2 h-2 overflow-hidden rounded-full bg-[#eef2eb]"
+                        role="progressbar"
+                        aria-valuenow={minimumProgress}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label="Progress to minimum payout"
+                      >
+                        <div className="h-full rounded-full bg-[#8db35a] transition-[width] duration-700" style={{ width: `${Math.max(minimumProgress, approvedEarnings > 0 ? 3 : 0)}%` }} />
+                      </div>
+                    </div>
+                  )
+                ) : null}
 
-                {hasFailures ? <div role="status" className="mt-5 rounded-xl bg-white/10 p-4 text-[13px] leading-5">Some payout details are unavailable. Refresh to verify your balance and requirements before requesting a withdrawal.</div> : !coreReady ? (
-                  <div className="mt-5 flex items-center gap-3 rounded-[16px] bg-white/[0.07] p-3.5 ring-1 ring-inset ring-white/10" aria-busy="true">
-                    <span className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-white/10" />
-                    <span className="min-w-0 flex-1 space-y-2">
-                      <span className="block h-3 w-28 animate-pulse rounded-full bg-white/15" />
-                      <span className="block h-4 w-48 max-w-full animate-pulse rounded-full bg-white/10" />
-                    </span>
-                    <span className="text-[12px] text-white/60">Checking requirements…</span>
+                {hasFailures ? (
+                  <div role="status" className="mt-5 rounded-[14px] bg-[#fff8ec] p-3.5 text-[13px] leading-5 text-[#825317] ring-1 ring-inset ring-[#f1dea6]">
+                    Some payout details are unavailable. Refresh to verify your balance and requirements before withdrawing.
+                  </div>
+                ) : !coreReady ? (
+                  <div className="mt-5 flex items-center gap-3" aria-busy="true">
+                    <Shimmer className="h-12 w-48 !rounded-[14px]" />
+                    <span className="text-[12.5px] text-[#6f7d74]">Checking requirements…</span>
                   </div>
                 ) : payoutReadiness.ready ? (
-                  <button
-                    type="button"
-                    onClick={requestPayout}
-                    disabled={requesting || !workerId}
-                    className="mt-5 inline-flex h-12 w-full items-center justify-center gap-2 rounded-[14px] bg-[#dce78f] px-6 text-[15px] font-bold text-[#1b3b30] shadow-[0_10px_24px_-12px_rgba(220,231,143,0.9)] transition hover:bg-[#e6ef9f] disabled:opacity-60 min-[480px]:w-auto"
-                  >
-                    {requesting ? "Requesting…" : "Request payout"}
-                    {!requesting && <span aria-hidden>→</span>}
-                  </button>
+                  <div className="mt-5 grid gap-3">
+                    <div className="flex flex-col gap-2 min-[480px]:flex-row min-[480px]:items-center min-[480px]:gap-4">
+                      <button
+                        type="button"
+                        onClick={requestPayout}
+                        disabled={requesting || !workerId}
+                        className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-[14px] bg-[#244e39] px-6 text-[15px] font-semibold text-white shadow-[0_10px_22px_-14px_rgba(36,78,57,0.9)] transition hover:bg-[#1d4030] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#8db35a]/40 disabled:opacity-60 min-[480px]:w-fit"
+                      >
+                        {requesting ? "Requesting…" : <span className="tabular-nums">Withdraw {formatINR(payoutReadiness.requestAmount)}</span>}
+                        {!requesting && <span aria-hidden>→</span>}
+                      </button>
+                      {hasMethod ? <span className="min-w-0 truncate text-center text-[12.5px] text-[#6f7d74] min-[480px]:text-left">To {payoutMethodLabel(upi)}{upi?.bank ? " by bank transfer" : " via UPI"}</span> : null}
+                    </div>
+                    {!kycOk && lifetimeCredited > 0 ? (
+                      // Heads-up before the KYC threshold, so payouts never pause by surprise.
+                      <div className="flex flex-col gap-3 rounded-[14px] bg-[#f8faf5] p-3.5 ring-1 ring-inset ring-[#e8eee5] min-[520px]:flex-row min-[520px]:items-center">
+                        <div className="min-w-0 flex-1">
+                          <p className="flex flex-wrap items-baseline justify-between gap-x-3 text-[13px] font-semibold text-[#1f2e28]">
+                            <span>KYC needed after {kycLimitLabel} earned</span>
+                            <span className="text-[12px] font-medium text-[#5f6f65] tabular-nums">
+                              {formatINR(lifetimeCredited)} of {kycLimitLabel}
+                            </span>
+                          </p>
+                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#e6ebe2]" aria-hidden>
+                            <div className="h-full rounded-full bg-[#d9a520] transition-[width] duration-700" style={{ width: `${Math.min(100, (lifetimeCredited / KYC_FREE_WITHDRAWAL_LIMIT_INR) * 100)}%` }} />
+                          </div>
+                          <p className="mt-1.5 text-[12px] leading-5 text-[#6f7d74]">
+                            {kycStatus === "pending" ? "Your KYC is in review, so payouts won't pause." : "Verify once now so your payouts don't pause when you pass it."}
+                          </p>
+                        </div>
+                        {kycStatus !== "pending" ? (
+                          <button
+                            type="button"
+                            onClick={() => setKycSheetOpen(true)}
+                            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-[12px] border border-[#dfe7dc] bg-white px-4 text-[13px] font-semibold text-[#41695b] transition hover:bg-[#f4f7f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
+                          >
+                            {kycStatus === "rejected" ? "Fix KYC" : "Verify now"} <span aria-hidden>→</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 ) : (
-                  <div className="mt-5 flex flex-col gap-3 rounded-[16px] bg-white/[0.07] p-3.5 ring-1 ring-inset ring-white/10 min-[520px]:flex-row min-[520px]:items-center">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10" aria-hidden>
+                  <div className="mt-5 flex flex-col gap-3 rounded-[14px] bg-[#fffaf0] p-3.5 ring-1 ring-inset ring-[#f1dea6] min-[520px]:flex-row min-[520px]:items-center">
+                    <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[#8a5a00] ring-1 ring-[#f1dea6] min-[360px]:flex" aria-hidden>
                       <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                         <path d="M6.5 9V7a3.5 3.5 0 0 1 7 0v2M5 9h10v7.5H5z" strokeLinejoin="round" />
                       </svg>
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#dce78f]">Next step · {checksDone}/{readinessChecks.length} ready</p>
-                      <p className="mt-0.5 text-[14px] font-semibold">{nextCheck?.title ?? "Payout request is blocked"}</p>
-                      {requestBlockedReason ? <p className="mt-0.5 text-[12.5px] leading-5 text-white/70">{requestBlockedReason}</p> : null}
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#8a5a00]">
+                        Next step · {checksDone}/{readinessChecks.length} ready
+                      </p>
+                      <p className="mt-0.5 text-[14px] font-semibold text-[#1f2e28]">{nextCheck?.title ?? "Withdrawal is blocked"}</p>
+                      {requestBlockedReason ? <p className="mt-0.5 text-[12.5px] leading-5 text-[#6b5a3a]">{requestBlockedReason}</p> : null}
                     </div>
                     {nextAction
                       ? renderAction(
                           nextAction,
-                          "inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#dce78f] px-4 text-[13.5px] font-bold text-[#1b3b30] transition hover:bg-[#e6ef9f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                          "inline-flex h-10 w-full shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#244e39] px-4 text-[13.5px] font-semibold text-white transition hover:bg-[#1d4030] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8db35a]/50 min-[520px]:w-auto"
                         )
                       : null}
                   </div>
                 )}
-
-                {upi?.upiId ? null : ready.upi ? (
-                  <p className="mt-4 border-t border-white/15 pt-3 text-[12px] text-white/65">
-                    Payouts go to your UPI ID.{" "}
-                    <button type="button" onClick={openUpiEditor} className="font-semibold text-[#dce78f] underline-offset-2 hover:underline">
-                      Add one now
-                    </button>
-                  </p>
-                ) : null}
               </div>
+
+              {coreReady && !hasFailures ? (
+                // How money leaves the wallet: one manual withdrawal a week, plus an automatic one each month.
+                <dl className="grid grid-cols-1 divide-y divide-[#e8eee5] border-t border-[#e8eee5] bg-[#f8faf5] min-[440px]:grid-cols-2 min-[440px]:divide-x min-[440px]:divide-y-0" aria-label="Withdrawal schedule">
+                  <div className="min-w-0 px-4 py-3.5 sm:px-6">
+                    <dt className="flex items-center gap-1.5 text-[12px] font-medium text-[#5f6f65]">
+                      <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-[#41695b]" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                        <path d="M10 3v10m0 0-3.5-3.5M10 13l3.5-3.5M4 16.5h12" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Manual · once a week
+                    </dt>
+                    <dd className="mt-1 text-[14px] font-semibold text-[#1f2e28]">
+                      {!noActiveBatch ? "After this cycle" : nextManualAt ? shortDateTime(nextManualAt) : "Available now"}
+                    </dd>
+                    <dd className="mt-0.5 text-[12px] leading-5 text-[#6f7d74]">
+                      {!noActiveBatch
+                        ? `A ${processingBatch?.status.toLowerCase()} payout is open.`
+                        : nextManualAt
+                          ? `Opens ${countdown(nextManualAt, now)}`
+                          : `Then again ${MANUAL_WITHDRAWAL_INTERVAL_DAYS} days later.`}
+                    </dd>
+                  </div>
+                  <div className="min-w-0 px-4 py-3.5 sm:px-6">
+                    <dt className="flex items-center justify-between gap-3">
+                      <span id="auto-withdraw-label" className="flex items-center gap-1.5 text-[12px] font-medium text-[#5f6f65]">
+                        <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-[#41695b]" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                          <path d="M16 10a6 6 0 1 1-1.76-4.24M16 3.5V6h-2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Auto · monthly
+                      </span>
+                      {hasMethod ? (
+                        <button
+                          ref={autoSwitchRef}
+                          type="button"
+                          role="switch"
+                          aria-checked={autoOn}
+                          aria-labelledby="auto-withdraw-label"
+                          disabled={savingAuto}
+                          onClick={() => void saveAutoWithdrawal(!autoOn, autoDay)}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#8db35a]/40 disabled:opacity-60 ${
+                            autoOn ? "bg-[#41695b]" : "bg-[#cfd8ca]"
+                          }`}
+                        >
+                          <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${autoOn ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+                        </button>
+                      ) : null}
+                    </dt>
+                    {autoOn ? (
+                      <>
+                        <dd className="mt-1 text-[14px] font-semibold text-[#1f2e28]" aria-live="polite">
+                          {savingAuto ? "Saving…" : autoIsToday ? "Today" : shortDate(nextAutoAt)}
+                        </dd>
+                        <dd className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-5 text-[#6f7d74]">
+                          <label htmlFor="auto-withdraw-day">On the</label>
+                          <select
+                            id="auto-withdraw-day"
+                            value={autoDay}
+                            disabled={savingAuto}
+                            onChange={(e) => void saveAutoWithdrawal(true, Number(e.target.value))}
+                            className="h-8 rounded-[10px] border border-[#dbe3d7] bg-white px-2 text-[13px] font-semibold text-[#1f2e28] outline-none transition focus:border-[#8db35a] focus:ring-2 focus:ring-[#dce78f]/50 disabled:opacity-60"
+                          >
+                            {MONTH_DAYS.map((day) => (
+                              <option key={day} value={day}>
+                                {ordinal(Number(day))}
+                              </option>
+                            ))}
+                          </select>
+                          <span>of every month{upiOk ? `, from ${formatINR(MIN_PAYOUT_REQUEST_INR)}` : " once your UPI ID is verified"}.</span>
+                        </dd>
+                      </>
+                    ) : (
+                      <>
+                        <dd className="mt-1 text-[14px] font-semibold text-[#1f2e28]">{savingAuto ? "Saving…" : "Off"}</dd>
+                        <dd className="mt-0.5 text-[12px] leading-5 text-[#6f7d74]">
+                          {hasMethod ? "Turn on to have your balance sent to you every month, on a day you choose." : "Add a bank account or UPI ID to turn on monthly auto-withdrawal."}
+                        </dd>
+                      </>
+                    )}
+                  </div>
+                </dl>
+              ) : null}
+
+              {hasMethod ? null : ready.upi ? (
+                <p className="border-t border-[#e8eee5] px-4 py-3 text-[12.5px] text-[#5f6f65] sm:px-6">
+                  Payouts go to your bank account or UPI ID.{" "}
+                  <button type="button" onClick={openUpiEditor} className="font-semibold text-[#41695b] underline underline-offset-2">
+                    Add one now
+                  </button>
+                </p>
+              ) : null}
+            </section>
+
+            {/* Wallet overview: where earnings stand, without repeating the withdrawable balance above. */}
+            <section aria-labelledby="overview-heading" className={`${card} order-3 p-4 sm:p-5`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 id="overview-heading" className="text-[17px] font-semibold tracking-[-0.02em] sm:text-[18px]">Wallet overview</h2>
+                  <p className="mt-0.5 text-[13px] text-[#5f6f65]">Your earnings from review to payout.</p>
+                </div>
+                <Link href="/dashboard?section=accounts" className={actionBtn}>
+                  Accounts <span aria-hidden>→</span>
+                </Link>
+              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3" aria-live="polite">
+                <OverviewStat
+                  label="Credited"
+                  dot="bg-[#5e8f35]"
+                  value={creditedTotal !== undefined ? formatINR(creditedTotal) : "–"}
+                  caption={reel?.approvedReels !== undefined ? `${reel.approvedReels} ${reel.approvedReels === 1 ? "reel" : "reels"} credited` : "Approved earnings"}
+                  loading={reelLoading && !ready.metrics}
+                />
+                <OverviewStat
+                  label="In review"
+                  dot="bg-[#d9a520]"
+                  value={pendingTotal !== undefined ? formatINR(pendingTotal) : "–"}
+                  caption={reel?.pendingReels !== undefined ? `${reel.pendingReels} ${reel.pendingReels === 1 ? "reel" : "reels"} · estimate` : "Estimate until reviewed"}
+                  loading={reelLoading && !ready.metrics}
+                />
+                <OverviewStat
+                  label="In payout"
+                  dot="bg-[#4f8fd6]"
+                  value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.pending)}
+                  caption={payoutSummary.liveBatches ? `${payoutSummary.liveBatches} open ${payoutSummary.liveBatches === 1 ? "cycle" : "cycles"}` : "No open cycle"}
+                  loading={!ready.batches}
+                />
+                <OverviewStat
+                  label="Paid out"
+                  dot="bg-[#41695b]"
+                  value={failures.batches && !batches.length ? "–" : formatINR(payoutSummary.credited)}
+                  caption={`Lifetime · ${batches.length} ${batches.length === 1 ? "cycle" : "cycles"}`}
+                  loading={!ready.batches}
+                />
+              </dl>
+              {reel && reel.accountCount > 1 ? (
+                <details className="group mt-3 rounded-[14px] ring-1 ring-inset ring-[#e8eee5]">
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3.5 text-[13px] font-semibold text-[#41695b] [&::-webkit-details-marker]:hidden">
+                    By account ({reel.accountCount})
+                    <span className="transition-transform group-open:rotate-180" aria-hidden>▾</span>
+                  </summary>
+                  <ul className="divide-y divide-[#eef2eb] border-t border-[#eef2eb]">
+                    {reel.breakdown.map((row) => (
+                      <li key={row.accountId} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3.5 py-2.5 text-[13px]">
+                        <span className="min-w-0 break-words font-semibold">@{row.handle.replace(/^@/, "")}</span>
+                        <span className="tabular-nums text-[#4d5f55]">
+                          {formatINR(row.approved)} <span className="text-[#8a958e]">· {formatINR(row.pending)} in review</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+              <p className="mt-3 text-[12px] leading-5 text-[#6f7d74]">
+                Credited includes money already paid out or in a payout. In-review amounts are estimates until the team reviews new views.
+                {reel?.missingCounts ? <span className="text-[#8a5300]"> {reel.missingCounts} {reel.missingCounts === 1 ? "reel is" : "reels are"} waiting for a view count.</span> : null}
+                {reelError ? <span className="text-[#8a5300]"> {reel ? "Showing the last saved earnings. " : ""}{reelError}</span> : null}
+              </p>
             </section>
 
             {/* History */}
-            <section ref={historyRef} aria-labelledby="history-heading" className={`${card} order-4 scroll-mt-24 p-4 sm:p-5`}>
+            <section ref={historyRef} aria-labelledby="history-heading" className={`${card} order-5 scroll-mt-24 p-4 sm:p-5`}>
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="history-heading" className="text-[18px] font-semibold tracking-[-0.02em] sm:text-[20px]">Payout history</h2>
@@ -901,7 +1117,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           </div>
 
           {/* Right column (desktop) */}
-          <div className="contents lg:sticky lg:top-[88px] lg:flex lg:flex-col lg:gap-5">
+          <div className="contents lg:flex lg:flex-col lg:gap-5">
             {/* Readiness checklist */}
             <section aria-labelledby="ready-heading" className={`${card} order-2 p-4 transition-shadow duration-500 sm:p-5 ${flash === "kyc" || flash === "upi" ? "!ring-2 !ring-[#8db35a] shadow-[0_0_0_6px_rgba(141,179,90,0.18)]" : ""}`}>
               <div className="flex items-center justify-between gap-3">
@@ -941,6 +1157,7 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                         highlighted={nextKey === "kyc"}
                         live={liveState === "live"}
                         onOpen={() => setKycSheetOpen(true)}
+                        need={{ required: kycBlocking, limitLabel: kycLimitLabel, earnedLabel: formatINR(lifetimeCredited) }}
                       />
                     );
                   }
@@ -979,256 +1196,29 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
               </ul>
             </section>
 
-            {/* UPI */}
-            <section
-              ref={upiSectionRef}
-              aria-labelledby="upi-heading"
-              className={`${card} order-3 scroll-mt-24 p-4 transition-shadow duration-500 sm:p-5 ${flash === "upi" ? "!ring-2 !ring-[#8db35a] shadow-[0_0_0_6px_rgba(141,179,90,0.18)]" : ""}`}
-            >
-              {(() => {
-                const state = !ready.upi ? "loading" : failures.upi ? "unavailable" : !upi?.upiId ? "none" : upiOk ? "verified" : "pending";
-                const chip = {
-                  unavailable: { text: "Unavailable", className: "bg-[#fff4d6] text-[#8a5a00] ring-[#f1dea6]" },
-                  loading: { text: "…", className: "bg-[#f3f4f1] text-[#6f7d74] ring-[#e6ebe2]" },
-                  none: { text: "Not added", className: "bg-[#fff4d6] text-[#8a5a00] ring-[#f1dea6]" },
-                  pending: { text: "Verifying", className: "bg-[#eef4fb] text-[#1f5fa8] ring-[#cfe0f5]" },
-                  verified: { text: "✓ Verified", className: "bg-[#e3f1d6] text-[#2f6a1f] ring-[#c6e0b0]" },
-                }[state];
-                const step = state === "verified" ? 3 : state === "pending" ? 1 : 0;
-                return (
-                  <>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span
-                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] text-[11.5px] font-black tracking-tight ${
-                            state === "verified" ? "bg-[#41695b] text-white" : "bg-[#f0f4ec] text-[#41695b]"
-                          }`}
-                          aria-hidden
-                        >
-                          UPI
-                        </span>
-                        <div className="min-w-0">
-                          <h2 id="upi-heading" className="text-[12.5px] font-semibold text-[#5f6f65]">
-                            Payout UPI
-                          </h2>
-                          {state === "loading" ? (
-                            <Shimmer className="mt-1 h-5 w-40" />
-                          ) : (
-                            <div className={`break-all text-[16px] font-semibold leading-snug ${state === "none" ? "text-[#8a948d]" : "text-[#20352c]"}`}>{upi?.upiId || "Not added yet"}</div>
-                          )}
-                          {upi?.upiId ? <div className="mt-0.5 text-[12px] text-[#5f6f65]">{scheduleLabel(upi.payoutSchedule, upi.payoutDay)}</div> : null}
-                        </div>
-                      </div>
-                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${chip.className}`} aria-live="polite">
-                        {chip.text}
-                      </span>
-                    </div>
-
-                    {/* Live status */}
-                    {state === "pending" ? (
-                      <div className="mt-4 rounded-[14px] bg-[#f3f7fc] p-3 ring-1 ring-inset ring-[#dbe7f5]">
-                        <p className="flex items-center gap-2 text-[13px] font-semibold text-[#1d4f8f]">
-                          <span className="relative flex h-2 w-2" aria-hidden>
-                            <span className="absolute inline-flex h-full w-full rounded-full bg-[#7fb0e6] opacity-60 motion-safe:animate-ping" />
-                            <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2a78d6]" />
-                          </span>
-                          Waiting for the team to verify
-                        </p>
-                        <p className="mt-0.5 text-[12px] leading-5 text-[#4f6476]">
-                          {sinceLabel(upi?.updatedAt) ? `Saved ${sinceLabel(upi?.updatedAt)}. ` : ""}
-                          {liveState === "live" ? "This card updates the moment it's verified." : "We check for the result automatically."}
-                        </p>
-                        <ol className="mt-2.5 grid grid-cols-3 gap-1.5" aria-label="UPI verification progress">
-                          {["Saved", "Team check", "Verified"].map((label, index) => {
-                            const done = index < step;
-                            const current = index === step;
-                            return (
-                              <li key={label} className="min-w-0">
-                                <span className={`block h-1 rounded-full ${done ? "bg-[#8db35a]" : current ? "bg-[#7fb0e6] motion-safe:animate-pulse" : "bg-[#dfe6ee]"}`} />
-                                <span className={`mt-1 block truncate text-[10.5px] ${done || current ? "font-semibold text-[#3f5566]" : "text-[#9aa6b1]"}`} aria-current={current ? "step" : undefined}>
-                                  {label}
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      </div>
-                    ) : state === "verified" ? (
-                      <p className="mt-3 flex items-center gap-2 text-[12.5px] text-[#2f6a1f]">
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#8db35a] text-[11px] text-white" aria-hidden>
-                          ✓
-                        </span>
-                        Verified{upi?.verifiedAt ? ` ${sinceLabel(upi.verifiedAt)}` : ""}. Payouts go to this UPI ID.
-                      </p>
-                    ) : state === "none" ? (
-                      <p className="mt-3 text-[12.5px] leading-5 text-[#5f6f65]">Add the UPI ID where you want payouts sent. The team verifies it once, usually within a day.</p>
-                    ) : null}
-
-                    {processingBatch && upi?.upiId ? (
-                      <p className="mt-3 flex gap-2 rounded-[12px] bg-[#fff8e8] px-3 py-2 text-[12px] leading-5 text-[#7a5200]">
-                        <span aria-hidden>🔒</span>
-                        Your UPI ID is locked while a payout is in progress. You can still change the schedule.
-                      </p>
-                    ) : null}
-                  </>
-                );
-              })()}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setUpiDraft(upi ?? DEFAULT_UPI);
-                  setUpiError(null);
-                  setUpiEditorOpen((prev) => !prev);
-                }}
-                aria-expanded={upiEditorOpen}
-                disabled={!ready.upi}
-                className={`mt-4 inline-flex h-11 w-full items-center justify-center rounded-[14px] text-[14px] font-semibold transition disabled:opacity-50 ${
-                  !upi?.upiId && !upiEditorOpen ? "bg-[#41695b] text-white hover:bg-[#35584b]" : "border border-[#dfe7dc] bg-white text-[#41695b] hover:bg-[#f4f7f1]"
-                }`}
-              >
-                {upiEditorOpen ? "Close" : upi?.upiId ? "Change UPI or schedule" : "Add payout UPI"}
-              </button>
-
-              {upiEditorOpen && (
-                <div className="mt-4 space-y-4 rounded-[18px] bg-[#f8faf5] p-4 ring-1 ring-[#e8eee5]">
-                  <label className="block">
-                    <span className="text-[13px] font-semibold text-[#274537]">UPI ID</span>
-                    <span className="relative mt-2 block">
-                      <input
-                        value={upiDraft.upiId}
-                        onChange={(e) => {
-                          setUpiError(null);
-                          setUpiDraft((prev) => ({ ...prev, upiId: e.target.value }));
-                        }}
-                        placeholder="yourname@okhdfcbank"
-                        inputMode="email"
-                        autoCapitalize="none"
-                        autoComplete="off"
-                        spellCheck={false}
-                        autoFocus
-                        disabled={Boolean(processingBatch)}
-                        aria-invalid={Boolean(upiDraft.upiId) && !isValidUpi(upiDraft.upiId)}
-                        className={`${inputClass.replace("mt-2 ", "")} pr-11 disabled:bg-[#f3f4f1] disabled:text-[#7a827c]`}
-                      />
-                      {upiDraft.upiId ? (
-                        <span
-                          className={`absolute right-3.5 top-1/2 -translate-y-1/2 text-[15px] font-bold ${isValidUpi(upiDraft.upiId) ? "text-[#5e8f35]" : "text-[#c26a1a]"}`}
-                          aria-hidden
-                        >
-                          {isValidUpi(upiDraft.upiId) ? "✓" : "!"}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="mt-1 block text-[12px] text-[#6f7d74]">
-                      {processingBatch
-                        ? "Locked while a payout is in progress."
-                        : upiDraft.upiId.trim() && upiDraft.upiId.trim() !== (upi?.upiId ?? "")
-                          ? "A new UPI ID needs a quick verification by the team before payouts use it."
-                          : "Find it in your UPI app's profile, e.g. name@okicici."}
-                    </span>
-                  </label>
-
-                  <div>
-                    <span className="text-[13px] font-semibold text-[#274537]">Payout schedule</span>
-                    <div role="radiogroup" aria-label="Payout schedule" className="mt-2 grid grid-cols-2 gap-1 rounded-[14px] bg-white p-1 ring-1 ring-[#dbe3d7]">
-                      {(["Weekly", "Monthly"] as const).map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          role="radio"
-                          aria-checked={upiDraft.payoutSchedule === option}
-                          onClick={() => {
-                            setUpiError(null);
-                            setUpiDraft((prev) =>
-                              prev.payoutSchedule === option ? prev : { ...prev, payoutSchedule: option, payoutDay: option === "Monthly" ? "1" : "Fri" }
-                            );
-                          }}
-                          className={`h-10 rounded-[10px] text-[13.5px] font-semibold transition ${
-                            upiDraft.payoutSchedule === option ? "bg-[#41695b] text-white shadow-sm" : "text-[#41695b] hover:bg-[#f4f7f1]"
-                          }`}
-                        >
-                          {option}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[13px] font-semibold text-[#274537]">{upiDraft.payoutSchedule === "Monthly" ? "Day of the month" : "Day of the week"}</span>
-                    {upiDraft.payoutSchedule === "Monthly" ? (
-                      <select
-                        value={upiDraft.payoutDay}
-                        onChange={(e) => {
-                          setUpiError(null);
-                          setUpiDraft((prev) => ({ ...prev, payoutDay: e.target.value }));
-                        }}
-                        className={`${inputClass} mt-2`}
-                        aria-label="Day of the month"
-                      >
-                        {MONTH_DAYS.map((day) => (
-                          <option key={day} value={day}>
-                            {ordinal(Number(day))}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div role="radiogroup" aria-label="Day of the week" className="mt-2 grid grid-cols-7 gap-1">
-                        {WEEK_DAYS.map((day) => (
-                          <button
-                            key={day}
-                            type="button"
-                            role="radio"
-                            aria-checked={upiDraft.payoutDay === day}
-                            aria-label={WEEK_DAY_NAMES[day]}
-                            onClick={() => {
-                              setUpiError(null);
-                              setUpiDraft((prev) => ({ ...prev, payoutDay: day }));
-                            }}
-                            className={`h-10 rounded-[10px] text-[12px] font-semibold transition ${
-                              upiDraft.payoutDay === day ? "bg-[#41695b] text-white" : "bg-white text-[#41695b] ring-1 ring-inset ring-[#dbe3d7] hover:bg-[#f4f7f1]"
-                            }`}
-                          >
-                            {day.slice(0, 2)}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <span className="mt-1.5 block text-[12px] text-[#6f7d74]">{scheduleLabel(upiDraft.payoutSchedule, upiDraft.payoutDay)}. Schedule changes apply right away.</span>
-                  </div>
-
-                  {upiError && (
-                    <div role="alert" className="rounded-[12px] border border-[#f6cdc8] bg-[#fdecea] px-3 py-2 text-[13px] font-semibold text-[#b42318]">
-                      {upiError}
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-[1fr_auto]">
-                    <button
-                      type="button"
-                      onClick={() => void saveAndVerifyUpi()}
-                      disabled={savingUpi || !isValidUpi(upiDraft.upiId) || (upiDraft.upiId.trim() === (upi?.upiId ?? "") && upiDraft.payoutSchedule === upi?.payoutSchedule && upiDraft.payoutDay === upi?.payoutDay)}
-                      className="inline-flex h-11 items-center justify-center rounded-[14px] bg-[#41695b] px-5 text-[14px] font-semibold text-white transition hover:bg-[#35584b] disabled:opacity-50"
-                    >
-                      {savingUpi ? "Saving…" : upiDraft.upiId.trim() !== (upi?.upiId ?? "") ? "Save and send for verification" : "Save schedule"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUpiDraft(upi ?? DEFAULT_UPI);
-                        setUpiError(null);
-                        setUpiEditorOpen(false);
-                      }}
-                      className="inline-flex h-11 items-center justify-center rounded-[14px] border border-[#dfe7dc] bg-white px-5 text-[14px] font-semibold text-[#41695b]"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
+            {/* Payout method: bank account or UPI ID */}
+            <PayoutMethodCard
+              config={upi}
+              ready={ready.upi}
+              failed={failures.upi}
+              locked={Boolean(processingBatch)}
+              live={liveState === "live"}
+              autoLabel={autoOn && upi ? scheduleLabel(upi.payoutSchedule, upi.payoutDay) : "Auto-withdrawal off"}
+              editorOpen={upiEditorOpen}
+              setEditorOpen={setUpiEditorOpen}
+              highlighted={flash === "upi"}
+              sectionRef={upiSectionRef}
+              className={`${card} order-4 scroll-mt-24 p-4 transition-shadow duration-500 sm:p-5`}
+              getToken={async () => (await payoutSession()).data.session?.access_token}
+              onSaved={(next, message) => {
+                setUpi(next as UpiConfig);
+                setNotice({ tone: "success", text: message });
+                void loadPayoutData("refresh");
+              }}
+            />
 
             {/* Guidance */}
-            <details className={`${card} group order-5 p-4 sm:p-5`} open={ready.batches && batches.length === 0}>
+            <details className={`${card} group order-6 p-4 sm:p-5`} open={ready.batches && batches.length === 0}>
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
                 <h2 className="text-[17px] font-semibold tracking-[-0.02em] sm:text-[18px]">How payouts work</h2>
                 <span className="text-[#7a8a80] transition-transform group-open:rotate-180" aria-hidden>
@@ -1240,7 +1230,8 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
                 {[
                   { title: "Earn", text: "Approved reels and work become payout-eligible after the team's review." },
                   { title: "Review", text: "Reel approval credits reviewed earnings to your wallet automatically. New views still need review." },
-                  { title: "Request", text: `Once your wallet reaches ${formatINR(MIN_PAYOUT_REQUEST_INR)} with KYC and UPI verified, request a payout.` },
+                  { title: "Withdraw", text: `From ${formatINR(MIN_PAYOUT_REQUEST_INR)} with a verified UPI ID: withdraw yourself once every ${MANUAL_WITHDRAWAL_INTERVAL_DAYS} days, or switch on auto-withdrawal to have it sent every month on a day you choose.` },
+                  { title: "Verify once", text: `Once your earnings pass ${kycLimitLabel} in total, payouts pause until you verify your identity. It's a one-time check.` },
                   { title: "Get paid", text: "The team approves the cycle and marks it paid to your UPI." },
                 ].map((step, index) => (
                   <li key={step.title} className="relative flex items-start gap-3 text-[13px] leading-5 text-[#4d5f55]">
@@ -1272,6 +1263,21 @@ function PayoutsWorkspace({ userId, workerId }: { userId: string; workerId: stri
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+function OverviewStat({ label, value, caption, dot, loading }: { label: string; value: string; caption: string; dot: string; loading?: boolean }) {
+  return (
+    <div className="min-w-0 rounded-[14px] bg-[#f8faf5] px-3.5 py-3 ring-1 ring-inset ring-[#e8eee5]">
+      <dt className="flex items-center gap-1.5 text-[12px] font-medium text-[#5f6f65]">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} aria-hidden />
+        {label}
+      </dt>
+      <dd className="mt-1 break-words text-[clamp(1.1rem,4.6vw,1.4rem)] font-semibold leading-tight tracking-[-0.02em] tabular-nums">
+        {loading ? <Shimmer className="h-6 w-20" /> : value}
+      </dd>
+      <dd className="mt-0.5 truncate text-[11.5px] text-[#6f7d74]">{loading ? "\u00a0" : caption}</dd>
     </div>
   );
 }

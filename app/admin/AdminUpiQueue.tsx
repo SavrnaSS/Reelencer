@@ -7,6 +7,7 @@ import { invalidateAdminUpiQueue, pendingUpiCacheKey } from "@/lib/adminUpiCache
 import { useAdminCachedResource } from "@/lib/useAdminCachedResource";
 import { useAdminLive } from "@/lib/useAdminLive";
 import type { AdminPendingUpiConfig } from "@/lib/adminUpiQueue";
+import { destinationLabel, parseDestination } from "@/lib/payoutDestination";
 import styles from "./AdminUpiQueue.module.css";
 
 type Queue = { ok: true; pendingCount: number; upiConfigs: AdminPendingUpiConfig[] };
@@ -26,6 +27,13 @@ function isQueue(value: unknown): value is Queue {
 const days: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
 function schedule(row: AdminPendingUpiConfig) {
   return row.payoutSchedule === "Monthly" ? `Monthly · Day ${row.payoutDay}` : `Weekly · ${days[row.payoutDay] ?? row.payoutDay}`;
+}
+/** Bank accounts read as "Bank A/c 1234567890 · HDFC0001234", with the holder's name beneath. */
+function destination(row: AdminPendingUpiConfig) {
+  const parsed = parseDestination(row.upiId);
+  return parsed?.method === "Bank"
+    ? { kind: "Bank account", text: destinationLabel(row.upiId, { full: true }), holder: row.bankHolderName }
+    : { kind: "UPI", text: row.upiId, holder: undefined };
 }
 function savedTime(at?: string) {
   return at ? new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }).format(new Date(at)) + " IST" : "Save time unavailable";
@@ -48,12 +56,12 @@ function ReviewRow({ row, busy, disabled, onVerify, onOpen }: {
   return <li className={`${styles.row} ${reviewing ? styles.reviewing : ""}`}>
     <div className={styles.rowMain}>
       <div className={styles.creator}><span className={styles.avatar} aria-hidden="true">{(row.workerName.trim() || "C").slice(0, 1).toUpperCase()}</span><div><button type="button" className={styles.creatorLink} onClick={() => onOpen(row.workerCode)} title={`Open ${row.workerName}'s details`}>{row.workerName}</button><span className={styles.code}>{row.workerCode}</span></div></div>
-      <div className={styles.payment}><strong>{row.upiId}</strong><span>{schedule(row)}</span></div>
+      <div className={styles.payment}><strong>{destination(row).text}</strong><span>{destination(row).holder ? `${destination(row).kind} · ${destination(row).holder}` : `${destination(row).kind} · ${schedule(row)}`}</span></div>
       <div className={styles.saved}><span className={styles.pending}><i />Needs verification</span><time dateTime={row.updatedAt}>{row.updatedAt ? "Saved " : ""}{savedTime(row.updatedAt)}</time></div>
-      <button type="button" ref={reviewButton} className={styles.reviewButton} onClick={reviewing ? cancel : open} aria-expanded={reviewing} aria-controls={id} disabled={disabled}>{busy ? "Verifying…" : reviewing ? "Close review" : "Review UPI"}<span aria-hidden="true">→</span></button>
+      <button type="button" ref={reviewButton} className={styles.reviewButton} onClick={reviewing ? cancel : open} aria-expanded={reviewing} aria-controls={id} disabled={disabled}>{busy ? "Verifying…" : reviewing ? "Close review" : destination(row).kind === "UPI" ? "Review UPI" : "Review bank"}<span aria-hidden="true">→</span></button>
     </div>
     {reviewing ? <div id={id} className={styles.confirmation} onKeyDown={event => { if (event.key === "Escape" && !busy) cancel(); }}>
-      <div><strong>Have you checked this payout UPI?</strong><p>Confirm <b>{row.upiId}</b> for {row.workerName} after your review. Verification updates the creator’s payout status.</p></div>
+      <div><strong>{destination(row).kind === "UPI" ? "Have you checked this payout UPI?" : "Have you checked this bank account?"}</strong><p>Confirm <b>{destination(row).text}</b>{destination(row).holder ? <> in the name of <b>{destination(row).holder}</b></> : null} for {row.workerName} after your review{destination(row).kind === "UPI" ? "" : ": the holder’s name should match the creator’s KYC"}. Verification updates the creator’s payout status.</p></div>
       <div className={styles.confirmActions}><button type="button" onClick={cancel} disabled={busy} className={styles.cancelButton}>Cancel</button><button ref={confirmButton} type="button" className={styles.confirmButton} disabled={disabled} onClick={async () => { if (await onVerify(row)) setReviewing(false); }}>{busy ? "Verifying…" : "Confirm verified"}</button></div>
     </div> : null}
   </li>;
@@ -111,7 +119,7 @@ export default function AdminUpiQueue({ adminId, onOpenCreator }: { adminId: str
         const remaining = current.upiConfigs.filter(item => item.workerId !== row.workerId || item.upiId !== row.upiId);
         return { ...current, upiConfigs: remaining, pendingCount: Math.max(0, current.pendingCount - (current.upiConfigs.length - remaining.length)) };
       });
-      setMessage({ tone: "success", text: `Payout UPI verified for ${row.workerName}. The creator’s status will update automatically.` });
+      setMessage({ tone: "success", text: `${destination(row).kind === "UPI" ? "Payout UPI" : "Bank account"} verified for ${row.workerName}. The creator’s status will update automatically.` });
       window.dispatchEvent(new Event("admin-upi-configs-updated"));
     } catch (error) {
       if (mounted.current && isCurrentAdminCacheIdentity(adminId)) setMessage({ tone: "error", text: error instanceof Error && error.name !== "TimeoutError" ? error.message : "The request timed out. Refresh to check whether the UPI was verified." });
@@ -126,10 +134,10 @@ export default function AdminUpiQueue({ adminId, onOpenCreator }: { adminId: str
   };
   const data = resource.data;
   return <section className={styles.card} aria-labelledby="admin-upi-title">
-    <div className={styles.heading}><span className={styles.icon}><Icon /></span><div className={styles.headingText}><h3 id="admin-upi-title" ref={heading} tabIndex={-1}>Payout UPI verification <span className={styles.count} aria-label={data ? `${data.pendingCount} pending` : "Loading pending count"}>{data ? data.pendingCount.toLocaleString("en-IN") : "–"}</span></h3><p>Creator payment details waiting for your review.</p></div><button type="button" className={styles.refresh} aria-label="Refresh UPI queue" title="Refresh UPI queue" disabled={resource.refreshing || busyId !== null} onClick={() => void refresh({ afterCurrent: true })}><Icon refresh /></button></div>
+    <div className={styles.heading}><span className={styles.icon}><Icon /></span><div className={styles.headingText}><h3 id="admin-upi-title" ref={heading} tabIndex={-1}>Payout details verification <span className={styles.count} aria-label={data ? `${data.pendingCount} pending` : "Loading pending count"}>{data ? data.pendingCount.toLocaleString("en-IN") : "–"}</span></h3><p>Creator payment details waiting for your review.</p></div><button type="button" className={styles.refresh} aria-label="Refresh UPI queue" title="Refresh UPI queue" disabled={resource.refreshing || busyId !== null} onClick={() => void refresh({ afterCurrent: true })}><Icon refresh /></button></div>
     {message ? <div role="status" className={`${styles.notice} ${message.tone === "success" ? styles.success : ""}`}>{message.text}</div> : null}
     {resource.error ? <div role="alert" className={styles.notice}><span>{data ? "Showing the last loaded requests. Refresh before verifying payment details." : "UPI requests could not be loaded. Please try again."}</span><button type="button" onClick={() => void refresh({ afterCurrent: true })}>Try again</button></div> : null}
-    {data?.upiConfigs.length ? <ul className={styles.list} aria-label="Pending UPI verifications" aria-busy={resource.refreshing}>{data.upiConfigs.map(row => <ReviewRow key={`${row.workerId}:${row.upiId}`} row={row} busy={busyId === row.workerId} disabled={busyId !== null || Boolean(resource.error)} onVerify={verify} onOpen={onOpenCreator} />)}</ul> : <div className={styles.empty} role="status"><span aria-hidden="true">{resource.loading ? "◌" : resource.error ? "!" : "✓"}</span><div><strong>{resource.loading ? "Loading UPI requests…" : resource.error ? "Verification queue unavailable" : "All payout UPIs are reviewed"}</strong><p>{resource.loading ? "Checking the latest saved payment details." : resource.error ? "Retry to see the current requests." : "New or changed UPI details will appear here automatically."}</p></div></div>}
+    {data?.upiConfigs.length ? <ul className={styles.list} aria-label="Pending UPI verifications" aria-busy={resource.refreshing}>{data.upiConfigs.map(row => <ReviewRow key={`${row.workerId}:${row.upiId}`} row={row} busy={busyId === row.workerId} disabled={busyId !== null || Boolean(resource.error)} onVerify={verify} onOpen={onOpenCreator} />)}</ul> : <div className={styles.empty} role="status"><span aria-hidden="true">{resource.loading ? "◌" : resource.error ? "!" : "✓"}</span><div><strong>{resource.loading ? "Loading UPI requests…" : resource.error ? "Verification queue unavailable" : "All payout details are reviewed"}</strong><p>{resource.loading ? "Checking the latest saved payment details." : resource.error ? "Retry to see the current requests." : "New or changed bank accounts and UPI IDs will appear here automatically."}</p></div></div>}
     {data && data.pendingCount > data.upiConfigs.length ? <div className={styles.footer}><span>Showing {data.upiConfigs.length} of {data.pendingCount.toLocaleString("en-IN")} pending · Latest saves first</span>{limit === 5 ? <button type="button" disabled={busyId !== null} onClick={() => setLimit(20)}>Show more requests →</button> : <button type="button" onClick={() => onOpenCreator("")}>View users →</button>}</div> : null}
   </section>;
 }
