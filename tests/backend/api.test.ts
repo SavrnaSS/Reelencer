@@ -110,7 +110,7 @@ test('every private API method rejects unauthenticated calls before database acc
     const mod=await import(pathToFileURL(path.resolve(file)).href);
     for(const method of ['GET','POST','PUT','PATCH','DELETE']) {
       if(typeof mod[method]!=='function') continue;
-      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready'].includes(route) || (route==='/api/gigs' && method==='GET') || (route==='/api/webhooks/resend' && method==='POST'))continue;
+      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready','/api/[...path]'].includes(route) || (route==='/api/gigs' && method==='GET') || (route==='/api/webhooks/resend' && method==='POST'))continue;
       requests.length=0;
       const result:Response=await mod[method](req(route,method),ctx);
       assert.equal(result.status,401,method+' '+route);
@@ -364,4 +364,17 @@ test('creators save a bank account with normalised details, and the full account
   assert.equal(JSON.stringify(saved).includes('123456789012'),false);
   const upi=await PUT(req('/api/upi','PUT',JSON.stringify({method:'UPI',upiId:'asha@okhdfcbank'}),'worker'),ctx);
   assert.equal((await upi.json()).upiId,'asha@okhdfcbank');
+});
+
+test('unknown API paths answer 404 for every method without touching the database',async()=>{
+  const mod=await import('../../app/api/[...path]/route');
+  for(const method of ['GET','POST','PUT','PATCH','DELETE','OPTIONS'] as const) {
+    requests.length=0;
+    const response:Response=await mod[method]();
+    assert.equal(response.status,404,method);
+    assert.match(response.headers.get('cache-control')??'',/no-store/);
+    assert.deepEqual(await response.json(),{ok:false,error:'Not found.'});
+    assert.equal(requests.length,0);
+  }
+  assert.equal((await mod.HEAD()).status,404);
 });
