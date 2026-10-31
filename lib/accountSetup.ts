@@ -30,6 +30,8 @@ export type AccountSetupView = {
   ownershipDetail?: string;
   /** Last automatic bio check. */
   checkedAt?: string;
+  /** Earliest retry permitted after the profile reader requested a pause. */
+  ownershipRetryAt?: string;
   /** Public profile numbers from the last read, so the team can see the account is fresh. */
   followers?: number;
   posts?: number;
@@ -69,6 +71,7 @@ export function readStoredAccountSetup(raw: unknown): StoredAccountSetup | undef
     ownership: OWNERSHIP.find((o) => o === v.ownership),
     ownershipDetail: text("ownershipDetail"),
     checkedAt: text("checkedAt"),
+    ownershipRetryAt: text("ownershipRetryAt") && Number.isFinite(Date.parse(String(v.ownershipRetryAt))) ? String(v.ownershipRetryAt) : undefined,
     followers: count("followers"),
     posts: count("posts"),
     isPrivate: typeof v.isPrivate === "boolean" ? v.isPrivate : undefined,

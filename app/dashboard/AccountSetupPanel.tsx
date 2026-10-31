@@ -1,7 +1,7 @@
 "use client";
 
 import { apiFetch as fetch } from "@/lib/api/client";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ACCOUNT_REQUEST_LIMITS } from "@/lib/accountRequests";
 import {
   ACCOUNT_SETUP_ANCHOR,
@@ -19,6 +19,7 @@ import {
   type AccountSetupView,
 } from "@/lib/accountSetup";
 import { formatCompact } from "@/lib/socialAnalytics";
+import { BIO_PREVIEW_DEBOUNCE_MS, BIO_PREVIEW_TIMEOUT_MS, bioCheckWithSignal, bioPreviewNextDelay, bioPreviewRetryAfter, submittedBioNextDelay } from "@/lib/bioPreviewSchedule";
 import { Button, Icon as UiIcon, Skeleton, buttonClassName, cx, formatRelative } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
 
@@ -123,79 +124,192 @@ function useVerifyCode(applicationId: string, known: string | undefined, enabled
 
 
 type ResolvedPreview =
-  | { state: "not_found" | "unreadable" | "error"; handle: string; at: number; message?: string }
+  | { state: "not_found" | "unreadable" | "error"; handle: string; at: number; message?: string; reason?: string }
   | { state: "found"; handle: string; at: number; codeFound: boolean; isPrivate?: boolean; followers?: number; posts?: number };
 type LivePreview = { state: "idle" | "manual" } | { state: "checking"; handle: string; previous?: ResolvedPreview } | ResolvedPreview;
+type PreviewRecord = { key: string; value: LivePreview; failures: number; retryAt?: number; notBefore?: number };
+type PreviewActivity = "active" | "offline" | "hidden";
 const isResolved = (preview: LivePreview): preview is ResolvedPreview => preview.state !== "idle" && preview.state !== "manual" && preview.state !== "checking";
-const LIVE_DEBOUNCE_MS = 700;
-const LIVE_RECHECK_MS = 15_000;
+const previewActivity = (): PreviewActivity => !navigator.onLine ? "offline" : document.hidden ? "hidden" : "active";
+const serverPreviewActivity = (): PreviewActivity => "active";
+const subscribePreviewActivity = (listener: () => void) => {
+  window.addEventListener("online", listener);
+  window.addEventListener("offline", listener);
+  document.addEventListener("visibilitychange", listener);
+  return () => {
+    window.removeEventListener("online", listener);
+    window.removeEventListener("offline", listener);
+    document.removeEventListener("visibilitychange", listener);
+  };
+};
 
-/**
- * Live, read-only lookup of the account being set up: does it exist, is it public, is the code in the bio yet.
- * Runs as the username settles, re-checks every 15s while the code is still missing, and straight away when the
- * creator comes back from the Instagram app. Nothing is saved until they press Verify.
- */
-function useLivePreview(applicationId: string, handle: string | null, enabled: boolean) {
-  const [preview, setPreview] = useState<LivePreview>({ state: "idle" });
-  const [tick, setTick] = useState(0);
-  const target = enabled && handle ? handle : null;
-  const settled = preview.state === "found" && preview.codeFound;
+/** Read-only checks are scoped to the application, handle and code, paused offscreen, and respect provider cooldowns. */
+function useLivePreview(applicationId: string, handle: string | null, code: string | null, enabled: boolean) {
+  const [record, setRecord] = useState<PreviewRecord | null>(null);
+  const [requested, setRequested] = useState<{ key: string; sequence: number } | null>(null);
+  const handledRequest = useRef<typeof requested>(null);
+  const previousActivity = useRef<PreviewActivity>("active");
+  const activity = useSyncExternalStore(subscribePreviewActivity, previewActivity, serverPreviewActivity);
+  const target = enabled && handle && code ? handle : null;
+  const key = JSON.stringify([applicationId, target, code]);
+  const active = record?.key === key ? record : null;
+  const preview = active?.value;
+  const settled = preview?.state === "manual" || (preview?.state === "found" && preview.codeFound);
+  const retryAt = active?.retryAt;
+  const notBefore = active?.notBefore;
 
   useEffect(() => {
-    if (!target) return;
+    const resuming = activity === "active" && previousActivity.current !== "active";
+    previousActivity.current = activity;
+    if (!target || settled || activity !== "active") return;
     const controller = new AbortController();
+    const now = Date.now();
+    const manual = requested?.key === key && requested !== handledRequest.current;
+    const due = manual || resuming ? Math.max(now, notBefore ?? now) : Math.max(notBefore ?? 0, retryAt ?? now + BIO_PREVIEW_DEBOUNCE_MS);
     const timer = window.setTimeout(async () => {
-      setPreview((current) => ({ state: "checking", handle: target, previous: isResolved(current) && current.handle === target ? current : undefined }));
+      if (manual) handledRequest.current = requested;
+      setRecord(current => ({
+        key, failures: current?.key === key ? current.failures : 0, retryAt, notBefore,
+        value: { state: "checking", handle: target, previous: current?.key !== key ? undefined : isResolved(current.value) ? current.value : current.value.state === "checking" ? current.value.previous : undefined },
+      }));
+      const finish = (value: LivePreview, retryAfterMs = 0) => {
+        setRecord(current => {
+          if (current?.key !== key) return current;
+          const failed = value.state === "unreadable" || value.state === "error";
+          const failures = failed ? current.failures + 1 : 0;
+          const complete = value.state === "manual" || (value.state === "found" && value.codeFound);
+          const delay = complete ? 0 : bioPreviewNextDelay(value.state, failures, retryAfterMs);
+          return {
+            key, value, failures,
+            retryAt: complete ? undefined : Date.now() + delay,
+            notBefore: complete || (!failed && retryAfterMs === 0) ? undefined : Date.now() + (failed ? delay : retryAfterMs),
+          };
+        });
+      };
       try {
-        const response = await fetch(`${ENDPOINT}?applicationId=${encodeURIComponent(applicationId)}&handle=${encodeURIComponent(target)}`, { signal: controller.signal });
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(BIO_PREVIEW_TIMEOUT_MS)]);
+        const response = await bioCheckWithSignal(() => fetch(`${ENDPOINT}?applicationId=${encodeURIComponent(applicationId)}&handle=${encodeURIComponent(target)}`, { cache: "no-store", signal }), signal);
         const payload = await response.json().catch(() => null);
         if (controller.signal.aborted) return;
-        if (!response.ok) throw new Error(payload?.error || "Couldn't look the account up.");
-        const at = Date.now();
-        if (payload?.state === "manual") setPreview({ state: "manual" });
-        else if (payload?.state === "found") setPreview({ state: "found", handle: target, at, codeFound: !!payload.codeFound, isPrivate: payload.isPrivate, followers: payload.followers, posts: payload.posts });
-        else setPreview({ state: payload?.state === "not_found" ? "not_found" : "unreadable", handle: target, at });
+        const receivedAt = Date.now();
+        const checkedAt = typeof payload?.checkedAt === "string" ? Date.parse(payload.checkedAt) : NaN;
+        const at = Number.isFinite(checkedAt) ? checkedAt : receivedAt;
+        const retryAfterMs = bioPreviewRetryAfter(response.headers.get("Retry-After"), payload?.retryAfterSeconds, receivedAt);
+        if (!response.ok) {
+          finish({ state: "error", handle: target, at, reason: response.status === 429 ? "rate_limited" : payload?.code, message: payload?.error || "Couldn't check the bio. We'll try again." }, retryAfterMs);
+        } else if (payload?.state === "manual") finish({ state: "manual" });
+        else if (payload?.state === "found" && typeof payload.handle === "string" && payload.handle.toLowerCase() === target.toLowerCase()) {
+          finish({ state: "found", handle: target, at, codeFound: payload.codeFound === true, isPrivate: payload.isPrivate, followers: payload.followers, posts: payload.posts }, retryAfterMs);
+        } else finish({ state: payload?.state === "not_found" ? "not_found" : "unreadable", handle: target, at, reason: typeof payload?.reason === "string" ? payload.reason : undefined }, retryAfterMs);
       } catch (error) {
         if (controller.signal.aborted) return;
-        setPreview({ state: "error", handle: target, at: Date.now(), message: error instanceof Error ? error.message : undefined });
+        finish({ state: "error", handle: target, at: Date.now(), message: error instanceof Error && error.name === "TimeoutError" ? "The bio check took too long. We'll try again." : "Couldn't connect to the bio checker. We'll try again." });
       }
-    }, tick ? 0 : LIVE_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [applicationId, target, tick]);
+    }, Math.min(2_147_000_000, Math.max(0, due - now)));
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [applicationId, target, key, requested, retryAt, notBefore, settled, activity]);
 
-  // Keep watching the bio until the code shows up: on a timer while visible, and on return to the tab.
+  // A short provider cooldown may end before the next automatic check; unlock manual retry at that boundary.
   useEffect(() => {
-    if (!target || settled || preview.state === "manual" || preview.state === "checking" || preview.state === "idle") return;
-    const again = () => {
-      if (!document.hidden && navigator.onLine) setTick((value) => value + 1);
-    };
-    const timer = window.setTimeout(again, LIVE_RECHECK_MS);
-    const onVisible = () => {
-      if (!document.hidden) again();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", again);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", again);
-    };
-  }, [target, settled, preview.state]);
+    if (notBefore === undefined || retryAt === undefined || notBefore >= retryAt) return;
+    const timer = window.setTimeout(() => setRecord(current => current?.key === key && current.notBefore === notBefore ? { ...current, notBefore: undefined } : current), Math.min(2_147_000_000, Math.max(0, notBefore - Date.now())));
+    return () => window.clearTimeout(timer);
+  }, [key, notBefore, retryAt]);
 
-  const current: LivePreview = !target ? { state: "idle" } : preview.state === "manual" ? preview : "handle" in preview && preview.handle === target ? preview : { state: "checking", handle: target };
-  return { preview: current, checkNow: () => setTick((value) => value + 1) };
+  const checkNow = useCallback(() => {
+    if (!target || activity !== "active" || (notBefore !== undefined && Date.now() < notBefore)) return;
+    setRequested(current => ({ key, sequence: (current?.sequence ?? 0) + 1 }));
+  }, [target, activity, notBefore, key]);
+  const current: LivePreview = !target ? { state: "idle" } : preview ?? { state: "checking", handle: target };
+  return { preview: current, checkNow, activity, retryAt, notBefore };
+}
+
+type SubmittedCheck = { key: string; request: number; checking: boolean; message: string | null; retryAt: number };
+const timestamp = (value?: string) => value && Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
+
+/** Submitted-account reads must also respect the write endpoint's cooldown and avoid overlapping checks. */
+function useSubmittedBioCheck(applicationId: string, setup: AccountSetupView | undefined, enabled: boolean, onUpdated: (application: AccountSetupApplication & Record<string, unknown>) => void) {
+  const [record, setRecord] = useState<SubmittedCheck | null>(null);
+  const runtime = useRef<{ key: string; sequence: number; failures: number; retryAt: number; controller?: AbortController } | null>(null);
+  const previousActivity = useRef<PreviewActivity>("active");
+  const updatedRef = useRef(onUpdated);
+  const activity = useSyncExternalStore(subscribePreviewActivity, previewActivity, serverPreviewActivity);
+  const key = JSON.stringify([applicationId, setup?.handle, setup?.verifyCode]);
+  const minimum = (ACCOUNT_REQUEST_LIMITS.recheckSeconds + 5) * 1000;
+  const serverNotBefore = Math.max(timestamp(setup?.checkedAt) ? timestamp(setup?.checkedAt) + minimum : 0, timestamp(setup?.ownershipRetryAt));
+  const active = record?.key === key ? record : null;
+  const retryAt = Math.max(active?.retryAt ?? 0, serverNotBefore);
+  useEffect(() => { updatedRef.current = onUpdated; }, [onUpdated]);
+
+  const recheck = useCallback(async (silent = false) => {
+    if (!enabled || activity !== "active") return;
+    if (!runtime.current || runtime.current.key !== key) runtime.current = { key, sequence: 0, failures: 0, retryAt: 0 };
+    const current = runtime.current;
+    if (current.controller && !current.controller.signal.aborted) return;
+    const due = Math.max(current.retryAt, serverNotBefore);
+    if (Date.now() < due) {
+      if (!silent) setRecord({ key, request: current.sequence, checking: false, message: `Your next bio check is available at ${new Date(due).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}. Keep the code in your saved bio.`, retryAt: due });
+      return;
+    }
+    const controller = new AbortController();
+    current.controller = controller;
+    const request = ++current.sequence;
+    current.retryAt = Date.now() + minimum;
+    setRecord(previous => ({ key, request, checking: true, message: silent && previous?.key === key ? previous.message : null, retryAt: current.retryAt }));
+    const finish = (state: string, message: string | null, retryAfterMs = 0) => {
+      current.failures = state === "unreadable" || state === "error" ? current.failures + 1 : 0;
+      current.retryAt = Date.now() + submittedBioNextDelay(state, current.failures, retryAfterMs, minimum);
+      setRecord(previous => previous?.key === key && previous.request === request ? { key, request, checking: false, message, retryAt: current.retryAt } : previous);
+    };
+    try {
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(BIO_PREVIEW_TIMEOUT_MS)]);
+      const response = await bioCheckWithSignal(() => fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", applicationId }), signal }), signal);
+      const payload = await response.json().catch(() => null);
+      if (controller.signal.aborted) return;
+      const nextSetup = payload?.proposal?.accountSetup;
+      const retryAfterMs = Math.max(bioPreviewRetryAfter(response.headers.get("Retry-After"), payload?.retryAfterSeconds), timestamp(nextSetup?.ownershipRetryAt) - Date.now());
+      if (!response.ok) {
+        finish("error", response.status === 429 ? "Bio checks are taking a short pause. Keep your code in the bio; we'll retry automatically." : payload?.error || "Couldn't check right now. We'll retry after a short pause.", retryAfterMs);
+        return;
+      }
+      if (payload?.id !== applicationId || !nextSetup) {
+        finish("error", "The bio check didn't return this account. We'll try again after a short pause.", retryAfterMs);
+        return;
+      }
+      const ownership = nextSetup.ownership;
+      finish(ownership === "unreadable" ? "unreadable" : "found", ownership === "found" ? "Code found. Your account is now with the team." : ownership === "unreadable" ? "We couldn't read the bio yet. Keep the exact code in your saved bio; we'll retry after a short pause." : ownership === "manual" ? "Your account is with the team for an ownership check. Keep the code in your bio." : silent ? null : "The code isn't in the bio yet. Save it to your profile; changes can take a minute to appear.", retryAfterMs);
+      updatedRef.current(payload);
+    } catch (error) {
+      if (!controller.signal.aborted) finish("error", error instanceof Error && error.name === "TimeoutError" ? "The bio check took too long. We'll retry after a short pause." : "Couldn't connect to the bio checker. We'll retry after a short pause.");
+    } finally {
+      if (current.controller === controller) current.controller = undefined;
+      setRecord(previous => previous?.key === key && previous.request === request && previous.checking ? { ...previous, checking: false } : previous);
+    }
+  }, [activity, applicationId, enabled, key, minimum, serverNotBefore]);
+
+  useEffect(() => {
+    const resuming = activity === "active" && previousActivity.current !== "active";
+    previousActivity.current = activity;
+    if (!enabled || activity !== "active") return;
+    const current = runtime.current?.key === key ? runtime.current : null;
+    const due = Math.max(retryAt, current?.retryAt ?? 0, Date.now() + (resuming ? 0 : 1500));
+    const timer = window.setTimeout(() => void recheck(true), Math.min(2_147_000_000, Math.max(0, due - Date.now())));
+    return () => window.clearTimeout(timer);
+  }, [activity, enabled, key, recheck, retryAt]);
+
+  useEffect(() => () => { runtime.current?.controller?.abort(); }, [key, enabled, activity]);
+  return { checking: activity === "active" && !!active?.checking, checkMessage: active?.message, recheck, activity, retryAt };
 }
 
 /** Live status of the account under the username field. */
-function LiveAccountStatus({ preview, code, platformLabel, onCheck }: { preview: LivePreview; code: string | null; platformLabel: string; onCheck: () => void }) {
+function LiveAccountStatus({ preview, code, platformLabel, onCheck, activity, retryAt, notBefore }: { preview: LivePreview; code: string | null; platformLabel: string; onCheck: () => void; activity: PreviewActivity; retryAt?: number; notBefore?: number }) {
   if (!("handle" in preview)) return null;
   const shown: ResolvedPreview | undefined = preview.state === "checking" ? preview.previous : preview;
-  const looking = preview.state === "checking";
+  const looking = preview.state === "checking" && activity === "active";
+  const verified = shown?.state === "found" && shown.codeFound;
+  const waiting = !looking && notBefore !== undefined;
   const tone =
-    !shown ? "neutral"
+    !shown || (activity === "offline" && !verified) ? "neutral"
     : shown.state === "found" ? (shown.codeFound ? "good" : shown.isPrivate ? "warn" : "wait")
     : shown.state === "not_found" ? "bad" : "neutral";
   const facts = shown?.state === "found"
@@ -205,26 +319,34 @@ function LiveAccountStatus({ preview, code, platformLabel, onCheck }: { preview:
         shown.isPrivate === undefined ? null : shown.isPrivate ? "Private" : "Public",
       ].filter(Boolean)
     : [];
-  const headline = !shown
+  const headline = activity === "offline" && !verified
+    ? "You're offline. Bio checks are paused."
+    : looking && shown
+      ? `Checking @${preview.handle}'s bio again…`
+    : !shown
     ? `Looking up @${preview.handle} on ${platformLabel}…`
     : shown.state === "found"
-      ? shown.codeFound ? "Code found in the bio. You're ready to verify." : shown.isPrivate ? "The account is private, so the bio can't be read." : `${code ?? "Your code"} isn't in the bio yet.`
+      ? shown.codeFound ? "Code found in the bio. You're ready to verify." : shown.isPrivate ? "This account is private. Make it public before verifying." : `${code ?? "Your code"} isn't in the bio yet.`
       : shown.state === "not_found" ? `No ${platformLabel} account called @${preview.handle} yet.`
-      : shown.state === "unreadable" ? `${platformLabel} didn't answer. Trying again shortly.`
+      : shown.state === "unreadable" ? shown.reason === "rate_limited" || shown.reason === "access_limited" ? `${platformLabel} is limiting access to this bio.` : "We couldn't read this bio yet."
+      : shown.reason === "rate_limited" ? "Bio checks are temporarily paused."
       : shown.message || "Couldn't look the account up.";
-  const hint = shown?.state === "found" && !shown.codeFound
-    ? shown.isPrivate ? "Switch it to public for a moment. We'll check again on our own." : "Paste it in the bio and save. We'll spot it on our own."
-    : shown?.state === "not_found" ? "Check the spelling, or finish creating the account first." : null;
+  const hint = activity === "offline" && !verified
+    ? "Reconnect to the internet and we'll check again automatically."
+    : shown?.state === "found" && !shown.codeFound
+    ? shown.isPrivate ? "Save your code in the bio and leave the profile public. We'll check again automatically." : "Paste it in the bio and save. We'll spot it on our own."
+    : shown?.state === "not_found" ? "Check the spelling, or finish creating the account first."
+    : shown?.state === "unreadable" || shown?.state === "error" ? "Keep the exact code in your saved bio and leave the profile public. We'll retry after a short pause." : null;
   return (
     <div
       role="status"
       aria-live="polite"
       className={cx(
-        "mt-2 rounded-lg px-3 py-2.5 transition-colors",
+        "@container/bio mt-2 rounded-lg px-3 py-2.5 transition-colors",
         tone === "good" ? "bg-[#eaf5e6]" : tone === "wait" || tone === "warn" ? "bg-[#fdf6e6]" : tone === "bad" ? "bg-[#fdf0ee]" : "bg-[#f4f6f3]"
       )}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="grid grid-cols-[20px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-2 @[420px]/bio:grid-cols-[20px_minmax(0,1fr)_auto]">
         <span
           aria-hidden="true"
           className={cx(
@@ -232,26 +354,23 @@ function LiveAccountStatus({ preview, code, platformLabel, onCheck }: { preview:
             tone === "good" ? "bg-[#2e7d4f] text-white" : tone === "bad" ? "bg-[#f6d5d0] text-[#8e2b20]" : tone === "neutral" ? "bg-[#e3e7e1] text-[#4b544e]" : "bg-[#f5e3b5] text-[#6b4a05]"
           )}
         >
-          {tone === "good" ? <UiIcon.Check className="h-3 w-3" /> : tone === "bad" ? <UiIcon.Close className="h-2.5 w-2.5" /> : looking || !shown ? <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+          {tone === "good" ? <UiIcon.Check className="h-3 w-3" /> : tone === "bad" ? <UiIcon.Close className="h-2.5 w-2.5" /> : looking ? <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
         </span>
         <div className="min-w-0 flex-1">
-          <p className={cx("text-[12.5px] font-semibold leading-5", tone === "good" ? "text-[#1f5131]" : tone === "bad" ? "text-[#8e2b20]" : tone === "neutral" ? "text-[#3b443e]" : "text-[#6b4a05]")}>{headline}</p>
-          {facts.length ? <p className="text-[11.5px] tabular-nums text-[#616a64]">@{preview.handle} · {facts.join(" · ")}</p> : null}
-          {hint ? <p className="mt-0.5 text-[11.5px] leading-[1.1rem] text-[#616a64]">{hint}</p> : null}
+          <p className={cx("break-words text-[12.5px] font-semibold leading-5", tone === "good" ? "text-[#1f5131]" : tone === "bad" ? "text-[#8e2b20]" : tone === "neutral" ? "text-[#3b443e]" : "text-[#6b4a05]")}>{headline}</p>
+          {facts.length ? <p className="break-words text-[11.5px] tabular-nums text-[#616a64]">@{preview.handle} · {facts.join(" · ")}</p> : null}
+          {hint ? <p className="mt-0.5 break-words text-[11.5px] leading-[1.1rem] text-[#616a64]">{hint}</p> : null}
         </div>
         {shown && tone !== "good" ? (
-          <button type="button" onClick={onCheck} disabled={looking} className="shrink-0 rounded-md px-1.5 py-1 text-[11.5px] font-semibold text-[#2b5d4a] underline-offset-2 hover:underline disabled:text-[#9aa29c] disabled:no-underline">
-            {looking ? "Checking…" : "Check now"}
+          <button type="button" onClick={onCheck} disabled={looking || waiting || activity !== "active"} className="col-start-2 inline-flex min-h-11 w-fit items-center justify-center rounded-md border border-[#dce4d7] bg-white px-3 text-[11.5px] font-semibold text-[#2b5d4a] underline-offset-2 hover:bg-[#f8fbf5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:cursor-default disabled:text-[#9aa29c] @[420px]/bio:col-start-3 @[420px]/bio:row-start-1">
+            {looking ? "Checking…" : waiting ? "Please wait" : "Check now"}
           </button>
         ) : null}
       </div>
-      {shown && tone !== "good" && tone !== "bad" && !looking ? (
+      {shown && tone !== "good" && !looking ? (
         <p className="mt-1.5 flex items-center gap-1.5 pl-[30px] text-[11px] text-[#7a827c]">
-          <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8dbf98] opacity-60 motion-reduce:hidden" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[#2e7d4f]" />
-          </span>
-          Live: checking again every 15 seconds
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa89b]" aria-hidden="true" />
+          {activity === "offline" ? "Waiting for an internet connection" : activity === "hidden" ? "Checks resume when you return to this tab" : retryAt ? <>Next automatic check at <time dateTime={new Date(retryAt).toISOString()}>{new Date(retryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></> : "Automatic checks will resume shortly"}
         </p>
       ) : null}
     </div>
@@ -355,63 +474,15 @@ export default function AccountSetupPanel({
   const [justSent, setJustSent] = useState(false);
 
   /* Bio checks: manual "Check again", plus a quiet background re-check while the code hasn't shown up. */
-  const [checking, setChecking] = useState(false);
-  const [checkMessage, setCheckMessage] = useState<string | null>(null);
-  const updatedRef = useRef(onUpdated);
-  useEffect(() => {
-    updatedRef.current = onUpdated;
-  }, [onUpdated]);
-  const recheck = useCallback(
-    async (silent = false) => {
-      if (!silent) {
-        setChecking(true);
-        setCheckMessage(null);
-      }
-      try {
-        const response = await fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", applicationId: application.id }) });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(payload?.error || "Couldn't check right now.");
-        updatedRef.current(payload);
-        const found = payload?.proposal?.accountSetup?.ownership === "found";
-        if (!silent || found) setCheckMessage(found ? "Code found. Your account is now with the team." : "Not there yet. Bio changes can take a minute to appear.");
-      } catch (e) {
-        // Background checks can hit the cooldown when another tab just checked; only manual checks report it.
-        if (!silent) setCheckMessage(e instanceof Error ? e.message : "Couldn't check right now.");
-      } finally {
-        if (!silent) setChecking(false);
-      }
-    },
-    [application.id]
-  );
   const autoCheck = !verified && !formOpen && setup?.status === "Submitted" && readable && !owned;
-  const lastChecked = setup?.checkedAt;
-  useEffect(() => {
-    if (!autoCheck) return;
-    const cooldown = (ACCOUNT_REQUEST_LIMITS.recheckSeconds + 5) * 1000;
-    const tick = () => {
-      if (!document.hidden && navigator.onLine) void recheck(true);
-    };
-    // Coming back to the page after editing the bio: check straight away if the last read is old enough.
-    const sinceLast = lastChecked ? Date.now() - Date.parse(lastChecked) : Infinity;
-    const first = window.setTimeout(tick, Math.max(1500, cooldown - sinceLast));
-    const timer = window.setInterval(tick, cooldown);
-    const onVisible = () => {
-      if (!document.hidden && (!lastChecked || Date.now() - Date.parse(lastChecked) > cooldown)) tick();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [autoCheck, lastChecked, recheck]);
+  const { checking, checkMessage, recheck, activity: submittedActivity, retryAt: submittedRetryAt } = useSubmittedBioCheck(application.id, setup, autoCheck, onUpdated);
 
   const errors = validateAccountOwnership(values, platform);
   const visibleError = (key: keyof AccountOwnershipInput) => (touched[key] ? errors[key] : undefined);
   const ready = Object.keys(errors).length === 0 && confirmed && !!code;
   // Live lookup of the account while the form is open: steps tick off as the account and the code appear.
   const liveHandle = formOpen && readable && !!code && !!values.handle && !errors.handle ? normalizeHandle(values.handle, platform) : null;
-  const { preview: live, checkNow } = useLivePreview(application.id, liveHandle, formOpen && readable);
+  const { preview: live, checkNow, activity: liveActivity, retryAt: liveRetryAt, notBefore: liveNotBefore } = useLivePreview(application.id, liveHandle, code, formOpen && readable);
   const accountFound = live.state === "found";
   const codeLive = live.state === "found" && live.codeFound;
 
@@ -437,7 +508,6 @@ export default function AccountSetupPanel({
     if (!ready || submitting) return;
     setSubmitting(true);
     setServerError(null);
-    setCheckMessage(null);
     try {
       const response = await fetch(ENDPOINT, {
         method: "POST",
@@ -521,7 +591,7 @@ export default function AccountSetupPanel({
                 tone: "warning" as const,
                 pill: "Action needed",
                 title: "Your account is private",
-                detail: `We can't see the bio of a private account. Switch @${setup.handle} to public for a moment, then check again.`,
+                detail: `Save your code in the bio and make @${setup.handle} public so the team can verify this account.`,
               }
             : {
                 tone: "warning" as const,
@@ -560,7 +630,7 @@ export default function AccountSetupPanel({
         ? {
             title: "We confirm it automatically",
             body: (
-              <Button size="md" variant="primary" onClick={() => void recheck()} disabled={checking}>
+              <Button size="md" variant="primary" onClick={() => void recheck()} disabled={checking || submittedActivity !== "active"}>
                 {checking ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
                 {checking ? "Checking…" : "Check now"}
               </Button>
@@ -644,12 +714,9 @@ export default function AccountSetupPanel({
             {autoCheck || checkMessage ? (
               <div className="flex flex-col gap-1 border-t border-black/[0.06] px-3.5 py-2.5 text-[11.5px] @md:flex-row @md:items-center @md:justify-between @md:px-4">
                 {autoCheck ? (
-                  <span className="flex items-center gap-1.5 text-[#616a64]">
-                    <span className="relative flex h-2 w-2" aria-hidden="true">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8dbf98] opacity-60 motion-reduce:hidden" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-[#2e7d4f]" />
-                    </span>
-                    Checking every minute while this page is open
+                  <span className="flex min-w-0 items-center gap-1.5 text-[#616a64]">
+                    <span className="h-2 w-2 shrink-0 rounded-full bg-[#9aa89b]" aria-hidden="true" />
+                    <span>{submittedActivity === "offline" ? "You're offline. Bio checks resume when you reconnect." : submittedActivity === "hidden" ? "Bio checks resume when you return to this tab." : checking ? "Checking your saved bio…" : submittedRetryAt ? <>Next automatic bio check at <time dateTime={new Date(submittedRetryAt).toISOString()}>{new Date(submittedRetryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></> : "Bio checks run automatically while this page is open."}</span>
                   </span>
                 ) : (
                   <span />
@@ -787,7 +854,7 @@ export default function AccountSetupPanel({
                 {visibleError("handle")}
               </p>
             ) : (
-              <LiveAccountStatus preview={live} code={code} platformLabel={platform.label} onCheck={checkNow} />
+              <LiveAccountStatus preview={live} code={code} platformLabel={platform.label} onCheck={checkNow} activity={liveActivity} retryAt={liveRetryAt} notBefore={liveNotBefore} />
             )}
           </div>
 
@@ -958,7 +1025,7 @@ export default function AccountSetupPanel({
               </Button>
             </div>
           </div>
-          {!ready && Object.values(touched).some(Boolean) && !submitting ? (
+          {!ready && !submitting ? (
             <p className="text-center text-[11.5px] text-[#7a827c] @md:text-right">
               {Object.keys(errors).length ? "Check the username to continue." : !code ? "Loading your code…" : "Confirm you own the account to continue."}
             </p>

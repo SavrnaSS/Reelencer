@@ -104,3 +104,11 @@ test('stored setups carry the bio code and the last read, and need no login', ()
   assert.equal(odd.followers, undefined);
   assert.equal(ownershipProven(publicAccountSetup(odd)), false);
 });
+
+test('provider retry deadlines survive public setup serialization and invalid dates are dropped', () => {
+  const base = { platform: 'Instagram', handle: 'glowco.pune', status: 'Submitted', ownership: 'unreadable' };
+  const retryAt = '2026-10-31T10:00:00.000Z';
+  assert.equal(publicAccountSetup({ ...base, ownershipRetryAt: retryAt })?.ownershipRetryAt, retryAt);
+  assert.equal(readStoredAccountSetup({ ...base, ownershipRetryAt: 'invalid' })?.ownershipRetryAt, undefined);
+  assert.equal(readStoredAccountSetup({ ...base, ownershipRetryAt: 123 })?.ownershipRetryAt, undefined);
+});

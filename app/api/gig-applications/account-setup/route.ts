@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
-import { checkAccountOwnership, getAccountVerifyCode, previewAccountOwnership, requestAccountChanges, revealAccountPassword, submitAccountSetup } from "@/lib/api/accountSetup";
+import { AccountOwnershipCooldownError, checkAccountOwnership, getAccountVerifyCode, previewAccountOwnership, requestAccountChanges, revealAccountPassword, submitAccountSetup } from "@/lib/api/accountSetup";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
 import { ACCOUNT_LIMITS } from "@/lib/accountSetup";
@@ -30,7 +30,8 @@ export const GET = withApi({ auth: "user" }, async (req) => {
   const handle = req.nextUrl.searchParams.get("handle");
   if (handle !== null) {
     if (handle.length > 200) throw new ApiError(400, "Enter a valid username.", "invalid_input");
-    return NextResponse.json(await previewAccountOwnership({ userId: actor.user.id, aliases: actor.aliases }, parsed.data, handle), { headers: NO_STORE_HEADERS });
+    const preview = await previewAccountOwnership({ userId: actor.user.id, aliases: actor.aliases }, parsed.data, handle);
+    return NextResponse.json(preview, { headers: { ...NO_STORE_HEADERS, ...(preview.retryAfterSeconds ? { "Retry-After": String(preview.retryAfterSeconds) } : {}) } });
   }
   return NextResponse.json(await getAccountVerifyCode({ aliases: actor.aliases }, parsed.data), { headers: NO_STORE_HEADERS });
 });
@@ -42,8 +43,17 @@ export const POST = withApi({ auth: "user", rateLimit: 20 }, async (req) => {
     const parsed = byId.safeParse(body);
     if (!parsed.success) throw new ApiError(400, "applicationId is required.", "invalid_input");
     if (parsed.data.action === "check") {
-      const result = await checkAccountOwnership({ userId: actor.user.id, aliases: actor.aliases, isAdmin: actor.isAdmin }, parsed.data.applicationId);
-      return NextResponse.json(result, { headers: NO_STORE_HEADERS });
+      try {
+        const result = await checkAccountOwnership({ userId: actor.user.id, aliases: actor.aliases, isAdmin: actor.isAdmin }, parsed.data.applicationId);
+        const retryAt = result.proposal?.accountSetup?.ownershipRetryAt;
+        const retryAfterSeconds = retryAt ? Math.max(0, Math.ceil((Date.parse(retryAt) - Date.now()) / 1000)) : 0;
+        return NextResponse.json(result, { headers: { ...NO_STORE_HEADERS, ...(retryAfterSeconds ? { "Retry-After": String(retryAfterSeconds) } : {}) } });
+      } catch (error) {
+        if (!(error instanceof AccountOwnershipCooldownError)) throw error;
+        return NextResponse.json({ error: error.message, code: error.code, retryAfterSeconds: error.retryAfterSeconds }, {
+          status: 429, headers: { ...NO_STORE_HEADERS, "Retry-After": String(error.retryAfterSeconds) },
+        });
+      }
     }
     if (!actor.isAdmin) throw new ApiError(403, "Access denied.");
     const password = await revealAccountPassword({ userId: actor.user.id }, parsed.data.applicationId);

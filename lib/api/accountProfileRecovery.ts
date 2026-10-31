@@ -6,7 +6,7 @@ import { deriveSecretBytes } from "@/lib/secretCrypto";
 import { ProfileNotFoundError } from "@/lib/socialSyncSchedule";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ApiError, databaseError } from "./errors";
-import { fetchInstagramProfileSummary } from "./instagramProfile";
+import { readInstagramAccountOwnership } from "./accountOwnershipReader";
 import { resolveSyncConfig } from "./integrations";
 
 type Row = Record<string, unknown>;
@@ -63,9 +63,9 @@ async function save(sb: Sb, row: Row, health: AccountProfileHealth, restore?: { 
 async function readProfile(platformName: string, handle: string, code: string): Promise<{ owned: boolean; externalId?: string } | null> {
   const platform = accountPlatformFor(platformName);
   if (platform.id === "instagram") {
-    const profile = await fetchInstagramProfileSummary(handle, code);
+    const profile = await readInstagramAccountOwnership(handle, code);
     if (typeof profile.biography !== "string") return null;
-    return { owned: profile.biography.toUpperCase().includes(code), externalId: profile.externalId };
+    return { owned: profile.codeFound === true, externalId: profile.externalId };
   }
   if (platform.id !== "youtube") return null;
   const config = await resolveSyncConfig();

@@ -26,10 +26,10 @@ import {
   type MailStatus,
   type ProposalPayload,
 } from "@/lib/api/gigApplications";
-import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
+import { readInstagramAccountOwnership } from "@/lib/api/accountOwnershipReader";
 import { decryptSecretText, deriveSecretBytes } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { ProfileNotFoundError } from "@/lib/socialSyncSchedule";
+import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
 
 export function decodePublicWorkerName(raw: unknown) {
   const decoded = decodeWorkerName(raw);
@@ -89,43 +89,64 @@ export async function getAccountVerifyCode(actor: { aliases: string[] }, applica
   return { verifyCode: accountVerifyCode(String(row.id)) };
 }
 
-type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "checkedAt" | "followers" | "posts" | "isPrivate">;
+type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "checkedAt" | "ownershipRetryAt" | "followers" | "posts" | "isPrivate">;
 
 /** Reads the public bio for the code. Never throws: a failed read is recorded so the team can check by hand. */
 async function readOwnership(platformName: string, handle: string, code: string): Promise<OwnershipFields> {
   const platform = accountPlatformFor(platformName);
   const checkedAt = new Date().toISOString();
-  if (!canReadBio(platform)) return { ownership: "manual", ownershipDetail: `The reviewer will look for ${code} in the bio when they open the profile.`, checkedAt };
+  if (!canReadBio(platform)) return { ownership: "manual", ownershipDetail: `The reviewer will look for ${code} in the bio when they open the profile.`, checkedAt, ownershipRetryAt: undefined };
   try {
-    const profile = await fetchInstagramProfileSummary(handle, code);
-    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate };
+    const profile = await readInstagramAccountOwnership(handle, code);
+    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate, ownershipRetryAt: undefined };
     if (profile.codeFound) return { ...stats, ownership: "found", ownershipDetail: `${code} found in the bio.`, checkedAt };
     return {
       ...stats,
       ownership: "missing",
-      ownershipDetail: profile.isPrivate ? `The account is private, so ${code} couldn't be seen in the bio.` : `${code} isn't in the bio yet.`,
+      ownershipDetail: profile.isPrivate ? `The account is private. Keep ${code} in the bio and make the profile public before verification.` : `${code} isn't in the bio yet.`,
       checkedAt,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return {
       ownership: "unreadable",
-      ownershipDetail: error instanceof ProfileNotFoundError || /not found|404/i.test(message)
+      ownershipDetail: error instanceof ProfileNotFoundError
         ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
-        : `${platform.label} didn't respond on the last check. We'll keep trying automatically.`,
+        : /limited|redirect|login|403|401/i.test(message)
+          ? `${platform.label} is limiting profile access. Keep the code in your bio; the team can check it if automatic verification remains unavailable.`
+          : `${platform.label} couldn't provide the bio on the last check. Keep the code saved in your bio and try again shortly.`,
       checkedAt,
+      ownershipRetryAt: new Date(Date.now() + (unreadablePreview(handle, error).retryAfterSeconds ?? 60) * 1000).toISOString(),
     };
   }
 }
 
-export type AccountPreview =
+export type AccountPreview = (
   | { state: "manual" }
   | { state: "not_found"; handle: string }
   | { state: "unreadable"; handle: string }
-  | { state: "found"; handle: string; codeFound: boolean; isPrivate?: boolean; followers?: number; posts?: number };
+  | { state: "found"; handle: string; codeFound: boolean; isPrivate?: boolean; followers?: number; posts?: number }
+) & { checkedAt?: string; retryAfterSeconds?: number; reason?: string };
 
-const previewCache = new Map<string, { at: number; value: AccountPreview }>();
+const previewCache = new Map<string, { expiresAt: number; value: AccountPreview }>();
+const previewInFlight = new Map<string, Promise<AccountPreview>>();
 const PREVIEW_CACHE_MS = 10_000;
+
+function previewFromCache(cached: { expiresAt: number; value: AccountPreview }): AccountPreview {
+  return cached.value.state === "unreadable" || cached.value.state === "not_found"
+    ? { ...cached.value, retryAfterSeconds: Math.max(1, Math.ceil((cached.expiresAt - Date.now()) / 1000)) }
+    : cached.value;
+}
+
+function unreadablePreview(handle: string, error: unknown): AccountPreview {
+  const message = error instanceof Error ? error.message : "";
+  const code = error instanceof SocialSyncError ? error.code : "";
+  const reason = code === "rate_limited" ? "rate_limited"
+    : code === "login_required" || /redirect|login|403|401/i.test(message) ? "access_limited"
+      : code === "timeout" || /timeout|timed out|reached|respond|abort/i.test(message) ? "timeout" : "bio_unavailable";
+  const providerRetry = error instanceof SocialSyncError && Number.isFinite(error.retryAfterMs) ? Math.min(86_400, Math.max(0, Math.ceil(error.retryAfterMs / 1000))) : 0;
+  return { state: "unreadable", handle, reason, retryAfterSeconds: Math.max(providerRetry, reason === "rate_limited" || reason === "access_limited" ? 60 : 30) };
+}
 
 /**
  * Creator-only live lookup while filling in the form: does the account exist, and is the code in its bio yet?
@@ -141,21 +162,29 @@ export async function previewAccountOwnership(actor: { userId: string; aliases: 
   const handle = normalizeHandle(rawHandle, platform);
   if (!handle || !platform.handleRule.test(handle)) throw new ApiError(400, "Enter a valid username.", "invalid_input");
   const code = accountVerifyCode(String(row.id));
-  const key = `${row.id}:${handle.toLowerCase()}`;
+  const key = `${row.id}:${handle.toLowerCase()}:${code}`;
   const cached = previewCache.get(key);
-  if (cached && Date.now() - cached.at < PREVIEW_CACHE_MS) return cached.value;
+  if (cached && cached.expiresAt > Date.now()) return previewFromCache(cached);
+  const pending = previewInFlight.get(key);
+  if (pending) return pending;
   localRateLimit(`account-preview:${actor.userId}`, 15);
-  let value: AccountPreview;
-  try {
-    const profile = await fetchInstagramProfileSummary(handle, code);
-    value = { state: "found", handle, codeFound: !!profile.codeFound, isPrivate: profile.isPrivate, followers: profile.followers, posts: profile.posts };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    value = error instanceof ProfileNotFoundError || /not found|404/i.test(message) ? { state: "not_found", handle } : { state: "unreadable", handle };
-  }
-  if (previewCache.size > 2000) previewCache.clear();
-  previewCache.set(key, { at: Date.now(), value });
-  return value;
+  const lookup = (async () => {
+    let value: AccountPreview;
+    try {
+      const profile = await readInstagramAccountOwnership(handle, code);
+      value = { state: "found", handle, codeFound: !!profile.codeFound, isPrivate: profile.isPrivate, followers: profile.followers, posts: profile.posts };
+    } catch (error) {
+      value = error instanceof ProfileNotFoundError ? { state: "not_found", handle, retryAfterSeconds: 60 } : unreadablePreview(handle, error);
+    }
+    value = { ...value, checkedAt: new Date().toISOString() };
+    const ttl = value.state === "unreadable" || value.state === "not_found" ? (value.retryAfterSeconds ?? 30) * 1000 : PREVIEW_CACHE_MS;
+    if (previewCache.size > 2000) previewCache.clear();
+    previewCache.set(key, { expiresAt: Date.now() + ttl, value });
+    return value;
+  })();
+  previewInFlight.set(key, lookup);
+  try { return await lookup; }
+  finally { if (previewInFlight.get(key) === lookup) previewInFlight.delete(key); }
 }
 
 /** The email sent the first time the code is found in the bio: ownership is proven, the team review is next. */
@@ -326,6 +355,12 @@ export async function submitAccountSetup(actor: { userId: string; aliases: strin
 }
 
 /** "Check again": re-reads the bio for the code. Creators are rate limited; admins aren't. */
+export class AccountOwnershipCooldownError extends ApiError {
+  constructor(public retryAfterSeconds: number) {
+    super(429, `Checked a moment ago. Try again in ${retryAfterSeconds}s.`, "cooldown");
+  }
+}
+
 export async function checkAccountOwnership(actor: { userId: string; aliases: string[]; isAdmin: boolean }, applicationId: string) {
   const { sb, row, gig } = await loadApplication(applicationId);
   if (!actor.isAdmin && !actor.aliases.includes(String(row.worker_code))) throw new ApiError(404, "Application not found.");
@@ -335,8 +370,9 @@ export async function checkAccountOwnership(actor: { userId: string; aliases: st
   // Nothing left to prove once the team has decided.
   if (previous.status === "Verified" || row.status === "Accepted" || row.status === "Rejected") return toApplication(row);
   const last = previous.checkedAt ? Date.parse(previous.checkedAt) : 0;
-  const wait = last + ACCOUNT_REQUEST_LIMITS.recheckSeconds * 1000 - Date.now();
-  if (!actor.isAdmin && wait > 0) throw new ApiError(429, `Checked a moment ago. Try again in ${Math.ceil(wait / 1000)}s.`, "cooldown");
+  const providerRetryAt = previous.ownershipRetryAt ? Date.parse(previous.ownershipRetryAt) : 0;
+  const wait = Math.max(Number.isFinite(last) ? last + ACCOUNT_REQUEST_LIMITS.recheckSeconds * 1000 : 0, Number.isFinite(providerRetryAt) ? providerRetryAt : 0) - Date.now();
+  if (!actor.isAdmin && wait > 0) throw new AccountOwnershipCooldownError(Math.ceil(wait / 1000));
   const verifyCode = previous.verifyCode ?? accountVerifyCode(String(row.id));
   const setup: StoredAccountSetup = { ...previous, verifyCode, ...(await readOwnership(previous.platform, previous.handle, verifyCode)) };
   // The write is compare-and-set, so two checks racing can't both see "not found" → "found" and send twice.

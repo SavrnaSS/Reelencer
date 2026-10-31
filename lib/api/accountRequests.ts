@@ -16,7 +16,7 @@ import {
 import { accountPlatformFor, normalizeHandle, payoutPhrase, validateAccountOwnership, type AccountOwnershipInput } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decodeWorkerName, resolveNotificationContext, sendLifecycleNotification, type MailStatus } from "@/lib/api/gigApplications";
-import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
+import { readInstagramAccountOwnership } from "@/lib/api/accountOwnershipReader";
 import { emailBaseUrl } from "@/lib/email/send";
 import { decryptSecretText } from "@/lib/secretCrypto";
 import { formatCompact } from "@/lib/socialAnalytics";
@@ -128,7 +128,7 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
   // the profile and looks for the code.
   if (platform.id === "instagram") {
     try {
-      const profile = await fetchInstagramProfileSummary(handle, code);
+      const profile = await readInstagramAccountOwnership(handle, code);
       const counts = [
         profile.followers !== undefined ? `${formatCompact(profile.followers)} followers` : null,
         profile.posts !== undefined ? `${formatCompact(profile.posts)} posts` : null,

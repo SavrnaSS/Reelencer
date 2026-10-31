@@ -1,6 +1,7 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { extractInstagramPost, extractInstagramProfile, fetchInstagramProfile, fetchInstagramReel, normalizeInstagramHandle } from "../../lib/api/instagramProfile";
+import { extractInstagramPost, extractInstagramProfile, extractInstagramProfileSummary, fetchInstagramProfile, fetchInstagramProfileSummary, fetchInstagramReel, normalizeInstagramHandle } from "../../lib/api/instagramProfile";
+import { ProfileNotFoundError, SocialSyncError } from "../../lib/socialSyncSchedule";
 
 const html = (user: Record<string, unknown>) => `<script type="application/json">${JSON.stringify({ user })}</script>`;
 const base = { username: "creator.name", id: "123", edge_followed_by: { count: 0 }, edge_follow: { count: 12 }, edge_owner_to_timeline_media: { count: 2 } };
@@ -527,4 +528,133 @@ test("a profile embed's account summary supplies counts for an account with no p
   assert.throws(() => extractInstagramProfile(page.replace(/creator\.name/g, "someone.else"), "creator.name"), /readable counts/);
   const richer = html({ username: "creator.name", edge_followed_by: { count: 3 }, biography: "Bio", is_private: false }) + page;
   assert.equal(extractInstagramProfile(richer, "creator.name").biography, "Bio");
+});
+
+test("ownership reads accept the exact account biography even when public counts are hidden", async () => {
+  globalThis.fetch = async () => new Response(html({ username: "creator.name", id: "123", biography: "Creator RL-ABC234" }), { headers: { "content-type": "text/html" } });
+  const profile = await fetchInstagramProfileSummary("Creator.Name", "RL-ABC234");
+  assert.equal(profile.codeFound, true);
+  assert.equal(profile.biography, "Creator RL-ABC234");
+  assert.equal(profile.externalId, "123");
+  assert.equal(profile.followers, undefined);
+  assert.equal(profile.posts, undefined);
+});
+
+test("modern biography fields and serialized transport envelopes preserve identity-bound ownership evidence", async () => {
+  const user = { username: "creator.name", pk: "123", biography_with_entities: { raw_text: "Creator RL – ABC234\u200b" } };
+  for (const page of [
+    html(user), html({ data: JSON.stringify({ user }) }),
+    `<script>window.__additionalDataLoaded('/creator.name/',${JSON.stringify({ graphql: { user } })});</script>`,
+    `<script>someServer.handle(${JSON.stringify({ contextJSON: JSON.stringify({ user }) })});</script>`,
+  ]) {
+    globalThis.fetch = async () => new Response(page, { headers: { "content-type": "text/html" } });
+    const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+    assert.equal(profile.codeFound, true);
+    assert.equal(profile.biography, user.biography_with_entities.raw_text);
+    assert.equal(profile.externalId, "123");
+  }
+});
+
+test("empty profile stubs cannot mask a populated biography for the same requested account", async () => {
+  for (const empty of ["", " \n "]) {
+    const page = html({ username: "creator.name", id: "123", biography: empty })
+      + html({ username: "someone.else", id: "456", biography: "Wrong account RL-OTHER1" })
+      + html({ username: "Creator.Name", id: "123", biography: "Creator RL-ABC234" });
+    globalThis.fetch = async () => new Response(page, { headers: { "content-type": "text/html" } });
+    const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+    assert.equal(profile.biography, "Creator RL-ABC234");
+    assert.equal(profile.codeFound, true);
+    assert.equal(profile.externalId, "123");
+  }
+  const foreign = extractInstagramProfileSummary(html({ username: "creator.name", biography: "" })
+    + html({ username: "creator.name.other", biography: "RL-ABC234" }), "creator.name");
+  assert.equal(foreign.biography, "", "a populated foreign biography cannot replace the exact account's empty bio");
+});
+
+test("a populated modern biography replaces an empty legacy field without overriding a readable legacy bio", async () => {
+  for (const empty of ["", " \n "]) {
+    globalThis.fetch = async () => new Response(html({ username: "creator.name", biography: empty, biography_with_entities: { raw_text: "Modern RL-ABC234" } }), { headers: { "content-type": "text/html" } });
+    const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+    assert.equal(profile.biography, "Modern RL-ABC234");
+    assert.equal(profile.codeFound, true);
+  }
+  const populated = extractInstagramProfileSummary(html({ username: "creator.name", biography: "Readable plain bio", biography_with_entities: { raw_text: "Different RL-ABC234" } }), "creator.name");
+  assert.equal(populated.biography, "Readable plain bio", "selection must not favor a field because it contains the expected code");
+});
+
+test("a public profile embed can expose the bio when the primary page is unavailable", async () => {
+  const requests: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input); requests.push(url);
+    assert.equal(init?.redirect, "manual");
+    assert.equal(init?.cache, "no-store");
+    return url.endsWith("/creator.name/")
+      ? new Response(null, { status: 302, headers: { location: "https://www.instagram.com/accounts/login/" } })
+      : new Response(html({ username: "creator.name", biography: "RL-ABC234" }), { headers: { "content-type": "text/html" } });
+  };
+  const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+  assert.equal(profile.codeFound, true);
+  assert.match(profile.note, /public profile embed/);
+  assert.deepEqual(requests, ["https://www.instagram.com/creator.name/", "https://www.instagram.com/creator.name/embed/"]);
+});
+
+test("summary reads stop immediately for direct absence and provider rate limits", async () => {
+  for (const status of [404, 410, 429]) {
+    const requests: string[] = [];
+    globalThis.fetch = async input => {
+      requests.push(String(input));
+      return new Response("Unavailable", { status, headers: { "retry-after": "120" } });
+    };
+    await assert.rejects(fetchInstagramProfileSummary("creator.name", "RL-ABC234"), error => status === 429
+      ? error instanceof SocialSyncError && error.code === "rate_limited" && error.retryAfterMs === 120000
+      : error instanceof ProfileNotFoundError);
+    assert.equal(requests.length, 1);
+  }
+});
+
+test("arbitrary page codes, captions and reflected metadata cannot prove biography ownership", async () => {
+  const fabricated = JSON.stringify({ user: { username: "creator.name", biography: "RL-ABC234", edge_followed_by: { count: 100 } } });
+  const actual = { ...base, biography: "A different bio", post: { caption: { text: fabricated } } };
+  const page = html(actual) + '<meta name="description" content="100 Followers (@creator.name) RL-ABC234"><p>RL-ABC234</p>';
+  globalThis.fetch = async () => new Response(page, { headers: { "content-type": "text/html" } });
+  const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+  assert.equal(profile.codeFound, false);
+  assert.equal(profile.biography, "A different bio");
+});
+
+test("a code from a different profile, similar username or a metadata-only page stays unreadable", async () => {
+  for (const page of [
+    html({ username: "someone.else", biography: "RL-ABC234" }),
+    html({ username: "creator.name.other", biography: "RL-ABC234" }),
+    '<meta name="description" content="100 Followers (@creator.name) RL-ABC234">',
+    html({ username: "creator.name", edge_followed_by: { count: 100 }, caption: { text: JSON.stringify({ username: "creator.name", biography: "RL-ABC234" }) } }),
+    '<html>Login requested for creator.name. Verification code: RL-ABC234</html>',
+  ]) {
+    globalThis.fetch = async () => new Response(page, { headers: { "content-type": "text/html" } });
+    await assert.rejects(fetchInstagramProfileSummary("creator.name", "RL-ABC234"), error => error instanceof SocialSyncError && error.code === "unavailable");
+  }
+});
+
+test("an empty biography is a measured missing code, while absent biography remains unreadable", async () => {
+  let reads = 0;
+  globalThis.fetch = async () => { reads++; return new Response(html({ username: "creator.name", biography: "" }), { headers: { "content-type": "text/html" } }); };
+  assert.equal((await fetchInstagramProfileSummary("creator.name", "RL-ABC234")).codeFound, false);
+  assert.equal(reads, 1, "a readable bio does not double profile traffic on every unsuccessful code check");
+  assert.equal(extractInstagramProfileSummary('<meta name="description" content="100 Followers (@creator.name)">', "creator.name").biography, undefined);
+});
+
+test("verification does not truncate readable biography evidence at the analytics display limit", async () => {
+  const biography = `${"a".repeat(700)} RL-ABC234`;
+  globalThis.fetch = async () => new Response(html({ username: "creator.name", biography }), { headers: { "content-type": "text/html" } });
+  assert.equal((await fetchInstagramProfileSummary("creator.name", "RL-ABC234")).codeFound, true);
+});
+
+test("summary cancellation exhausts the shared budget and never fans out more reads", async () => {
+  let reads = 0;
+  globalThis.fetch = async (_input, init) => {
+    reads++; assert.equal(init?.signal?.aborted, true);
+    throw new DOMException("Aborted", "AbortError");
+  };
+  await assert.rejects(fetchInstagramProfileSummary("creator.name", "RL-ABC234", { signal: AbortSignal.abort() }), error => error instanceof SocialSyncError && error.code === "timeout");
+  assert.equal(reads, 1);
 });

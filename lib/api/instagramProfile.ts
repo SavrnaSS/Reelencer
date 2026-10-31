@@ -1,6 +1,7 @@
 import "server-only";
 import { canonicalInstagramReelUrl } from "@/lib/socialAnalytics";
 import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
+import { matchesAccountOwnershipCode } from "@/lib/accountOwnershipCode";
 
 type Row = Record<string, unknown>;
 export type ProfilePost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number };
@@ -51,28 +52,31 @@ function belongsToProfile(post: Row, handle: string, ownerIds: ReadonlySet<strin
   return [owner.id, owner.pk].some(value => { const id = numericOwnerId(value); return id !== undefined && ownerIds.has(id); });
 }
 
-function embeddedObjects(html: string): Row[] {
+function embeddedObjects(html: string, profileEvidenceOnly = false): Row[] {
   const objects: Row[] = [];
-  const visit = (value: unknown, depth = 0) => {
+  const visit = (value: unknown, depth = 0, key = "") => {
     if (depth > 35 || objects.length >= 30_000) return;
     if (typeof value === "string" && value.length <= 1_000_000 && /^[\[{]/.test(value.trim())) {
-      try { visit(JSON.parse(value), depth + 1); } catch { /* Captions and other plain text are not JSON. */ }
+      // Verification may decode transport envelopes, never a caption, bio or other user-authored JSON string.
+      if (profileEvidenceOnly && key !== "data" && key !== "contextJSON") return;
+      try { visit(JSON.parse(value), depth + 1, key); } catch { /* Captions and other plain text are not JSON. */ }
       return;
     }
     if (!value || typeof value !== "object") return;
     if (Array.isArray(value)) { for (const child of value) visit(child, depth + 1); return; }
     objects.push(value as Row);
-    for (const child of Object.values(value)) visit(child, depth + 1);
+    for (const [childKey, child] of Object.entries(value)) visit(child, depth + 1, childKey);
   };
   for (const match of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
     const script = match[1].trim();
-    const candidate = script.startsWith("window._sharedData") ? script.replace(/^window\._sharedData\s*=\s*/, "").replace(/;\s*$/, "") : script;
+    const additional = profileEvidenceOnly ? script.match(/^window\.__additionalDataLoaded\(\s*["'][^"']{0,200}["']\s*,\s*([\s\S]+)\)\s*;?$/) : null;
+    const candidate = additional?.[1] ?? (script.startsWith("window._sharedData") ? script.replace(/^window\._sharedData\s*=\s*/, "").replace(/;\s*$/, "") : script);
     try { visit(JSON.parse(candidate)); } catch {
       // Public embeds put JSON inside a ServerJS call. Parse only its quoted data string;
       // executing the script would run untrusted code and isn't necessary.
       for (const payload of script.matchAll(/"contextJSON"\s*:\s*("(?:\\.|[^"\\])*")/g)) {
         if (payload[1].length > 1_000_000) continue;
-        try { visit(JSON.parse(payload[1])); } catch { /* Ignore malformed embedded data. */ }
+        try { visit(JSON.parse(payload[1]), 0, "contextJSON"); } catch { /* Ignore malformed embedded data. */ }
       }
     }
   }
@@ -425,26 +429,73 @@ export async function fetchInstagramProfile(input: string, trackedUrls: string[]
   return profile;
 }
 
-/**
- * Public profile page only (counts, bio, privacy): used to verify a requested account before it is linked.
- * `lookFor` reports whether a verification code appears in the bio, or anywhere in the public page when the bio
- * itself isn't exposed to logged-out reads (the code is random, so a match still means the owner placed it).
- */
-export async function fetchInstagramProfileSummary(input: string, lookFor?: string): Promise<Omit<InstagramProfile, "media"> & { codeFound?: boolean }> {
+type InstagramProfileSummary = Omit<InstagramProfile, "media"> & { codeFound?: boolean };
+
+function biographyFromProfile(profile: Row): string | undefined {
+  const plain = typeof profile.biography === "string" ? profile.biography : undefined;
+  const entities = row(profile.biography_with_entities).raw_text;
+  // An empty legacy field can sit beside the populated modern field in the same profile.
+  const biography = plain?.trim() ? plain : typeof entities === "string" && entities.trim() ? entities : plain ?? entities;
+  return typeof biography === "string" ? biography.slice(0, 4000) : undefined;
+}
+
+/** Actual biography fields for the exact account; follower counts are not a prerequisite for ownership. */
+export function extractInstagramProfileSummary(html: string, input: string): Omit<InstagramProfile, "media"> {
   const handle = normalizeInstagramHandle(input);
-  const html = await readPage(`/${handle}/`, AbortSignal.timeout(6000));
-  const needle = lookFor?.trim().toUpperCase();
-  const inPage = needle ? decode(html).toUpperCase().includes(needle) : undefined;
-  let summary: Omit<InstagramProfile, "media">;
-  try {
-    const { media: _media, ...profile } = extractInstagramProfile(html, handle);
-    void _media;
-    summary = profile;
-  } catch (error) {
-    // Counts can be hidden from logged-out reads while the bio still renders; the code alone proves ownership.
-    if (!inPage) throw error;
-    return { note: "Counts weren't readable.", codeFound: true };
+  const profiles = embeddedObjects(html, true).filter(object => String(object.username ?? "").toLowerCase() === handle);
+  // Public responses can contain an early profile stub before the complete account object.
+  const profile = profiles.find(object => biographyFromProfile(object)?.trim())
+    ?? profiles.find(object => biographyFromProfile(object) !== undefined) ?? profiles.find(object => isRequestedProfile(object, handle));
+  const identity = profile?.id ?? profile?.pk ?? profile?.owner_id;
+  const summary: Omit<InstagramProfile, "media"> = {
+    externalId: (typeof identity === "string" || typeof identity === "number") && String(identity).length <= 100 ? String(identity) : undefined,
+    followers: count(row(profile?.edge_followed_by).count ?? profile?.follower_count ?? profile?.followers_count),
+    following: count(row(profile?.edge_follow).count ?? profile?.following_count ?? profile?.follows_count),
+    posts: count(row(profile?.edge_owner_to_timeline_media).count ?? profile?.media_count ?? profile?.posts_count),
+    biography: profile ? biographyFromProfile(profile) : undefined,
+    isPrivate: typeof profile?.is_private === "boolean" ? profile.is_private : undefined,
+    note: "Read from the matching public Instagram profile. Hidden counts remain unavailable.",
+  };
+  // Counts in public profile metadata are useful context, but its text can never prove bio ownership.
+  let matchedMetadata = false;
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const attrs: Record<string, string> = {};
+    for (const attr of match[0].matchAll(/([\w:-]+)\s*=\s*(["'])([\s\S]*?)\2/g)) attrs[attr[1].toLowerCase()] = decode(attr[3]);
+    if (!/^(og:description|description)$/i.test(attrs.property || attrs.name || "")) continue;
+    const description = attrs.content || "";
+    if (!description.toLowerCase().includes(`@${handle}`) || new RegExp(`@${handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[a-z0-9._]`, "i").test(description)) continue;
+    matchedMetadata = true;
+    summary.followers ??= count(description.match(/([\d,.]+\s*[kmb]?)\s+followers\b/i)?.[1]);
+    summary.following ??= count(description.match(/([\d,.]+\s*[kmb]?)\s+following\b/i)?.[1]);
+    summary.posts ??= count(description.match(/([\d,.]+\s*[kmb]?)\s+posts\b/i)?.[1]);
   }
-  const codeFound = needle ? (summary.biography ?? "").toUpperCase().includes(needle) || !!inPage : undefined;
-  return { ...summary, codeFound };
+  if (!profile && (!matchedMetadata || [summary.followers, summary.following, summary.posts].every(value => value === undefined))) {
+    throw new SocialSyncError("Instagram did not expose a readable profile for this username.", "unavailable");
+  }
+  return summary;
+}
+
+/** Two bounded public reads; never treat a caption, login page or reflected code as ownership evidence. */
+export async function fetchInstagramProfileSummary(input: string, lookFor?: string, options: { signal?: AbortSignal } = {}): Promise<InstagramProfileSummary> {
+  const handle = normalizeInstagramHandle(input);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(6000)]) : AbortSignal.timeout(6000);
+  let firstError: unknown;
+  for (const [index, path] of [`/${handle}/`, `/${handle}/embed/`].entries()) {
+    try {
+      const html = await readPage(path, AbortSignal.any([signal, AbortSignal.timeout(index === 0 ? 3500 : 2500)]));
+      const summary = extractInstagramProfileSummary(html, handle);
+      if (lookFor && summary.biography === undefined) throw new SocialSyncError("Instagram did not expose this account's biography. Your ownership code could not be checked yet.", "unavailable");
+      return {
+        ...summary,
+        note: `${summary.note}${index ? " Read from the public profile embed because the main profile was unavailable." : ""}`,
+        codeFound: lookFor ? matchesAccountOwnershipCode(summary.biography, lookFor) : undefined,
+      };
+    } catch (error) {
+      if (error instanceof ProfileNotFoundError || (error instanceof SocialSyncError && error.code === "rate_limited")) throw error;
+      firstError ??= error;
+      if (signal.aborted) break;
+    }
+  }
+  if (signal.aborted) throw new SocialSyncError("Instagram did not respond within the profile reading time limit.", "timeout");
+  throw firstError;
 }
