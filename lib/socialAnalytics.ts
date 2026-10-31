@@ -198,6 +198,37 @@ export function metricChange(snapshots: SocialSnapshot[], key: SnapshotMetric) {
   return { value, previous: before, change, pct, capturedAt: current?.capturedAt };
 }
 
+/**
+ * Views gained across tracked reels in the last `hours`. Each automatic sync records the views its reels gained
+ * since the previous sync (reel by reel, so a removed or newly tracked reel doesn't distort it); this adds them up
+ * for the window, compares with the window before, and buckets them by hour for a sparkline. `since` is set when
+ * tracking doesn't yet reach back the whole window.
+ */
+export function recentViewGain(snapshots: SocialSnapshot[], now = Date.now(), hours = 12) {
+  const synced = snapshots
+    .filter((s) => (s.source === "profile" || s.source === "api") && Number.isFinite(Date.parse(s.capturedAt)))
+    .map((s) => ({ t: Date.parse(s.capturedAt), gained: validCount(s.impressions) ? (s.impressions as number) : undefined }))
+    .filter((s) => s.t <= now);
+  if (!synced.some((s) => s.gained !== undefined)) return undefined;
+  const span = hours * 3_600_000;
+  const start = now - span;
+  const firstSync = Math.min(...synced.map((s) => s.t));
+  const sum = (from: number, to: number) => synced.reduce((total, s) => (s.t > from && s.t <= to ? total + (s.gained ?? 0) : total), 0);
+  const value = sum(start, now);
+  // Only compare with the previous window when tracking covered all of it.
+  const previous = firstSync <= start - span ? sum(start - span, start) : undefined;
+  const change = previous !== undefined ? value - previous : undefined;
+  const buckets = Array.from({ length: hours }, (_, index) => sum(start + index * 3_600_000, start + (index + 1) * 3_600_000));
+  return {
+    value,
+    previous,
+    change,
+    pct: change !== undefined && previous ? (change / previous) * 100 : undefined,
+    buckets,
+    since: firstSync > start ? new Date(firstSync).toISOString() : undefined,
+  };
+}
+
 /** Interactions per account reached, as a percentage. */
 export function engagementRate(snapshot?: Pick<SocialSnapshot, "engagements" | "reach">) {
   if (!snapshot?.reach || snapshot.engagements === undefined) return undefined;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  recentViewGain,
   daysSinceSnapshot,
   engagementRate,
   formatChange,
@@ -219,4 +220,33 @@ test('reel view totals distinguish missing, zero and partial coverage, excluding
   assert.deepEqual(summary, { total: 993, measured: 2, missing: 1, average: 496.5, oldestCapturedAt: captured });
   assert.equal(reelViewSummary([{ ...reel, views: 0 }]).total, 0);
   assert.equal(reelViewSummary([{ ...reel, views: 10, viewsCapturedAt: captured }, { ...reel, views: 20 }]).oldestCapturedAt, undefined);
+});
+
+test('views in the last 12 hours add up every sync in the window, compare with the 12 hours before and bucket by hour', () => {
+  const now = Date.parse('2026-10-31T12:00:00Z');
+  const at = (hoursAgo: number, impressions: number | undefined, source: 'profile' | 'api' | 'manual' | 'screenshot' = 'profile') =>
+    ({ id: `${hoursAgo}-${source}`, capturedAt: new Date(now - hoursAgo * 3_600_000).toISOString(), periodDays: 1, impressions, source });
+  const snapshots = [
+    at(30, undefined),      // first sync: nothing to compare yet
+    at(20, 40), at(13, 10), // previous window: 50
+    at(11.5, 30), at(6.2, 20), at(0.5, 54), at(0, 0),
+    at(2, 5000, 'manual'),  // a hand-entered 7-day figure isn't a sync gain
+    at(-1, 999),            // a future timestamp is ignored
+  ];
+  const views = recentViewGain(snapshots, now, 12)!;
+  assert.equal(views.value, 104);
+  assert.equal(views.previous, 50);
+  assert.equal(views.change, 54);
+  assert.equal(views.pct, 108);
+  assert.equal(views.buckets.length, 12);
+  assert.equal(views.buckets.reduce((a, b) => a + b, 0), 104);
+  assert.equal(views.buckets[0], 30);
+  assert.equal(views.buckets[11], 54);
+  assert.equal(views.since, undefined);
+  // Tracking that started 3 hours ago: no comparison, and the card says since when.
+  const fresh = recentViewGain([at(3, undefined), at(2, 12), at(1, 8)], now, 12)!;
+  assert.equal(fresh.value, 20);
+  assert.equal(fresh.previous, undefined);
+  assert.equal(fresh.since, new Date(now - 3 * 3_600_000).toISOString());
+  assert.equal(recentViewGain([at(1, 500, 'manual')], now), undefined, 'no synced view counts: fall back to the old card');
 });

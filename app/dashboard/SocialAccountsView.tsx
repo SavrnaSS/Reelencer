@@ -20,6 +20,7 @@ import {
   formatCompact,
   formatPct,
   metricChange,
+  recentViewGain,
   metricSeries,
   nextMilestone,
   followerPace,
@@ -59,7 +60,7 @@ const CHART_METRICS: { key: SnapshotMetric; label: string; zeroBased: boolean }[
   { key: "profileViews", label: "Profile visits", zeroBased: true },
 ];
 
-function Delta({ change, pct, invert = false, label }: { change?: number; pct?: number; invert?: boolean; /** Overrides the formatted change (e.g. "+0.6 pts"). */ label?: string }) {
+function Delta({ change, pct, invert = false, label, title = "Since the previous check-in" }: { change?: number; pct?: number; invert?: boolean; /** Overrides the formatted change (e.g. "+0.6 pts"). */ label?: string; title?: string }) {
   if (change === undefined) return null;
   const up = change > 0;
   const good = invert ? !up : up;
@@ -67,7 +68,7 @@ function Delta({ change, pct, invert = false, label }: { change?: number; pct?: 
   return (
     <span
       className={cx("inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-semibold tabular-nums", good ? "bg-[#e3f1df] text-[#1f5131]" : "bg-[#fde4e1] text-[#8e1f1a]")}
-      title="Since the previous check-in"
+      title={title}
     >
       {up ? <UiIcon.ArrowUp className="h-3 w-3" /> : <UiIcon.ArrowDown className="h-3 w-3" />}
       {label ?? formatChange(change)}
@@ -85,6 +86,7 @@ function Kpi({
   changeLabel,
   trend,
   emphasis = false,
+  deltaTitle,
 }: {
   label: string;
   value: string;
@@ -94,6 +96,8 @@ function Kpi({
   changeLabel?: string;
   trend?: number[];
   emphasis?: boolean;
+  /** Tooltip for the change badge: what the change is measured against. */
+  deltaTitle?: string;
 }) {
   return (
     <div className={cx("flex min-w-0 flex-col justify-between gap-2 rounded-xl border p-3.5 sm:p-4", emphasis ? "border-[#cfe3d4] bg-[#f4f9f2]" : "border-[#ebedea] bg-white")}>
@@ -104,7 +108,7 @@ function Kpi({
       <div className="min-w-0">
         <div className="truncate text-[22px] font-semibold leading-none tracking-tight text-[#1a201c] tabular-nums sm:text-[24px]">{value}</div>
         <div className="mt-1.5 flex min-h-[18px] flex-wrap items-center gap-1.5">
-          <Delta change={change} pct={pct} label={changeLabel} />
+          <Delta change={change} pct={pct} label={changeLabel} title={deltaTitle} />
           {hint ? <span className="text-[11px] text-[#8a928c]">{hint}</span> : null}
         </div>
       </div>
@@ -604,6 +608,11 @@ function AccountDetail({
   const followers = change("followers");
   const reach = change("reach");
   const impressions = change("impressions");
+  // Views gained across tracked reels in the last 12 hours, from every automatic sync in that window.
+  const recentViews = useMemo(() => recentViewGain(snapshots, now, 12), [snapshots, now]);
+  const recentSince = recentViews?.since
+    ? new Date(recentViews.since).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", ...(now - Date.parse(recentViews.since) > 86_400_000 ? { day: "numeric", month: "short" } : {}) })
+    : undefined;
   const engagements = change("engagements");
   const profileViews = change("profileViews");
   const linkClicks = change("linkClicks");
@@ -717,7 +726,22 @@ function AccountDetail({
       : null;
   const candidates: { key: string; props: Parameters<typeof Kpi>[0] | null }[] = [
     { key: "followers", props: followers.value !== undefined ? { label: "Followers", value: formatCompact(followers.value), change: followers.change, pct: followers.pct, trend: trend("followers"), emphasis: true } : null },
-    { key: "impressions", props: impressions.value !== undefined ? { label: latest?.source === "api" ? "Views gained" : "Views", value: formatCompact(impressions.value), hint: period, change: impressions.change, pct: impressions.pct, trend: trend("impressions") } : null },
+    {
+      key: "impressions",
+      props: recentViews
+        ? {
+            label: "Views",
+            value: formatCompact(recentViews.value),
+            hint: recentSince ? `since ${recentSince}` : "last 12 hours",
+            change: recentViews.change,
+            pct: recentViews.pct,
+            deltaTitle: "Compared with the 12 hours before",
+            trend: recentViews.buckets.some((n) => n > 0) ? recentViews.buckets : undefined,
+          }
+        : impressions.value !== undefined
+          ? { label: latest?.source === "api" ? "Views gained" : "Views", value: formatCompact(impressions.value), hint: period, change: impressions.change, pct: impressions.pct, trend: trend("impressions") }
+          : null,
+    },
     { key: "reach", props: reach.value !== undefined ? { label: "Accounts reached", value: formatCompact(reach.value), hint: period, change: reach.change, pct: reach.pct, trend: trend("reach") } : null },
     { key: "rate", props: rateProps },
     { key: "engagements", props: engagements.value !== undefined ? { label: "Interactions", value: formatCompact(engagements.value), hint: period, change: engagements.change, pct: engagements.pct, trend: trend("engagements") } : null },
