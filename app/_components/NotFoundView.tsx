@@ -6,6 +6,7 @@ import { BrandLogo } from "@/app/_components/BrandLogo";
 import { suggestPage } from "@/lib/notFoundSuggest";
 import { CREATOR_HOME_HREF, FIND_GIGS_HREF } from "@/lib/routes";
 import styles from "./NotFoundView.module.css";
+import { buttonClassName } from "@/app/dashboard/dashboardUi";
 
 // The 404 screen for both routers (app/not-found.tsx and pages/404.tsx): the missing address, the page it most
 // likely meant, and the main ways back into Reelencer.
@@ -51,24 +52,24 @@ function Icon({ children, className = "h-5 w-5" }: { children: ReactNode; classN
 
 /** "404" as three reel frames; the zero is an empty frame with a play button. */
 function ReelNumber() {
-  const frame = "relative flex h-[7.5rem] w-[4.6rem] items-center justify-center overflow-hidden rounded-[1.1rem] border border-white/15 bg-white/[0.06] shadow-[0_24px_60px_-28px_rgba(0,0,0,0.8)] backdrop-blur sm:h-44 sm:w-[6.6rem] sm:rounded-[1.4rem]";
-  const digit = "font-[Georgia,Times_New_Roman,serif] text-[4.2rem] font-bold leading-none text-white sm:text-[6rem]";
+  const frame = "relative flex h-[6.4rem] w-[4rem] items-center justify-center overflow-hidden rounded-xl border border-[#e3e5e1] bg-white shadow-[0_1px_0_rgba(26,32,28,0.04),0_10px_24px_-14px_rgba(26,32,28,0.25)] sm:h-36 sm:w-[5.6rem] sm:rounded-2xl";
+  const digit = "font-[Georgia,Times_New_Roman,serif] text-[3.6rem] font-bold leading-none text-[#20352c] sm:text-[5rem]";
   return (
-    <div aria-hidden="true" className="flex items-end justify-center gap-3 sm:gap-4">
+    <div aria-hidden="true" className="flex items-end justify-center gap-2.5 sm:gap-3.5">
       <div className={`${styles.frame} ${frame}`} style={{ ["--tilt" as string]: "-6deg" }}>
         <span className={digit}>4</span>
       </div>
-      <div className={`${styles.frame} ${frame} border-[#8fe05f]/50 bg-[#8fe05f]/10`}>
-        <span className={`${styles.scan} absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-transparent via-[#8fe05f]/25 to-transparent`} />
-        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#8fe05f] text-[#0b1914] sm:h-14 sm:w-14">
-          <svg viewBox="0 0 24 24" className="ml-0.5 h-5 w-5 sm:h-6 sm:w-6" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></svg>
+      <div className={`${styles.frame} ${frame} border-[#cfe3d4] bg-[linear-gradient(160deg,#f3f9ef,#e6f2e0)]`}>
+        <span className={`${styles.scan} absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-transparent via-[#2e7d4f]/15 to-transparent`} />
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1f2b24] text-white shadow-[0_1px_2px_rgba(0,0,0,0.2)] sm:h-12 sm:w-12">
+          <svg viewBox="0 0 24 24" className="ml-0.5 h-4 w-4 sm:h-5 sm:w-5" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></svg>
         </span>
-        <span className="absolute left-2.5 top-2.5 flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.14em] text-white/70 sm:text-[10px]">
-          <span className={`${styles.blink} h-1.5 w-1.5 rounded-full bg-[#ff5a4f]`} />
+        <span className="absolute left-2 top-2 flex items-center gap-1 text-[8.5px] font-bold uppercase tracking-[0.14em] text-[#4b544e] sm:left-2.5 sm:top-2.5 sm:text-[9.5px]">
+          <span className={`${styles.blink} h-1.5 w-1.5 rounded-full bg-[#d03b3b]`} />
           Rec
         </span>
-        <span className="absolute inset-x-2.5 bottom-2.5 h-[3px] overflow-hidden rounded-full bg-white/15">
-          <span className="block h-full w-1/3 rounded-full bg-[#8fe05f]" />
+        <span className="absolute inset-x-2 bottom-2 h-[3px] overflow-hidden rounded-full bg-[#dfe9da] sm:inset-x-2.5 sm:bottom-2.5">
+          <span className="block h-full w-1/3 rounded-full bg-[#2e7d4f]" />
         </span>
       </div>
       <div className={`${styles.frame} ${frame}`} style={{ ["--tilt" as string]: "6deg" }}>
@@ -85,88 +86,98 @@ export default function NotFoundView() {
   const suggestion = path ? suggestPage(path) : null;
 
   return (
-    <div className="relative flex min-h-[100dvh] flex-col overflow-hidden bg-[#031713] text-white">
-      <div aria-hidden="true" className="pointer-events-none absolute -right-32 -top-32 h-[28rem] w-[28rem] rounded-full bg-[#58b52d]/20 blur-3xl" />
-      <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -left-24 h-[26rem] w-[26rem] rounded-full bg-[#2e7d4f]/25 blur-3xl" />
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.06)_1px,transparent_1px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
-
-      <header className="relative mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 pt-5 sm:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-2 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#8fe05f]" aria-label="Reelencer home">
-          <BrandLogo className="h-9 w-9" sizes="36px" />
-          <span className="font-[Georgia,Times_New_Roman,serif] text-[1.2rem] font-bold">Reelencer</span>
-        </Link>
-        <a href="mailto:support@reelencer.com" className="hidden h-9 items-center rounded-full border border-white/15 px-3.5 text-[13px] font-semibold text-white/80 transition hover:border-white/35 hover:text-white sm:inline-flex">
-          Contact support
-        </a>
+    <div className="flex min-h-[100dvh] flex-col bg-[#f3f4f1] text-[#1a201c] [font-family:var(--font-geist-sans)]">
+      {/* Same top bar as the dashboard. */}
+      <header className="sticky top-0 z-20 border-b border-[#e6ebe2] bg-[#fcfdf9]/90 backdrop-blur-md" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+        <div className="mx-auto flex h-[60px] w-full max-w-[1440px] items-center justify-between gap-3 px-3.5 sm:px-5 md:h-[68px] md:px-6 lg:px-7 2xl:px-8">
+          <Link href="/" className="flex min-w-0 items-center gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40" aria-label="Reelencer home">
+            <BrandLogo className="h-8 w-8" sizes="32px" />
+            <span className="hidden font-[Georgia,Times_New_Roman,serif] text-[19px] font-bold text-[#20352c] min-[380px]:inline">Reelencer</span>
+          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <a href="mailto:support@reelencer.com?subject=Broken%20link" className={buttonClassName("secondary", "md", "hidden h-10 rounded-full sm:inline-flex")}>
+              Contact support
+            </a>
+            <Link href={CREATOR_HOME_HREF} className={buttonClassName("primary", "md", "h-10")}>
+              My jobs
+            </Link>
+          </div>
+        </div>
       </header>
 
-      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col items-center justify-center px-4 py-10 text-center sm:px-6 sm:py-14 lg:px-8">
-        <ReelNumber />
+      <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col items-center justify-center px-3.5 py-8 min-[380px]:px-4 sm:px-5 sm:py-12 md:px-6 lg:px-7 2xl:px-8">
+        <section aria-labelledby="not-found-title" className="w-full max-w-2xl rounded-xl border border-[#e3e5e1] bg-white px-4 py-8 text-center shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] sm:px-10 sm:py-11">
+          <ReelNumber />
 
-        <p className="mt-9 text-[12px] font-bold uppercase tracking-[0.22em] text-[#8fe05f] sm:mt-11">Error 404 · Page not found</p>
-        <h1 className="mt-3 max-w-2xl text-balance text-[30px] font-semibold leading-[1.1] tracking-[-0.03em] sm:text-[44px]">This scene didn&apos;t make the final cut</h1>
-        <p className="mt-4 max-w-xl text-pretty text-[15px] leading-7 text-white/70 sm:text-[16.5px]">
-          The page you&apos;re looking for doesn&apos;t exist, was moved, or the link has a typo.
-        </p>
+          <p className="mt-7 inline-flex items-center gap-1.5 rounded-full bg-[#fde4e1] px-2.5 py-1 text-[12px] font-medium text-[#8e1f1a] sm:mt-9">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#d03b3b]" aria-hidden="true" />
+            Error 404 · Page not found
+          </p>
+          <h1 id="not-found-title" className="mx-auto mt-3 max-w-xl text-balance text-[24px] font-semibold leading-tight tracking-[-0.02em] text-[#1a201c] sm:text-[30px]">
+            This scene didn&apos;t make the final cut
+          </h1>
+          <p className="mx-auto mt-2 max-w-md text-pretty text-[13.5px] leading-6 text-[#616a64] sm:text-[14.5px]">
+            The page you&apos;re looking for doesn&apos;t exist, was moved, or the link has a typo.
+          </p>
 
-        {path ? (
-          <code className="mt-5 inline-flex max-w-full items-center gap-2 rounded-full bg-white/[0.07] px-3.5 py-1.5 text-[12.5px] text-white/75 ring-1 ring-white/12">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ff5a4f]" aria-hidden="true" />
-            <span className="truncate">{path}</span>
-          </code>
-        ) : null}
+          {path ? (
+            <code className="mx-auto mt-4 flex w-fit max-w-full items-center gap-2 rounded-lg border border-[#e3e5e1] bg-[#fafbf9] px-3 py-1.5 text-[12.5px] text-[#4b544e]">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#d03b3b]" aria-hidden="true" />
+              <span className="truncate">{path}</span>
+            </code>
+          ) : null}
 
-        {suggestion ? (
-          <Link
-            href={suggestion.href}
-            className="group mt-5 inline-flex max-w-full items-center gap-3 rounded-2xl bg-[#8fe05f]/12 py-2.5 pl-3 pr-4 text-left ring-1 ring-[#8fe05f]/35 transition hover:bg-[#8fe05f]/18"
-          >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#8fe05f] text-[#0b1914]">
-              <Icon className="h-4 w-4"><path d="M5 12h14M13 6l6 6-6 6" /></Icon>
-            </span>
-            <span className="min-w-0">
-              <span className="block text-[11.5px] font-semibold uppercase tracking-[0.12em] text-[#8fe05f]">Did you mean</span>
-              <span className="block truncate text-[14.5px] font-semibold">{suggestion.label}</span>
-            </span>
-          </Link>
-        ) : null}
-
-        <div className="mt-7 flex w-full max-w-sm flex-col gap-2.5 sm:w-auto sm:max-w-none sm:flex-row sm:justify-center">
-          <Link href="/" className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#8fe05f] px-6 text-[14.5px] font-bold text-[#0b1914] transition hover:bg-[#9ae86a]">
-            <Icon className="h-4 w-4"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" /></Icon>
-            Back to home
-          </Link>
-          {back ? (
-            <button
-              type="button"
-              onClick={() => window.history.back()}
-              className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-white/15 px-6 text-[14.5px] font-semibold text-white/85 transition hover:border-white/35 hover:text-white"
+          {suggestion ? (
+            <Link
+              href={suggestion.href}
+              className="group mx-auto mt-4 flex w-fit max-w-full items-center gap-3 rounded-xl border border-[#cfe3d4] bg-[#f4f9f2] py-2.5 pl-3 pr-4 text-left transition hover:bg-[#eaf4e6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
             >
-              <Icon className="h-4 w-4"><path d="M19 12H5M11 6l-6 6 6 6" /></Icon>
-              Go back
-            </button>
-          ) : (
-            <Link href={FIND_GIGS_HREF} className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-white/15 px-6 text-[14.5px] font-semibold text-white/85 transition hover:border-white/35 hover:text-white">
-              Browse gigs
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#2e7d4f] text-white">
+                <Icon className="h-4 w-4"><path d="M5 12h14M13 6l6 6-6 6" /></Icon>
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[11.5px] font-medium text-[#2b5d4a]">Did you mean</span>
+                <span className="block truncate text-[14px] font-semibold text-[#1a201c]">{suggestion.label}</span>
+              </span>
             </Link>
-          )}
-        </div>
+          ) : null}
 
-        <nav aria-label="Popular pages" className="mt-12 w-full max-w-4xl sm:mt-14">
-          <div className="mb-3 text-[11.5px] font-bold uppercase tracking-[0.18em] text-white/45">Or jump to</div>
-          <ul className="grid grid-cols-2 gap-2.5 text-left sm:gap-3 lg:grid-cols-4">
+          <div className="mx-auto mt-6 flex w-full max-w-xs flex-col gap-2 sm:max-w-none sm:flex-row sm:justify-center">
+            <Link href="/" className={buttonClassName("primary", "lg")}>
+              <Icon className="h-4 w-4"><path d="m3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5" /></Icon>
+              Back to home
+            </Link>
+            {back ? (
+              <button type="button" onClick={() => window.history.back()} className={buttonClassName("secondary", "lg")}>
+                <Icon className="h-4 w-4"><path d="M19 12H5M11 6l-6 6 6 6" /></Icon>
+                Go back
+              </button>
+            ) : (
+              <Link href={FIND_GIGS_HREF} className={buttonClassName("secondary", "lg")}>
+                Browse gigs
+              </Link>
+            )}
+          </div>
+        </section>
+
+        <nav aria-label="Popular pages" className="mt-6 w-full max-w-4xl sm:mt-8">
+          <h2 className="mb-2.5 px-1 text-[12.5px] font-medium text-[#616a64]">Or jump to</h2>
+          <ul className="grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 sm:gap-3 lg:grid-cols-4">
             {LINKS.map((link) => (
               <li key={link.title} className={styles.rise}>
                 <a
                   href={link.href}
-                  className="group flex h-full flex-col gap-3 rounded-2xl bg-white/[0.05] p-3.5 ring-1 ring-white/10 transition hover:-translate-y-0.5 hover:bg-white/[0.09] hover:ring-white/20 sm:flex-row sm:items-center sm:p-4"
+                  className="group flex h-full items-center gap-3 rounded-xl border border-[#e3e5e1] bg-white p-3.5 shadow-[0_1px_0_rgba(26,32,28,0.04),0_1px_2px_rgba(26,32,28,0.06)] transition hover:-translate-y-0.5 hover:border-[#cfd5cf] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 sm:p-4"
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-[#8fe05f] transition group-hover:bg-[#8fe05f] group-hover:text-[#0b1914]">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] border border-[#dfe9da] bg-[linear-gradient(160deg,#f3f9ef,#e6f2e0)] text-[#2e7d4f] shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_1px_2px_rgba(34,45,37,0.06)] transition group-hover:bg-[#2e7d4f] group-hover:bg-none group-hover:text-white">
                     <Icon className="h-[18px] w-[18px]">{link.icon}</Icon>
                   </span>
-                  <span className="min-w-0">
-                    <span className="block text-[13.5px] font-semibold leading-5">{link.title}</span>
-                    <span className="mt-0.5 block text-[12px] leading-4 text-white/55">{link.body}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-semibold leading-5 text-[#1a201c]">{link.title}</span>
+                    <span className="mt-0.5 block text-[12px] leading-4 text-[#7a827c]">{link.body}</span>
+                  </span>
+                  <span className="shrink-0 text-[#a3aaa4] transition group-hover:translate-x-0.5 group-hover:text-[#616a64]">
+                    <Icon className="h-4 w-4"><path d="m9 6 6 6-6 6" /></Icon>
                   </span>
                 </a>
               </li>
@@ -175,12 +186,12 @@ export default function NotFoundView() {
         </nav>
       </main>
 
-      <footer className="relative border-t border-white/[0.06]">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-4 text-[12px] text-white/45 sm:px-6 lg:px-8">
+      <footer className="border-t border-[#e6ebe2]">
+        <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-3.5 py-4 text-[12px] text-[#7a827c] sm:px-5 md:px-6 lg:px-7 2xl:px-8">
           <span>© {new Date().getFullYear()} Reelencer</span>
           <span className="flex gap-4">
-            <Link href="/terms" className="font-semibold text-white/60 transition hover:text-[#aef07f]">Terms</Link>
-            <Link href="/privacy" className="font-semibold text-white/60 transition hover:text-[#aef07f]">Privacy</Link>
+            <Link href="/terms" className="font-semibold text-[#4b544e] transition hover:text-[#2e7d4f]">Terms</Link>
+            <Link href="/privacy" className="font-semibold text-[#4b544e] transition hover:text-[#2e7d4f]">Privacy</Link>
           </span>
         </div>
       </footer>
