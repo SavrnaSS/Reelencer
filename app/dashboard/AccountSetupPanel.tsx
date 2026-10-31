@@ -613,162 +613,143 @@ export default function AccountSetupPanel({
                 title: "Add your code to the bio",
                 detail: `Paste ${shownCode} anywhere in the @${setup.handle} bio and save. Changes can take a minute to show up.`,
               };
+    // The dashboard's tints: green once the code is found, amber when the creator has something to do, blue while
+    // it's with the team, sage while we keep retrying.
     const toneClass = {
-      success: { panel: "border-[#cfe3d4] bg-[#f4f9f2]", icon: "bg-[#2e7d4f] text-white", pill: "bg-[#e3f1df] text-[#1f5131]" },
-      warning: { panel: "border-[#ecdcb4] bg-[#fdf9ef]", icon: "bg-[#f5e3b5] text-[#6b4a05]", pill: "bg-[#fdf0d2] text-[#6b4a05]" },
-      info: { panel: "border-[#d7e4f3] bg-[#f5f9fd]", icon: "bg-[#e0ecf8] text-[#1f4a73]", pill: "bg-[#e0ecf8] text-[#1f4a73]" },
-      neutral: { panel: "border-[#e3e5e1] bg-[#fafbf9]", icon: "bg-[#eef0ed] text-[#4b544e]", pill: "bg-[#eef0ed] text-[#4b544e]" },
+      success: { panel: "border-[#b9d5c0] bg-[#f1f8ef]", icon: "bg-[#2e7d4f] text-white", pill: "bg-[#e3f1df] text-[#1f5131]", title: "text-[#1f5131]" },
+      warning: { panel: "border-[#ecdcb4] bg-[#fdf9ef]", icon: "bg-white text-[#9a5b00] ring-1 ring-[#ecdcb4]", pill: "bg-[#fdf0d2] text-[#6b4a05]", title: "text-[#1a201c]" },
+      info: { panel: "border-[#d7e4f3] bg-[#f5f9fd]", icon: "bg-white text-[#1f4a73] ring-1 ring-[#d7e4f3]", pill: "bg-[#e0ecf8] text-[#1f4a73]", title: "text-[#1a201c]" },
+      neutral: { panel: "border-[#dbe7dc] bg-[#f6faf5]", icon: "bg-white text-[#2e7d4f] ring-1 ring-[#dbe7dc]", pill: "bg-[#eef1ed] text-[#4b544e]", title: "text-[#1a201c]" },
     }[status.tone];
     const stats = [
       setup.followers !== undefined ? `${formatCompact(setup.followers)} ${setup.followers === 1 ? "follower" : "followers"}` : null,
       setup.posts !== undefined ? `${formatCompact(setup.posts)} ${setup.posts === 1 ? "post" : "posts"}` : null,
     ].filter(Boolean);
     const editHref = platform.id === "instagram" ? INSTAGRAM_EDIT_PROFILE : setup.profileUrl || undefined;
-    const actions = [
-      {
-        title: "Copy your code",
-        body: <CodeSlot code={code} error={codeError} onRetry={retryCode} />,
-      },
-      {
-        title: `Paste it in your ${platform.label} bio`,
-        body: editHref ? (
-          <a href={editHref} target="_blank" rel="noreferrer noopener" className={buttonClassName("secondary", "md", "gap-1.5")}>
-            {platform.id === "instagram" ? "Open Instagram" : "Open profile"}
-            <UiIcon.External className="h-3.5 w-3.5" />
-          </a>
-        ) : (
-          <span className="text-[12px] text-[#616a64]">Edit the bio in the {platform.label} app.</span>
-        ),
-      },
-      readable
-        ? {
-            title: "We confirm it automatically",
-            body: (
-              <Button size="md" variant="primary" onClick={() => void recheck()} disabled={checking || submittedActivity !== "active"}>
-                {checking ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
-                {checking ? "Checking…" : "Check now"}
-              </Button>
-            ),
-          }
-        : { title: "The team confirms it", body: <span className="text-[12px] text-[#616a64]">No need to do anything else.</span> },
-    ];
+    const nextCheck = submittedActivity === "offline" ? "You're offline. Checks resume when you reconnect."
+      : submittedActivity === "hidden" ? "Checks resume when you return to this tab."
+      : checking ? "Checking your saved bio…"
+      : submittedRetryAt ? <>Next automatic check at <time dateTime={new Date(submittedRetryAt).toISOString()}>{new Date(submittedRetryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</time></>
+      : "Checks run automatically while this page is open.";
     return (
       <section aria-labelledby={`${uid}-title`} className="@container overflow-hidden rounded-2xl border border-[#dfe3de] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.04)]">
         {justSent ? (
-          <div role="status" className={cx("flex items-center gap-2 border-b px-4 py-2.5 text-[12.5px] font-semibold sm:px-5", owned ? "border-[#cfe3d4] bg-[#f1f8ef] text-[#1f5131]" : "border-[#d7e4f3] bg-[#eef4fb] text-[#1f4a73]")}>
+          <div role="status" className={cx("flex items-center gap-2 border-b px-4 py-2.5 text-[12.5px] font-semibold @md:px-5", owned ? "border-[#cfe3d4] bg-[#f1f8ef] text-[#1f5131]" : "border-[#dbe7dc] bg-[#f6faf5] text-[#1f5131]")}>
             <UiIcon.Check className="h-4 w-4 shrink-0" />
-            {owned ? "Account submitted and verified. It's now with the team." : readable ? "Account submitted. Add your code to the bio to finish." : "Account submitted. The team will confirm your code."}
+            {owned ? "Account sent and verified. It's now with the team." : readable ? "Account sent. Add your code to the bio to finish." : "Account sent. The team will confirm your code."}
           </div>
         ) : null}
 
-        {/* Header */}
-        <div className="flex flex-col gap-3 p-4 @md:flex-row @md:items-start @md:p-5">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f1f3f0] text-[#1a201c] ring-1 ring-[#e3e5e1]">
-              <PlatformGlyph platform={platform} />
-              {owned ? (
-                <span className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#2e7d4f] text-white ring-2 ring-white" aria-hidden="true">
-                  <UiIcon.Check className="h-2.5 w-2.5" />
-                </span>
-              ) : null}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h3 id={`${uid}-title`} className="min-w-0 truncate text-[15px] font-semibold text-[#1a201c]">
-                  @{setup.handle}
-                </h3>
-                <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-semibold", toneClass.pill)}>{status.pill}</span>
-              </div>
-              <p className="mt-0.5 text-[12.5px] leading-5 text-[#616a64]">
-                {owned
-                  ? `Your ${platform.label} account is in screening. Once it's approved, you'll post the gig's reels on it.`
-                  : `Your ${platform.label} account for ${gig.company}. Verify it's yours to move on to screening.`}
-              </p>
+        {/* Header: account, status and a small edit link */}
+        <div className="flex items-start gap-3 p-4 @md:p-5">
+          <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f1f3f0] text-[#1a201c] ring-1 ring-[#e3e5e1]">
+            <PlatformGlyph platform={platform} />
+            {owned ? (
+              <span className="verify-pop absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#2e7d4f] text-white ring-2 ring-white" aria-hidden="true">
+                <UiIcon.Check className="h-2.5 w-2.5" />
+              </span>
+            ) : null}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <h3 id={`${uid}-title`} className="min-w-0 max-w-full truncate text-[15px] font-semibold text-[#1a201c]">
+                @{setup.handle}
+              </h3>
+              <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold", toneClass.pill)}>{status.pill}</span>
             </div>
+            <p className="mt-0.5 truncate text-[12px] text-[#616a64]">
+              {platform.label} · {gig.company}
+              {stats.length ? <span className="tabular-nums"> · {stats.join(" · ")}</span> : null}
+            </p>
           </div>
-          <Button size="sm" onClick={() => setEditing(true)} className="w-full @md:w-auto">
-            Edit details
-          </Button>
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="-mr-1.5 -mt-1 inline-flex h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12.5px] font-semibold text-[#2b5d4a] transition hover:bg-[#f1f4f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40"
+          >
+            Edit
+          </button>
         </div>
 
         <div className="space-y-4 px-4 pb-4 @md:px-5 @md:pb-5">
           <Progress step={owned ? 2 : 1} />
 
-          {/* Verification */}
+          {/* Where verification stands, and what to do */}
           <div className={cx("overflow-hidden rounded-xl border", toneClass.panel)}>
             <div className="flex items-start gap-3 p-3.5 @md:p-4">
-              <span className={cx("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass.icon)} aria-hidden="true">
+              <span className={cx("relative grid h-8 w-8 shrink-0 place-items-center rounded-full", toneClass.icon)} aria-hidden="true">
+                {checking ? <span className="verify-orbit absolute -inset-1 rounded-full border-2 border-[#2e7d4f] border-b-transparent border-r-transparent" /> : null}
                 {owned ? <UiIcon.Check className="h-4 w-4" /> : <UiIcon.Shield className="h-4 w-4" />}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                  <p className="text-[13.5px] font-semibold text-[#1a201c]">{status.title}</p>
-                  {setup.checkedAt && ownership !== "manual" ? <span className="text-[11px] text-[#7a827c]">Last checked {relative(setup.checkedAt)}</span> : null}
-                </div>
+                <p className={cx("text-[13.5px] font-semibold leading-5", toneClass.title)}>{status.title}</p>
                 <p className="mt-0.5 text-[12.5px] leading-5 text-[#4b544e]">{status.detail}</p>
+                {setup.checkedAt && ownership !== "manual" ? <p className="mt-1 text-[11px] text-[#7a827c]">Last checked {relative(setup.checkedAt)}</p> : null}
               </div>
             </div>
 
             {!owned ? (
-              <ol className="grid border-t border-black/[0.06] bg-white/70 @2xl:grid-cols-3">
-                {actions.map((action, index) => (
-                  <li key={action.title} className={cx("flex min-w-0 flex-col gap-2.5 p-3.5 @md:p-4", index > 0 && "border-t border-black/[0.06] @2xl:border-l @2xl:border-t-0")}>
-                    <p className="flex items-center gap-2 text-[12px] font-semibold text-[#3b443e]">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1f2b24] text-[10.5px] font-bold text-white" aria-hidden="true">
-                        {index + 1}
-                      </span>
-                      {action.title}
-                    </p>
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">{action.body}</div>
-                  </li>
-                ))}
-              </ol>
+              <div className="border-t border-black/[0.05] bg-white/70 p-3.5 @md:p-4">
+                <p className="text-[12px] leading-5 text-[#4b544e]">
+                  Copy your code, paste it anywhere in the {platform.label} bio and save.{readable ? " We'll spot it on our own." : " The reviewer looks for it."}
+                </p>
+                <div className="mt-2.5 grid grid-cols-1 gap-2 min-[400px]:flex min-[400px]:flex-wrap min-[400px]:items-center">
+                  <CodeSlot code={code} error={codeError} onRetry={retryCode} />
+                  {editHref ? (
+                    <a href={editHref} target="_blank" rel="noreferrer noopener" className={buttonClassName("secondary", "md", "gap-1.5")}>
+                      {platform.id === "instagram" ? "Open Instagram" : "Open profile"}
+                      <UiIcon.External className="h-3.5 w-3.5" />
+                    </a>
+                  ) : null}
+                </div>
+              </div>
             ) : null}
 
             {autoCheck || checkMessage ? (
-              <div className="flex flex-col gap-1 border-t border-black/[0.06] px-3.5 py-2.5 text-[11.5px] @md:flex-row @md:items-center @md:justify-between @md:px-4">
+              <div className="space-y-1.5 border-t border-black/[0.05] px-3.5 py-2.5 @md:px-4">
                 {autoCheck ? (
-                  <span className="flex min-w-0 items-center gap-1.5 text-[#616a64]">
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-[#9aa89b]" aria-hidden="true" />
-                    <span>{submittedActivity === "offline" ? "You're offline. Bio checks resume when you reconnect." : submittedActivity === "hidden" ? "Bio checks resume when you return to this tab." : checking ? "Checking your saved bio…" : submittedRetryAt ? <>Next automatic bio check at <time dateTime={new Date(submittedRetryAt).toISOString()}>{new Date(submittedRetryAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" })}</time></> : "Bio checks run automatically while this page is open."}</span>
-                  </span>
-                ) : (
-                  <span />
-                )}
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-[#616a64]">
+                      <span className={cx("h-1.5 w-1.5 shrink-0 rounded-full bg-[#2e7d4f]", checking && "animate-pulse")} aria-hidden="true" />
+                      <span className="min-w-0">{nextCheck}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void recheck()}
+                      disabled={checking || submittedActivity !== "active"}
+                      className="inline-flex h-8 shrink-0 items-center rounded-lg border border-[#d9ddd8] bg-white px-3 text-[12px] font-semibold text-[#1a201c] transition hover:bg-[#f7f8f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2e7d4f]/40 disabled:text-[#9aa29c]"
+                    >
+                      {checking ? "Checking…" : "Check now"}
+                    </button>
+                  </div>
+                ) : null}
                 {checkMessage ? (
-                  <span role="status" className="font-medium text-[#3b443e]">
+                  <p role="status" className="text-[11.5px] font-medium leading-[1.1rem] text-[#3b443e]">
                     {checkMessage}
-                  </span>
+                  </p>
                 ) : null}
               </div>
             ) : null}
           </div>
 
-          {/* Summary */}
-          <div className="flex flex-col gap-2 border-t border-[#ebedea] pt-3 text-[12px] text-[#616a64] @lg:flex-row @lg:items-center @lg:justify-between">
-            <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {/* Footer */}
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 border-t border-[#ebedea] pt-3 text-[11.5px] text-[#7a827c]">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {setup.profileUrl ? (
-                <a href={setup.profileUrl} target="_blank" rel="noreferrer noopener" className="inline-flex min-w-0 items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
-                  <span className="truncate">View profile</span>
+                <a href={setup.profileUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
+                  View profile
                   <UiIcon.External className="h-3 w-3 shrink-0" />
                 </a>
               ) : null}
-              {stats.length ? (
-                <>
-                  <span aria-hidden="true" className="text-[#c5cbc6]">·</span>
-                  <span className="tabular-nums">{stats.join(" · ")}</span>
-                </>
-              ) : null}
-              <span aria-hidden="true" className="text-[#c5cbc6]">·</span>
               <span>
-                Submitted {relative(setup.submittedAt)}
+                Sent {relative(setup.submittedAt)}
                 {setup.revision > 1 ? ` (update ${setup.revision - 1})` : ""}
               </span>
-            </p>
-            <p className="flex items-center gap-1.5 text-[11.5px] text-[#7a827c]">
+            </span>
+            <span className="flex items-center gap-1.5">
               <UiIcon.Shield className="h-3.5 w-3.5 shrink-0 text-[#2e7d4f]" />
-              We never ask for your password.
-            </p>
+              No password needed
+            </span>
           </div>
         </div>
       </section>
