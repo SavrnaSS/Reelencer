@@ -20,6 +20,8 @@ export type OutgoingEmail = {
   category?: EmailCategory;
   /** Same key → Resend sends at most once (24h), even across retries or a double-clicked action. */
   idempotencyKey?: string;
+  /** Extra headers, e.g. List-Unsubscribe on promotional email. */
+  headers?: Record<string, string>;
 };
 export type SendResult = { provider: EmailProvider; id?: string };
 
@@ -105,7 +107,7 @@ async function viaResend(mail: Required<Pick<OutgoingEmail, "idempotencyKey">> &
       html: mail.html,
       ...(mail.text ? { text: mail.text } : {}),
       // A unique ref per message stops Gmail from collapsing similar notifications into one thread.
-      headers: { "X-Entity-Ref-ID": randomUUID() },
+      headers: { ...mail.headers, "X-Entity-Ref-ID": randomUUID() },
       tags: [{ name: "category", value: mail.category ?? "system" }],
     }),
   });
@@ -126,6 +128,7 @@ async function viaMailgun(mail: OutgoingEmail): Promise<SendResult> {
   const params = new URLSearchParams({ from: sender.from, to: mail.to, subject: mail.subject, html: mail.html, "h:Reply-To": replyTo() });
   if (mail.text) params.set("text", mail.text);
   params.set("h:X-Entity-Ref-ID", randomUUID());
+  for (const [name, value] of Object.entries(mail.headers ?? {})) params.set(`h:${name}`, value);
   params.set("o:tag", mail.category ?? "system");
   const base = (env("MAILGUN_API_BASE") || "https://api.mailgun.net").replace(/\/+$/, "");
   const response = await fetch(`${base}/v3/${env("MAILGUN_DOMAIN")}/messages`, {
@@ -149,7 +152,7 @@ async function viaSmtp(mail: OutgoingEmail): Promise<SendResult> {
     subject: mail.subject,
     html: mail.html,
     ...(mail.text ? { text: mail.text } : {}),
-    headers: { "X-Entity-Ref-ID": randomUUID() },
+    headers: { ...mail.headers, "X-Entity-Ref-ID": randomUUID() },
   });
   return { provider: "smtp" };
 }
@@ -194,8 +197,15 @@ async function suppression(address: string, category: EmailCategory) {
     });
     if (!response.ok) return null;
     const reason = ((await response.json()) as { reason?: string }[])[0]?.reason;
-    if (!reason || (reason === "complained" && category === "account")) return null;
-    return reason;
+    if (reason && !(reason === "complained" && category === "account")) return reason;
+    if (category !== "promotions") return null;
+    // Promotional email also skips anyone who unsubscribed from it.
+    const optOut = await fetch(`${url.replace(/\/+$/, "")}/rest/v1/email_unsubscribes?select=email&email=eq.${encodeURIComponent(address)}`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(5_000),
+      cache: "no-store",
+    });
+    return optOut.ok && ((await optOut.json()) as unknown[]).length ? "unsubscribed" : null;
   } catch {
     // Never block mail on the suppression lookup (e.g. before the migration is applied).
     return null;
@@ -214,7 +224,7 @@ export async function sendEmail(mail: OutgoingEmail): Promise<SendResult> {
   const to = addressOf(mail.to);
   const category = mail.category ?? "system";
   const reason = await suppression(to, category);
-  if (reason) throw new MailSuppressedError(`Not sent: ${to} is suppressed (${reason === "complained" ? "marked an earlier email as spam" : "the address bounced"}).`);
+  if (reason) throw new MailSuppressedError(`Not sent: ${to} is suppressed (${reason === "complained" ? "marked an earlier email as spam" : reason === "unsubscribed" ? "unsubscribed from promotions" : "the address bounced"}).`);
 
   const message = {
     ...mail,

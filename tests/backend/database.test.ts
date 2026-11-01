@@ -723,6 +723,23 @@ test('held gigs open to new creators only after another project or 20 days; the 
   }
 });
 
+test('bulk email chunks are counted once, and the broadcast finishes as sent or partial', async () => {
+  await db.exec('begin');
+  try {
+    const id = await scalar<string>("insert into public.email_broadcasts(kind,subject,content,recipient_count) values('terms','Terms','{}',30) returning id as value");
+    const chunk = (offset: number, sent: number, failed: number) => scalar<{ sent_count: number; failed_count: number; status: string }>('select to_jsonb(public.record_broadcast_chunk($1,$2,$3,$4)) as value', [id, offset, sent, failed]);
+    assert.deepEqual(await chunk(0, 20, 0), (await chunk(0, 20, 0)));
+    const first = await chunk(0, 5, 5);
+    assert.deepEqual([first.sent_count, first.failed_count, first.status], [20, 0, 'sending'], 'A retried chunk keeps its first result');
+    const last = await chunk(20, 9, 1);
+    assert.deepEqual([last.sent_count, last.failed_count, last.status], [29, 1, 'partial']);
+    assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.record_broadcast_chunk(uuid,integer,integer,integer)','execute') as value"), false);
+    assert.equal(await scalar<boolean>("select has_table_privilege('authenticated','public.email_unsubscribes','select') as value"), false);
+  } finally {
+    await db.exec('rollback');
+  }
+});
+
 test('inbox addresses cannot be claimed across workers or reused after deletion', async () => {
   const code=await scalar<string>('select worker_code as value from public.profiles where id=$1',[other]);
   await db.exec("insert into public.gigs(id,title,company,workload,payout) values('collision','Collision','Team','5','1000')");

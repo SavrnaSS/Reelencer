@@ -90,7 +90,23 @@ async function request(path: string, init: RequestInit, controller: AbortControl
   } finally { window.clearTimeout(timer); }
 }
 
-export default function WorkerBulkActions({ workers, onCompleted, onClear }: { workers: Worker[]; onCompleted: (result: BulkResult) => void | Promise<void>; onClear: () => void }) {
+/** A button styled like the bar's own actions, for actions passed in as `leadingActions`. */
+export function BulkBarButton({ icon, label, onClick, primary }: { icon: "mail" | "download"; label: string; onClick: () => void; primary?: boolean }) {
+  const path = icon === "mail" ? <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></> : <><path d="M12 4v11M7 10l5 5 5-5" /><path d="M5 20h14" /></>;
+  return <button type="button" className={`${styles.actionButton} ${primary ? styles.primaryAction : ""}`} onClick={onClick}>
+    <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{path}</svg><span>{label}</span>
+  </button>;
+}
+
+export default function WorkerBulkActions({ workers, onCompleted, onClear, note, leadingActions }: {
+  workers: Worker[];
+  onCompleted: (result: BulkResult) => void | Promise<void>;
+  onClear: () => void;
+  /** A line under the count, e.g. how many selected users the filters hide. */
+  note?: string;
+  /** Actions shown before the moderation ones (email, export), so the whole selection has one bar. */
+  leadingActions?: ReactNode;
+}) {
   const headingId = useId();
   const [review, setReview] = useState<Review | null>(null);
   const [preview, setPreview] = useState<BulkPreview | null>(null);
@@ -323,9 +339,17 @@ export default function WorkerBulkActions({ workers, onCompleted, onClear }: { w
   return <div ref={root} className={`${styles.root} ${workers.length > 0 && !result && !operation ? styles.docked : ""}`} tabIndex={-1}>
     {safetyNotice && <p className={styles.warning} role="status">{safetyNotice}</p>}
     {workers.length > 0 && <section className={styles.toolbar} aria-labelledby={headingId}>
-      <div className={styles.toolbarHeading}><span className={styles.selectionIcon}><Icon /></span><div><h3 id={headingId}>{workers.length} {workers.length === 1 ? "user" : "users"} selected</h3><p>Review the exact changes before applying.</p></div><button type="button" className={styles.clearButton} onClick={onClear} disabled={busy}>Clear selection</button></div>
+      <div className={styles.toolbarHeading}>
+        <span className={styles.selectionCount} aria-hidden="true">{workers.length}</span>
+        <div><h3 id={headingId}>{workers.length} {workers.length === 1 ? "user" : "users"} selected</h3><p>{note ?? "Kept across pages and filters"}</p></div>
+        <button type="button" className={styles.clearButton} onClick={onClear} disabled={busy} aria-label="Clear selection" title="Clear selection"><Icon kind="close" /></button>
+      </div>
       {workers.length > 100 && <p className={styles.error} role="alert">Select at most 100 users for one bulk action.</p>}
-      <div className={styles.actionGrid}>{ACTIONS.map((item) => <button key={item} type="button" className={`${styles.actionButton} ${item === "delete" ? styles.deleteAction : ""}`} disabled={!identityReady || !!operation || busy || workers.length > 100} onClick={() => begin(item)}><Icon kind={item} />{LABELS[item]}</button>)}</div>
+      <div className={styles.actionRow} role="group" aria-label="Actions for the selected users">
+        {leadingActions}
+        {leadingActions ? <span className={styles.actionDivider} aria-hidden="true" /> : null}
+        {ACTIONS.map((item) => <button key={item} type="button" className={`${styles.actionButton} ${item === "delete" ? styles.deleteAction : ""}`} title={TITLES[item]} disabled={!identityReady || !!operation || busy || workers.length > 100} onClick={() => begin(item)}><Icon kind={item} /><span>{LABELS[item].replace(" selected", "")}</span></button>)}
+      </div>
       {!identityReady && !identityError && <p className={styles.hint} role="status">Checking for unfinished operations…</p>}
       {identityError && <div className={styles.error} role="alert"><p>{identityError}</p><button type="button" className={styles.secondaryButton} onClick={() => setIdentityRevision((value) => value + 1)}>Retry session check</button></div>}
       {operation && <p className={styles.hint}>Confirm the pending operation’s result before starting another bulk action.</p>}

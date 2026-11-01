@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export type EmailProvider = "resend" | "mailgun" | "smtp";
 /** What an email is about. Sent to Resend as a tag (filterable in its dashboard) and used for suppression rules. */
-export type EmailCategory = "account" | "applications" | "kyc" | "payouts" | "system";
+export type EmailCategory = "account" | "applications" | "kyc" | "payouts" | "system" | "promotions";
 
 type Env = Record<string, string | undefined>;
 const read = (env: Env, ...keys: string[]) => keys.map((key) => String(env[key] ?? "").trim()).find(Boolean) ?? "";

@@ -20,10 +20,29 @@
 .search input::placeholder { color: #738267; }
 .filterToggle { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 5px; min-height: 40px; padding: 8px 11px; border: 1px solid #e2e7e0; border-radius: 10px; background: #fff; color: #4f6553; font-size: 11.5px !important; font-weight: 600 !important; }
 .filterToggle svg { width: 15px; height: 15px; }
+.emailToggle { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; border: 1px solid #e2e7e0; border-radius: 10px; background: #fff; color: #4f6553; }
+.emailToggle svg { width: 16px; height: 16px; }
+.emailToggle:hover:not(:disabled) { border-color: #b3c5a5; background: #f0f5e9; color: #2f4535; }
+.emailToggle:disabled { opacity: .45; }
 .filterToggle[aria-expanded="true"] { border-color: #b3c5a5; background: #f0f5e9; color: #4b6a3c; }
 .filterToggle b { min-width: 15px; padding: 0 3px; border-radius: 4px; background: #e3ecd9; font-size: 9px; }
 .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 9px; padding: 12px; border: 1px solid #e4eade; border-radius: 9px; background: #f8faf4; }
 .filters[hidden] { display: none; }
+.filterHeading { grid-column: 1 / -1; margin: 2px 0 -4px; color: #3f5a35; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.filterHeading:not(:first-child) { margin-top: 6px; padding-top: 10px; border-top: 1px solid #e4eade; }
+.filters label.filterWide { grid-column: 1 / -1; }
+.filters select:disabled { opacity: .55; }
+.presets { display: flex; gap: 6px; margin: 9px -2px 0; padding: 0 2px 2px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+.presets::-webkit-scrollbar { display: none; }
+.preset { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 30px; padding: 4px 6px 4px 10px; border: 1px solid #e2e7e0; border-radius: 999px; background: #fff; color: #4f6553; font-size: 11px !important; font-weight: 600 !important; white-space: nowrap; scroll-snap-align: start; transition: background .15s, border-color .15s; }
+.preset b { min-width: 20px; padding: 1px 6px; border-radius: 999px; background: #f0f3ee; color: #4f6553; font-size: 10px; text-align: center; font-variant-numeric: tabular-nums; }
+.preset:hover:not(:disabled) { border-color: #c6d4bd; background: #f8faf4; }
+.preset:disabled { opacity: .5; }
+.presetActive, .presetActive:hover:not(:disabled) { border-color: #244e39; background: #244e39; color: #fff; }
+.presetActive b { background: rgba(255,255,255,.18); color: #fff; }
+.activityNote { margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; background: #fffbee; color: #826b31; font-size: 11px; }
+.activityChip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 20px; padding: 1px 7px; border-radius: 6px; background: #e8f0fa; color: #2a4f7a; font-size: 10.5px; font-weight: 600; }
+.activityChip small { min-width: 0; overflow: hidden; color: #5a7499; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .filters label { min-width: 0; }
 .filters label:last-child { grid-column: 1 / -1; }
 .filters label > span { display: block; margin-bottom: 5px; color: #6f8065; font-size: 10px; font-weight: 600; }
@@ -37,10 +56,6 @@
 .directory input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #3c6037; flex-shrink: 0; cursor: pointer; }
 .linkButton { min-height: 32px; padding: 4px 0; border: 0; background: transparent; color: #3f6a47; font-size: 11.5px !important; font-weight: 600 !important; }
 .linkButton:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
-.selectedSummary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin: 10px 0 0; padding: 7px 12px; border: 1px solid #d9e6d5; border-radius: 10px; background: #f0f7ed; }
-.selectedSummary > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; min-width: 0; }
-.selectedSummary strong { font-size: 12px; }
-.selectedSummary > div > span { color: #6c8162; font-size: 10.5px; }
 .notice { margin-top: 10px; padding: 10px 11px; border: 1px solid #eadcb9; border-radius: 8px; background: #fffbee; color: #826b31; font-size: 11px; }
 .rows { display: grid; margin-top: 4px; border-top: 1px solid #edf0e8; }
 .row { position: relative; display: flex; align-items: flex-start; min-width: 0; padding: 10px 8px 10px 0; border-bottom: 1px solid #edf0e8; border-radius: 0; background: #fff; transition: background .15s; }
@@ -104,10 +119,10 @@
 .pagination select { min-height: 34px; padding: 5px; border: 1px solid #dde6d4; border-radius: 6px; background: #fff; color: #5c754a; }
 .pagination > div { display: flex; align-items: center; gap: 7px; }
 .pagination button { display: flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 8px; border: 1px solid #dde6d4; border-radius: 6px; background: #fff; color: #5c754a; font-size: 11px; }
-@media (max-width: 1179px) and (min-width: 760px) { .rows { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; } .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .filters label:last-child { grid-column: auto; } .tabs { max-width: 560px; } .searchRow { max-width: 560px; } }
+@media (max-width: 1179px) and (min-width: 760px) { .rows { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 20px; } .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .filters label:last-child { grid-column: auto; } .tabs { max-width: 560px; } .searchRow { max-width: 560px; } .filterHeading, .filters label.filterWide { grid-column: 1 / -1; } }
 @media (max-width: 639px) {
   .tabs button { min-height: 40px; }
-  .search input, .filterToggle, .filters select, .pagination button, .pagination select, .reset, .pageSelect { min-height: 44px; }
+  .search input, .filterToggle, .emailToggle, .preset, .filters select, .pagination button, .pagination select, .reset, .pageSelect { min-height: 44px; }
   .search input { font-size: 16px; }
   .search input::placeholder { font-size: 12px; }
   .filters select { font-size: 16px; }

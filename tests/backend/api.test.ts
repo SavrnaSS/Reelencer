@@ -64,6 +64,7 @@ before(() => {
     if(url.pathname==='/rest/v1/rpc/worker_metrics') return json({money:{earnings:3064.09,pending:1622.64}});
     if(url.pathname==='/rest/v1/work_items') return json([{id:'available',reward_inr:'64.09'},{id:'paid',reward_inr:'1000.00'},{id:'reserved',reward_inr:'2000.00'}]);
     if(url.pathname==='/rest/v1/payout_items') return json([{id:'p1',work_item_id:'paid'},{id:'p2',work_item_id:'reserved'}]);
+    if(url.pathname==='/rest/v1/email_unsubscribes') return json([],201);
     throw new Error('Unexpected backend request: '+url.pathname);
   };
 });
@@ -110,7 +111,7 @@ test('every private API method rejects unauthenticated calls before database acc
     const mod=await import(pathToFileURL(path.resolve(file)).href);
     for(const method of ['GET','POST','PUT','PATCH','DELETE']) {
       if(typeof mod[method]!=='function') continue;
-      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready','/api/[...path]'].includes(route) || (route==='/api/gigs' && method==='GET') || (route==='/api/webhooks/resend' && method==='POST'))continue;
+      if(['/api/auth/logout','/api/auth/signup','/api/auth/resend','/api/auth/password-reset','/api/gig-inbox/ingest','/api/gig-inbox/poll','/api/health','/api/health/ready','/api/[...path]','/api/email/unsubscribe'].includes(route) || (route==='/api/gigs' && method==='GET') || (route==='/api/webhooks/resend' && method==='POST'))continue;
       requests.length=0;
       const result:Response=await mod[method](req(route,method),ctx);
       assert.equal(result.status,401,method+' '+route);
@@ -120,6 +121,34 @@ test('every private API method rejects unauthenticated calls before database acc
     }
   }
   assert.ok(checked>=70,'Expected complete route coverage, got '+checked);
+});
+
+test('unsubscribe links only work when signed, ask before acting, and record the opt-out on POST',async()=>{
+  const { GET, POST }=await import('../../app/api/email/unsubscribe/route');
+  const { unsubscribeUrl }=await import('../../lib/email/unsubscribe');
+  const previous=process.env.EMAIL_LINK_SECRET;
+  process.env.EMAIL_LINK_SECRET='test-only-unsubscribe-link-secret';
+  try {
+    const link=new URL(unsubscribeUrl('Worker@Example.test')!);
+    const forged=new URL(link); forged.searchParams.set('t','x'.repeat(32));
+    for(const method of ['GET','POST'] as const) {
+      requests.length=0;
+      const response=await (method==='GET'?GET:POST)(new Request(forged,{method}));
+      assert.equal(response.status,400,method+' rejects a forged token');
+      assert.equal(requests.length,0,'No database access for a forged link');
+    }
+    requests.length=0;
+    const ask=await GET(new Request(link));
+    assert.equal(ask.status,200);
+    assert.match(await ask.text(),/method="post"/);
+    assert.equal(requests.length,0,'Opening the link (or a scanner prefetching it) changes nothing');
+    const done=await POST(new Request(link,{method:'POST',body:'List-Unsubscribe=One-Click',headers:{'content-type':'application/x-www-form-urlencoded'}}));
+    assert.equal(done.status,200);
+    assert.ok(requests.some(request=>request.path==='/rest/v1/email_unsubscribes'&&request.method==='POST'),'The opt-out is saved');
+  } finally {
+    if(previous===undefined)delete process.env.EMAIL_LINK_SECRET;
+    else process.env.EMAIL_LINK_SECRET=previous;
+  }
 });
 
 test('public delivery webhook requires a valid signature before database access',async()=>{
