@@ -60,6 +60,21 @@ test('illustrations follow the tone unless one is chosen, and every one exists',
   for (const path of Object.values(BRAND_ASSETS.emailArt)) assert.ok(existsSync(`public${path}`), path);
 });
 
+test('every email illustration is a bounded retina PNG with an immutable content hash', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { createHash } = await import('node:crypto');
+  assert.equal(Object.keys(BRAND_ASSETS.emailArt).length, 7);
+  for (const path of Object.values(BRAND_ASSETS.emailArt)) {
+    const png = await readFile(`public${path}`);
+    assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), path);
+    assert.equal(png.readUInt32BE(16), 1116, path);
+    assert.equal(png.readUInt32BE(20), 420, path);
+    assert.ok(png.length < 150_000, `${path} should stay lightweight for mobile inboxes`);
+    const hash = createHash('sha256').update(png).digest('hex').slice(0, 12);
+    assert.ok(path.endsWith(`.${hash}.png`), `${path} must change when its illustration changes`);
+  }
+});
+
 test('the recipient placeholder is filled with the escaped address in both parts', () => {
   const rendered = renderBrandEmail(base);
   assert.ok(rendered.html.includes(RECIPIENT_TOKEN) && rendered.text.includes(RECIPIENT_TOKEN));

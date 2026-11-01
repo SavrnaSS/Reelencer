@@ -11,12 +11,12 @@
   "apple180": "/brand/apple-touch-icon.0c75bb56af3a.png",
   "share": "/brand/share.3fbc2a2ff5d0.png",
   "emailArt": {
-    "welcome": "/brand/email-welcome.38a68d35807f.png",
-    "security": "/brand/email-security.975be520ce49.png",
-    "success": "/brand/email-success.2a80924ac036.png",
-    "attention": "/brand/email-attention.2e22dd78ea8d.png",
-    "closed": "/brand/email-closed.136073d1c14e.png",
-    "verified": "/brand/email-verified.43e2c261c4be.png",
-    "inbox": "/brand/email-inbox.6344b3e4ee66.png"
+    "welcome": "/brand/email-welcome.1093705d64df.png",
+    "security": "/brand/email-security.6aaa153dbdbc.png",
+    "success": "/brand/email-success.e6525f2ea39b.png",
+    "attention": "/brand/email-attention.ce3e79829999.png",
+    "closed": "/brand/email-closed.74b772caca45.png",
+    "verified": "/brand/email-verified.14d940ce21a5.png",
+    "inbox": "/brand/email-inbox.5c4b23e9c9e9.png"
   }
 }
