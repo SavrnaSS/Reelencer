@@ -1,5 +1,7 @@
 "use client";
 
+import CompanyLogo from "./CompanyLogo";
+import { gigLogoUrl } from "@/lib/gigLogo";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { accountPlatformFor } from "@/lib/accountSetup";
@@ -21,7 +23,6 @@ import {
   cx,
   formatMoney,
   formatRelative,
-  getInitials,
   safeTime,
 } from "./dashboardUi";
 import PlatformGlyph from "./PlatformGlyph";
@@ -39,6 +40,7 @@ type JobsGig = {
   workload?: string;
   verified?: boolean;
   gigType?: string;
+  requirements?: string[];
 };
 
 type JobsAssignmentEntry = {
@@ -270,19 +272,18 @@ function writeView(view: ViewMode) {
 /* Small building blocks                                              */
 /* ------------------------------------------------------------------ */
 
-function CompanyMark({ name, size = "md" }: { name?: string; size?: "sm" | "md" | "lg" }) {
+function CompanyMark({ name, logo, size = "md" }: { name?: string; logo?: string | null; size?: "sm" | "md" | "lg" }) {
   return (
-    <span
-      aria-hidden="true"
+    <CompanyLogo
+      company={name}
+      logo={logo}
       className={cx(
         "flex shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#f4f7f2] font-bold text-[#2b5d4a]",
         size === "sm" && "h-8 w-8 text-[11px]",
         size === "md" && "h-9 w-9 text-[12px]",
         size === "lg" && "h-11 w-11 rounded-xl text-[13px]"
       )}
-    >
-      {getInitials(name ?? "?")}
-    </span>
+    />
   );
 }
 
@@ -738,7 +739,7 @@ export default function DashboardJobsView({
                             columnRows.slice(0, BOARD_LIMIT).map((row) => (
                               <li key={row.key} className="rounded-lg border border-[#e3e5e1] bg-white p-3 shadow-[0_1px_2px_rgba(26,32,28,0.05)] transition hover:border-[#cfd5cf] hover:shadow-[0_4px_14px_-8px_rgba(26,32,28,0.25)]">
                                 <div className="flex items-start gap-2.5">
-                                  <CompanyMark name={row.gig?.company} size="sm" />
+                                  <CompanyMark name={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} size="sm" />
                                   <div className="min-w-0 flex-1">
                                     <div className="line-clamp-2 text-[13px] font-semibold leading-5 text-[#1a201c]">{row.gig?.title ?? "Gig unavailable"}</div>
                                     <div className="truncate text-[11.5px] text-[#7a827c]">
@@ -798,7 +799,7 @@ export default function DashboardJobsView({
                       <tr key={row.key} className="group border-b border-[#f2f3f1] transition last:border-0 hover:bg-[#fafbf9]">
                         <td className="max-w-0 py-3 pl-5 pr-3">
                           <div className="flex min-w-0 items-center gap-3">
-                            <CompanyMark name={row.gig?.company} size="sm" />
+                            <CompanyMark name={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} size="sm" />
                             <div className="min-w-0">
                               <div className="truncate font-semibold text-[#1a201c]">{row.gig?.title ?? "Gig unavailable"}</div>
                               <div className="flex items-center gap-1 truncate text-[12px] text-[#7a827c]">
@@ -837,7 +838,7 @@ export default function DashboardJobsView({
                   const rowAction = action(row);
                   const content = (
                     <>
-                      <CompanyMark name={row.gig?.company} />
+                      <CompanyMark name={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} />
                       <span className="min-w-0 flex-1">
                         <span className="line-clamp-2 break-words text-[13.5px] font-semibold leading-5 text-[#1a201c]">{row.gig?.title ?? "Gig unavailable"}</span>
                         <span className="mt-0.5 block truncate text-[12px] text-[#7a827c]">
@@ -909,7 +910,7 @@ function UpNextCard({ row, eyebrow, title, action, posting, onOpenPosting }: { r
         {/* Phones: details, tracker, then a full-width button. Wider: button beside the details; from lg the tracker joins the row. */}
         <div className="grid gap-4 p-4 pl-5 sm:p-5 sm:pl-6 lg:grid-cols-[minmax(0,1fr)_minmax(24rem,32rem)] lg:items-center lg:gap-x-8 xl:grid-cols-[minmax(0,1fr)_minmax(28rem,38rem)]">
           <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
-            <CompanyMark name={row.gig?.company} size="lg" />
+            <CompanyMark name={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} size="lg" />
             <div className="min-w-0 flex-1">
               <div className={cx("text-[10.5px] font-bold uppercase tracking-[0.14em]", accent)}>{eyebrow}</div>
               <div className="mt-0.5 text-[15px] font-semibold leading-snug text-[#1a201c] sm:text-[16px]">{title}</div>

@@ -26,9 +26,11 @@ async function handlePOST(req: Request) {
   if (!(file instanceof File)) {
     return json(400, { ok: false, error: "file is required." });
   }
-  // "sample" = public sample videos shown on the gig page; "sample-poster" = their preview frames.
+  // "sample" = public sample videos shown on the gig page; "sample-poster" = their preview frames; "logo" = the
+  // company logo shown on the gig's cards.
   const purpose = String(form.get("purpose") ?? "brief");
-  if (!["brief", "sample", "sample-poster"].includes(purpose)) return json(400, { ok: false, error: "Unknown upload purpose." });
+  if (!["brief", "sample", "sample-poster", "logo"].includes(purpose)) return json(400, { ok: false, error: "Unknown upload purpose." });
+  if (purpose === "logo" && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) return json(400, { ok: false, error: "Logos must be PNG, JPG or WebP images." });
   if (purpose === "sample" && !file.type.startsWith("video/")) return json(400, { ok: false, error: "Sample uploads must be videos (MP4, WebM or MOV)." });
   if (purpose === "sample-poster" && !file.type.startsWith("image/")) return json(400, { ok: false, error: "Poster uploads must be images." });
   if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) {
@@ -36,15 +38,15 @@ async function handlePOST(req: Request) {
   }
   await validateUpload(
     file,
-    purpose === "sample" ? ["video/mp4", "video/webm", "video/quicktime"] : purpose === "sample-poster" ? ["image/jpeg", "image/png", "image/webp"] : ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"],
-    purpose === "sample-poster" ? 2 * 1024 * 1024 : 50 * 1024 * 1024,
+    purpose === "sample" ? ["video/mp4", "video/webm", "video/quicktime"] : purpose === "sample-poster" || purpose === "logo" ? ["image/jpeg", "image/png", "image/webp"] : ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime"],
+    purpose === "sample-poster" || purpose === "logo" ? 2 * 1024 * 1024 : 50 * 1024 * 1024,
   );
 
   const ext = extFrom(file);
   const stamp = Date.now();
   const random = Math.random().toString(36).slice(2, 8);
   const base = safeName(file.name || `brief-media.${ext}`);
-  const folder = purpose === "brief" ? "brief-media" : "samples";
+  const folder = purpose === "brief" ? "brief-media" : purpose === "logo" ? "logos" : "samples";
   const path = `${folder}/${guard.userId}/${stamp}-${random}-${base}`;
 
   const sb = supabaseAdmin();

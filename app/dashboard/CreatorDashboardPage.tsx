@@ -67,6 +67,8 @@ import {
 import { ACCOUNT_SETUP_ANCHOR, accountPlatformFor, payoutPhrase, type AccountSetupView } from "@/lib/accountSetup";
 import { resolveGigApplicationMode, type GigApplicationMode } from "@/lib/gigApplicationMode";
 import { supabase } from "@/lib/supabaseClient";
+import CompanyLogo from "./CompanyLogo";
+import { gigLogoUrl } from "@/lib/gigLogo";
 import { NEW_CREATOR_HOLD_TITLE, newCreatorHoldMessage, newCreatorHoldUntil } from "@/lib/newCreatorHold";
 import { applicationQuota, formatWait, quotaBlocksGig, quotaCoversGig, quotaLimitMessage, strictestQuota, type ApplicationQuota } from "@/lib/applicationQuota";
 import WeeklyApplicationsMeter, { ApplicationSlotPreview } from "./WeeklyApplicationsMeter";
@@ -5586,14 +5588,10 @@ export default function DashboardPage() {
                 {/* Overview */}
                 <article className="gig-detail-card gig-detail-hero p-4 sm:p-6">
                   <div className="flex items-start gap-3 sm:gap-4">
-                    <span className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[15px] font-bold text-[#2b5d4a] sm:flex" aria-hidden="true">
-                      {getInitials(selectedGig.company)}
-                    </span>
+                    <CompanyLogo company={selectedGig.company} logo={gigLogoUrl(selectedGig.requirements)} className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[15px] font-bold text-[#2b5d4a] sm:flex" />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#e3e5e1] bg-[#fafbf9] text-[11px] font-bold text-[#2b5d4a] sm:hidden" aria-hidden="true">
-                          {getInitials(selectedGig.company)}
-                        </span>
+                        <CompanyLogo company={selectedGig.company} logo={gigLogoUrl(selectedGig.requirements)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#e3e5e1] bg-[#fafbf9] text-[11px] font-bold text-[#2b5d4a] sm:hidden" />
                         <span className="text-[13.5px] font-semibold text-[#1a201c]">{selectedGig.company}</span>
                         {selectedGig.verified ? (
                           <span className="inline-flex items-center gap-1 text-[12px] font-medium text-[#2e7d4f]">
@@ -6269,9 +6267,7 @@ export default function DashboardPage() {
                                     .filter((message) => message.body)
                                     .map((message) => (
                                       <div key={message.label} className="flex gap-3 rounded-lg border border-[#ebedea] bg-white p-3.5">
-                                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#eef1ed] text-[11px] font-bold text-[#2b5d4a]" aria-hidden="true">
-                                          {getInitials(selectedGig.company)}
-                                        </span>
+                                        <CompanyLogo company={selectedGig.company} logo={gigLogoUrl(selectedGig.requirements)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#eef1ed] text-[11px] font-bold text-[#2b5d4a]" />
                                         <div className="min-w-0">
                                           <div className="text-[12px] font-semibold text-[#616a64]">
                                             {selectedGig.company} · {message.label}
@@ -6587,9 +6583,7 @@ export default function DashboardPage() {
                                 {feedbackMessages.length ? (
                                   feedbackMessages.map((message) => (
                                     <div key={message.label} className="flex gap-3 rounded-lg border border-[#f1dea6] bg-[#fffbeb] p-3.5">
-                                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#8a5a00] ring-1 ring-[#f1dea6]" aria-hidden="true">
-                                        {getInitials(selectedGig.company)}
-                                      </span>
+                                      <CompanyLogo company={selectedGig.company} logo={gigLogoUrl(selectedGig.requirements)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#8a5a00] ring-1 ring-[#f1dea6]" />
                                       <div className="min-w-0">
                                         <div className="text-[12px] font-semibold text-[#8a5a00]">
                                           {selectedGig.company} · {message.label}
@@ -6718,9 +6712,7 @@ export default function DashboardPage() {
 
                 <article className="gig-detail-card overflow-hidden" aria-labelledby="gig-brand-title">
                   <div className="flex items-center gap-3 p-4 sm:p-5">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[16px] font-bold text-[#2b5d4a]" aria-hidden="true">
-                      {getInitials(selectedGig.company)}
-                    </span>
+                    <CompanyLogo company={selectedGig.company} logo={gigLogoUrl(selectedGig.requirements)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[16px] font-bold text-[#2b5d4a]" />
                     <div className="min-w-0">
                       <h2 id="gig-brand-title" className="flex items-center gap-1.5 truncate text-[14.5px] font-semibold text-[#1a201c]">
                         {selectedGig.company}
@@ -7018,9 +7010,7 @@ export default function DashboardPage() {
                       <div className="flex flex-1 flex-col p-4 pt-6 sm:p-5 sm:pt-7">
                         {/* Header: brand + one status */}
                         <div className="flex items-center gap-3">
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]">
-                            {getInitials(gig.company)}
-                          </span>
+                          <CompanyLogo company={gig.company} logo={gigLogoUrl(gig.requirements)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="truncate text-[14px] font-semibold text-[#20352c]">{gig.company}</span>
@@ -7688,9 +7678,7 @@ export default function DashboardPage() {
                 <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5">
                   {/* Gig summary */}
                   <div className="flex items-center gap-3 rounded-lg border border-[#ebedea] p-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]" aria-hidden="true">
-                      {getInitials(directApplyModalGig.company)}
-                    </span>
+                    <CompanyLogo company={directApplyModalGig.company} logo={gigLogoUrl(directApplyModalGig.requirements)} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]" />
                     <div className="min-w-0 flex-1">
                       <div className="line-clamp-2 text-[14px] font-semibold leading-5 text-[#1a201c]">{directApplyModalGig.title}</div>
                       <div className="truncate text-[12.5px] text-[#7a827c]">

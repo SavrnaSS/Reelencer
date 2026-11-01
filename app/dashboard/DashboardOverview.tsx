@@ -3,6 +3,8 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { LinkedSocialAccount } from "@/lib/socialAnalytics";
 import AccountPerformanceCard from "./AccountPerformanceCard";
+import CompanyLogo from "./CompanyLogo";
+import { gigLogoUrl } from "@/lib/gigLogo";
 import { isOpenPayoutStatus, type AccountEarningsSummary } from "@/lib/creatorEarnings";
 import { buildCreatorJobs, creatorJobCounts, CREATOR_JOB_GROUPS, CREATOR_JOB_LABELS, type CreatorJobApplication, type CreatorJobAssignment } from "@/lib/creatorJobs";
 import {
@@ -18,7 +20,6 @@ import {
   formatMoney,
   formatMoneyCompact,
   formatRelative,
-  getInitials,
   safeTime,
 } from "./dashboardUi";
 
@@ -38,6 +39,7 @@ type OverviewGig = {
   location: string;
   postedAt: string;
   verified?: boolean;
+  requirements?: string[];
 };
 
 type OverviewApplication = CreatorJobApplication;
@@ -863,7 +865,7 @@ export default function DashboardOverview({
                                 aria-label={`View ${row.gig?.title ?? "gig"}`}
                                 className="group flex w-full min-w-0 items-center gap-2.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#2e7d4f]"
                               >
-                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[11px] font-bold text-[#2b5d4a]" aria-hidden="true">{getInitials(row.gig?.company ?? "?")}</span>
+                                <CompanyLogo company={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[11px] font-bold text-[#2b5d4a]" />
                                 <span className="min-w-0 flex-1">
                                   <span className="line-clamp-2 break-words font-semibold text-[#1a201c] group-hover:underline">{row.gig?.title ?? "Gig unavailable"}</span>
                                   <span className="mt-0.5 block truncate text-[12px] text-[#7a827c]">{row.gig?.company ?? "—"}</span>
@@ -891,9 +893,7 @@ export default function DashboardOverview({
                           aria-label={`View ${row.gig?.title ?? "gig"}`}
                           className="flex w-full min-w-0 items-start gap-3 px-4 py-3.5 text-left transition hover:bg-[#fafbf9] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#2e7d4f] active:bg-[#f5f7f4]"
                         >
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[12px] font-bold text-[#2b5d4a]" aria-hidden="true">
-                            {getInitials(row.gig?.company ?? "?")}
-                          </span>
+                          <CompanyLogo company={row.gig?.company} logo={gigLogoUrl(row.gig?.requirements)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#eef1ed] text-[12px] font-bold text-[#2b5d4a]" />
                           <span className="min-w-0 flex-1">
                             <span className="line-clamp-2 break-words text-[13.5px] font-semibold leading-5 text-[#1a201c]">{row.gig?.title ?? "Gig unavailable"}</span>
                             <span className="mt-0.5 block break-words text-[12px] text-[#7a827c]">{row.gig?.company ?? "—"} · {row.gig?.platform ?? "—"}</span>
@@ -1048,9 +1048,7 @@ export default function DashboardOverview({
                       onClick={() => onNavigate("find", { gigId: gig.id, intent: "details" })}
                       className="group flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-[#f7f8f6] sm:px-5"
                     >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[12px] font-bold text-[#2b5d4a]" aria-hidden="true">
-                        {getInitials(gig.company)}
-                      </span>
+                      <CompanyLogo company={gig.company} logo={gigLogoUrl(gig.requirements)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[12px] font-bold text-[#2b5d4a]" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-semibold text-[#1a201c]">{gig.title}</span>
                         <span className="block truncate text-[12px] text-[#7a827c]">

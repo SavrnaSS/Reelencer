@@ -46,6 +46,9 @@ import { GigSampleVideosField } from "./GigSampleVideosField";
 import { Field, FormSection, Segmented, SwitchRow, inputCls, textareaCls } from "./gigFormUi";
 import { accountPlatformFor, encodeAccountInstructions, parseAccountInstructions, type AccountSetupView } from "@/lib/accountSetup";
 import { NEW_CREATOR_HOLD_DAYS } from "@/lib/newCreatorHold";
+import { gigLogoUrl, withGigLogo } from "@/lib/gigLogo";
+import CompanyLogo from "@/app/dashboard/CompanyLogo";
+import { CompanyLogoField } from "./CompanyLogoField";
 import { MAX_GIG_SAMPLES, encodeGigSample, isSampleLine, parseGigSamples, type GigSample } from "@/lib/gigSamples";
 
 type Platform = "Instagram" | "X" | "YouTube" | "LinkedIn" | "TikTok";
@@ -230,7 +233,12 @@ function sampleLines(samples?: GigSample[]) {
   return (samples ?? []).slice(0, MAX_GIG_SAMPLES).map(encodeGigSample).filter((line): line is string => Boolean(line));
 }
 
-function buildRequirementsPayload(input: {
+/** The gig's requirement lines from the form, with its company logo (see lib/gigLogo). */
+function buildRequirementsPayload(input: Parameters<typeof buildRequirementLines>[0] & { companyLogo?: string }) {
+  return withGigLogo(buildRequirementLines(input), input.companyLogo);
+}
+
+function buildRequirementLines(input: {
   gigType: string;
   requirements: string;
   customBrief: string;
@@ -481,6 +489,7 @@ export default function GigAdminConsole({
   /** Reference URL whose in-reel example is uploading; it shares mediaUploading so publishing waits for it. */
   const [reelExampleUploadingFor, setReelExampleUploadingFor] = useState<string | null>(null);
   const [samplesUploading, setSamplesUploading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
   // Success banner after publishing/updating, with links to the listings page.
   const [lastSaved, setLastSaved] = useState<{ kind: "created" | "updated"; id: string; title: string } | null>(null);
   const [spotlightCollapsed, setSpotlightCollapsed] = useState(false);
@@ -558,6 +567,7 @@ export default function GigAdminConsole({
     onboardingRequired: true,
     kycRequired: true,
     newCreatorHold: false,
+    companyLogo: "",
     requirements: "",
     status: "Open" as GigStatus,
   });
@@ -1030,7 +1040,7 @@ export default function GigAdminConsole({
   );
 
   const createGig = async () => {
-    if (mediaUploading || samplesUploading) {
+    if (mediaUploading || samplesUploading || logoUploading) {
       setFormError("Please wait for media upload to finish before publishing.");
       return;
     }
@@ -1128,6 +1138,7 @@ export default function GigAdminConsole({
       onboardingRequired: true,
       kycRequired: true,
       newCreatorHold: false,
+      companyLogo: "",
       requirements: "",
       status: "Open",
     });
@@ -1167,6 +1178,7 @@ export default function GigAdminConsole({
       onboardingRequired: projectFields.onboardingRequired,
       kycRequired: isCustom || isProject ? customFields.kycRequired : projectFields.kycRequired,
       newCreatorHold: gig.newCreatorHold === true,
+      companyLogo: gigLogoUrl(gig.requirements) ?? "",
       requirements: isCustom || isProject ? customFields.customRequirements.replace(/\n/g, ", ") : projectFields.requirementsText,
       status: gig.status,
     });
@@ -1195,7 +1207,7 @@ export default function GigAdminConsole({
 
   const updateGig = async () => {
     if (!editingGig) return;
-    if (mediaUploading || samplesUploading) {
+    if (mediaUploading || samplesUploading || logoUploading) {
       setFormError("Please wait for media upload to finish before updating.");
       return;
     }
@@ -1286,6 +1298,7 @@ export default function GigAdminConsole({
       onboardingRequired: true,
       kycRequired: true,
       newCreatorHold: false,
+      companyLogo: "",
       requirements: "",
       status: "Open",
     });
@@ -1426,6 +1439,7 @@ export default function GigAdminConsole({
     const customFields = readCustomFieldsFromRequirements(gig.requirements);
     const projectFields = readProjectFieldsFromRequirements(gig.requirements);
     const nextRequirements = reelKitRequirementsForCompany(gig.company, buildRequirementsPayload({
+      companyLogo: gigLogoUrl(gig.requirements) ?? "",
       gigType: isCustomGigType ? "Custom" : normalizedType,
       requirements: projectFields.requirementsText,
       customBrief: customFields.customBrief,
@@ -2009,6 +2023,12 @@ export default function GigAdminConsole({
                     <option value="India" />
                   </datalist>
                 </Field>
+                <CompanyLogoField
+                  company={form.company}
+                  value={form.companyLogo}
+                  onChange={(companyLogo) => setForm((prev) => ({ ...prev, companyLogo }))}
+                  onUploadingChange={setLogoUploading}
+                />
                 <div className="min-w-0 sm:col-span-2">
                   <div className="mb-1.5 text-[12.5px] font-semibold text-slate-700">Platform</div>
                   <Segmented label="Platform" value={form.platform} options={PLATFORMS} onChange={(platform) => setForm((prev) => ({ ...prev, platform }))} />
@@ -2452,6 +2472,7 @@ export default function GigAdminConsole({
                         onboardingRequired: true,
                         kycRequired: true,
                         newCreatorHold: false,
+                        companyLogo: "",
                         requirements: "",
                         status: "Open",
                       });
@@ -2465,9 +2486,9 @@ export default function GigAdminConsole({
                   type="button"
                   className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-[#1f4f43] px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#245a4b] disabled:opacity-60 sm:flex-none"
                   onClick={editingGig ? updateGig : createGig}
-                  disabled={mediaUploading || samplesUploading}
+                  disabled={mediaUploading || samplesUploading || logoUploading}
                 >
-                  {mediaUploading || samplesUploading ? "Uploading media…" : editingGig ? "Update gig" : "Publish gig"}
+                  {mediaUploading || samplesUploading || logoUploading ? "Uploading media…" : editingGig ? "Update gig" : "Publish gig"}
                   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
                     <path d="M4.5 10h11M11 5.5l4.5 4.5-4.5 4.5" />
                   </svg>
@@ -2490,9 +2511,7 @@ export default function GigAdminConsole({
               <div className="mt-4 overflow-hidden rounded-2xl border border-[#e3e5e1] bg-white shadow-[0_1px_2px_rgba(26,32,28,0.06)]">
                 <div className="p-4">
                   <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]">
-                      {(form.company.trim() || "?").slice(0, 2).toUpperCase()}
-                    </span>
+                    <CompanyLogo company={form.company.trim() || "?"} logo={form.companyLogo} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#e3e5e1] bg-[#fafbf9] text-[13px] font-bold text-[#2b5d4a]" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[14px] font-semibold text-[#20352c]">{form.company.trim() || "Company name"}</div>
                       <div className="truncate text-[12px] text-[#6f7d74]">
@@ -2886,9 +2905,7 @@ export default function GigAdminConsole({
                     <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                       {/* Identity + facts */}
                       <div className="flex min-w-0 gap-3">
-                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#e3e5e1] bg-[#f4f7f2] text-[13px] font-bold text-[#2b5d4a]" aria-hidden>
-                          {(gig.company || "?").trim().slice(0, 2).toUpperCase()}
-                        </span>
+                        <CompanyLogo company={gig.company} logo={gigLogoUrl(gig.requirements)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#e3e5e1] bg-[#f4f7f2] text-[13px] font-bold text-[#2b5d4a]" />
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <h3 className="min-w-0 text-[14.5px] font-semibold leading-snug text-[#1a201c] sm:text-[15px]">{gig.title}</h3>
