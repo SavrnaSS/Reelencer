@@ -26,6 +26,6 @@ test("being assigned another project lifts the hold; applying elsewhere does not
 
 test("the message explains the rule and when the gig opens", () => {
   const opensAt = new Date(now + (3 * 24 + 4) * 3_600_000).toISOString();
-  assert.match(newCreatorHoldMessage(opensAt, { now, withTime: false }), /assigned another project, or 20 days after you joined\. Yours opens in 3d 4h at the latest\.$/);
-  assert.doesNotMatch(newCreatorHoldMessage(null, { now }), /Yours opens/);
+  assert.match(newCreatorHoldMessage(opensAt, { now, withTime: false }), /assigned another project or your account is 20 days old\. Otherwise, applications open for you in 3d 4h\.$/);
+  assert.doesNotMatch(newCreatorHoldMessage(null, { now }), /applications open for you in/);
 });

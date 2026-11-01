@@ -43,7 +43,7 @@ export const NEW_CREATOR_HOLD_TITLE = "Open to established creators";
 
 /** `withTime` adds the local date and time; leave it off on the server, which doesn't know the viewer's time zone. */
 export function newCreatorHoldMessage(opensAt: string | null | undefined, { now = Date.now(), withTime = true } = {}) {
-  const rule = `This gig opens once you've been assigned another project, or ${NEW_CREATOR_HOLD_DAYS} days after you joined.`;
+  const rule = `You can apply once you're assigned another project or your account is ${NEW_CREATOR_HOLD_DAYS} days old.`;
   if (!opensAt || !(Date.parse(opensAt) > now)) return rule;
-  return `${rule} Yours opens in ${formatWait(opensAt, now)}${withTime ? ` (${formatSlotTime(opensAt)})` : ""} at the latest.`;
+  return `${rule} Otherwise, applications open for you in ${formatWait(opensAt, now)}${withTime ? ` (${formatSlotTime(opensAt)})` : ""}.`;
 }

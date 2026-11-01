@@ -4072,9 +4072,9 @@ export default function DashboardPage() {
       return {
         kind: "newCreator" as const,
         title: NEW_CREATOR_HOLD_TITLE,
-        badge: "New creators wait",
+        badge: "Established creators",
         message: newCreatorHoldMessage(opensAt, { now: minuteNow }),
-        actionLabel: opensAt ? `Opens in ${formatWait(opensAt, minuteNow)}` : "Opens after your first project",
+        actionLabel: opensAt ? `Available in ${formatWait(opensAt, minuteNow)}` : "Not yet available",
       };
     }
     if (quotaBlocksGig(weeklyQuota, gigId)) {
