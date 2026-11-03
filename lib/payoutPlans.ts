@@ -1,3 +1,5 @@
+import { formatMoney } from "./money";
+
 /**
  * Custom creator payout plans: a fixed base per approved reel, with the view rate only applying past a threshold.
  * Client-safe. Mirrors `public.reel_payout_cumulative` in 202611030001_creator_payout_plans.sql exactly (paise
@@ -88,10 +90,8 @@ export function termsForReel(plan: AccountPayoutPlan | undefined, gigRate: numbe
   return { mode: "cpm", rateINR: gigRate, baseINR: 0, thresholdViews: 0, started: false };
 }
 
-const inrWhole = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-const inrPaise = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-/** ₹200 for whole rupees, ₹612.50 otherwise. */
-export const formatINR = (amount: number) => (Number.isInteger(Math.round(amount * 100) / 100) ? inrWhole : inrPaise).format(amount);
+/** ₹200 for whole rupees, ₹612.50 otherwise: the same format as every other amount in the app. */
+export const formatINR = (amount: number) => formatMoney(amount);
 export function compactViews(views: number) {
   if (views >= 1_000_000) return `${+(views / 1_000_000).toFixed(views % 1_000_000 ? 1 : 0)}M`;
   if (views >= 1_000) return `${+(views / 1_000).toFixed(views % 1_000 ? 1 : 0)}K`;
@@ -171,4 +171,64 @@ export function readAccountPayoutPlan(value: unknown): AccountPayoutPlan | undef
   const appliesFrom = value && typeof value === "object" ? (value as Record<string, unknown>).appliesFrom : undefined;
   if (!terms || terms.mode === "cpm" || typeof appliesFrom !== "string" || !Number.isFinite(Date.parse(appliesFrom))) return undefined;
   return { ...terms, mode: terms.mode, appliesFrom };
+}
+
+/**
+ * The terms a reel earns under on the creator's side: the read model's frozen terms when present, plain pay for
+ * other reels the wallet already knows, and otherwise the account's current plan if the reel falls in its window.
+ */
+export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms } }, plan: AccountPayoutPlan | undefined, gigRate: number): PayoutTerms {
+  if (post.walletCredit) return post.walletCredit.payoutTerms ?? termsForReel(undefined, gigRate);
+  return termsForReel(plan, gigRate, post.postedAt);
+}
+
+type PlanPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms } };
+export type PlanReel<P> = { post: P; views: number; measured: boolean; earnsINR: number; progress: number; remainingToBoost: number; boosted: boolean };
+
+/**
+ * A creator's reels split by how they're paid, for the pay plan card. Rejected reels earn nothing and are left out;
+ * amounts are estimates at current views (approval credits them to the wallet).
+ */
+export function planReelSummary<P extends PlanPost>(posts: readonly P[], plan: AccountPayoutPlan, gigRate: number) {
+  const reels: PlanReel<P>[] = [];
+  let standardReels = 0, standardPaise = 0, standardViews = 0;
+  for (const post of posts) {
+    if (post.status === "rejected") continue;
+    const terms = postPayoutTerms(post, plan, gigRate);
+    const measured = Number.isSafeInteger(post.views) && post.views! >= 0;
+    const views = measured ? post.views! : 0;
+    if (terms.mode === "cpm") {
+      standardReels++;
+      standardViews += views;
+      standardPaise += Number(cumulativePaise(views, terms));
+      continue;
+    }
+    const threshold = terms.thresholdViews;
+    reels.push({ post, views, measured, earnsINR: reelPayoutINR(views, terms), progress: Math.min(1, views / threshold), remainingToBoost: Math.max(0, threshold + 1 - views), boosted: views > threshold });
+  }
+  const sum = (list: PlanReel<P>[]) => list.reduce((total, reel) => total + Math.round(reel.earnsINR * 100), 0) / 100;
+  const approved = reels.filter(reel => reel.post.status === "approved");
+  const inReview = reels.filter(reel => reel.post.status === "submitted");
+  return {
+    reels, approved, inReview,
+    approvedINR: sum(approved), inReviewINR: sum(inReview),
+    boostedCount: reels.filter(reel => reel.boosted).length,
+    standard: { reels: standardReels, views: standardViews, amountINR: standardPaise / 100 },
+  };
+}
+
+/** Plain-language lines for creators. */
+export function planCopy(plan: Pick<PayoutTerms, "mode" | "rateINR" | "baseINR" | "thresholdViews">) {
+  const base = formatINR(plan.baseINR), rate = formatINR(plan.rateINR), threshold = plan.thresholdViews.toLocaleString("en-IN");
+  const big = plan.thresholdViews * 2;
+  return {
+    headline: `${base} for every approved reel`,
+    baseTitle: `${base} for each reel`,
+    baseText: `Every reel the team approves earns ${base}, even before it gets views.`,
+    boostTitle: `More once a reel passes ${compactViews(plan.thresholdViews)} views`,
+    boostText: plan.mode === "all"
+      ? `When a reel goes over ${threshold} views, it's paid ${rate} for every 1,000 of its views instead, if that's more than ${base}.`
+      : `Every 1,000 views a reel gets after ${threshold} adds ${rate} on top of its ${base}.`,
+    examples: [Math.round(plan.thresholdViews / 2), plan.thresholdViews, big].map(views => ({ views, amountINR: reelPayoutINR(views, plan) })),
+  };
 }

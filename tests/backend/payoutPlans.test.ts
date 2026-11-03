@@ -91,3 +91,24 @@ test("claim review previews plan intervals at their frozen terms", () => {
   assert.equal(adjustedViewAmount({ ...opening, to_views: 0 }, 49, 0), 200, "base-only interval");
   assert.equal(adjustedViewAmount({ from_views: 1_000, to_views: 1_500 }, 49, 0), 24.5);
 });
+
+test("creator plan card: earlier reels stay standard and plan reels show progress", async () => {
+  const { planReelSummary, planCopy } = await import("../../lib/payoutPlans");
+  const nov = { ...plan, mode: "beyond" as const, appliesFrom: "2026-11-03T00:00:00+05:30" };
+  const summary = planReelSummary([
+    post("old", "approved", 335, { postedAt: "2026-11-01T10:00:00Z" }),
+    post("new", "approved", 4_000, { postedAt: "2026-11-03T10:00:00Z" }),
+    post("viral", "approved", 15_000, { postedAt: "2026-11-03T12:00:00Z" }),
+    post("waiting", "submitted", undefined, { postedAt: "2026-11-03T13:00:00Z" }),
+    post("rejected", "rejected", 50_000, { postedAt: "2026-11-03T14:00:00Z" }),
+  ], nov, 49);
+  assert.deepEqual(summary.standard, { reels: 1, views: 335, amountINR: 16.42 }, "the screenshot's ₹16.42 is an earlier, standard-rate reel");
+  assert.equal(summary.approvedINR, 200 + 445);
+  assert.equal(summary.inReviewINR, 200);
+  assert.equal(summary.boostedCount, 1);
+  assert.equal(summary.reels.find(reel => reel.post.id === "new")?.remainingToBoost, 6_001);
+  const copy = planCopy(nov);
+  assert.equal(copy.headline, "₹200 for every approved reel");
+  assert.deepEqual(copy.examples.map(example => example.amountINR), [200, 200, 690]);
+  assert.match(copy.boostText, /Every 1,000 views a reel gets after 10,000 adds ₹49 on top of its ₹200/);
+});

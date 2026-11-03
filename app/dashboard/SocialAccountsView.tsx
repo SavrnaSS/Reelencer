@@ -6,7 +6,7 @@ import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { accountPlatformFor, isPlatformProfileUrl, payoutPhrase } from "@/lib/accountSetup";
-import { describePlan, shortPlan } from "@/lib/payoutPlans";
+import { formatINR } from "@/lib/payoutPlans";
 import type { SocialAccountsState } from "@/lib/useSocialAccounts";
 import { trackingStartInput } from "@/lib/reelTracking";
 import {
@@ -42,6 +42,9 @@ import ReelEarningsSummary from "./ReelEarningsSummary";
 import AddAccountsPanel, { AccountsRail, AddAccountSheet, useAccountRequests, type SheetMode } from "./AddAccountsPanel";
 import LinkedAccountRecovery from "./LinkedAccountRecovery";
 import ViewMilestoneCard from "./ViewMilestoneCard";
+import PayoutPlanCard from "./PayoutPlanCard";
+
+const PLAN_ANCHOR = "pay-plan";
 
 // "Accounts": the social accounts linked to the creator after Content Posting screening, with their reach, growth
 // and per-reel results. Numbers come from the team's insight check-ins (see lib/socialAnalytics).
@@ -884,8 +887,8 @@ function AccountDetail({
               {/* Breakdown instead of one long sentence */}
               <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11.5px] sm:grid-cols-3">
                 <div className="min-w-0">
-                  <dt className="text-[#5d7466]">Rate</dt>
-                  <dd className="font-semibold tabular-nums text-[#1a201c]">{earnings.basis === "views" ? ("plan" in earnings && earnings.plan ? shortPlan(earnings.plan) : `${earnings.rate} / 1K views`) : `${earnings.rate} / reel`}</dd>
+                  <dt className="text-[#5d7466]">{earnings.basis === "views" && earnings.plan ? "Your pay" : "Rate"}</dt>
+                  <dd className="font-semibold tabular-nums text-[#1a201c]">{earnings.basis === "views" ? (earnings.plan ? `${formatINR(earnings.plan.baseINR)} / reel` : `${earnings.rate} / 1K views`) : `${earnings.rate} / reel`}</dd>
                 </div>
                 <div className="min-w-0">
                   <dt className="text-[#5d7466]">{earnings.basis === "views" ? "Approved views" : "Approved reels"}</dt>
@@ -896,11 +899,11 @@ function AccountDetail({
                     <dd className="break-words font-semibold tabular-nums text-[#1a201c]">{earnings.pendingValue}</dd>
                   </div>
               </dl>
-              {"plan" in earnings && earnings.plan ? (
-                <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-white/70 px-2 py-1.5 text-[11px] leading-4 text-[#2f4b3a]">
-                  <span className="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#2e7d4f]" aria-hidden="true" />
-                  <span><span className="font-semibold">Your payout plan:</span> {describePlan(earnings.plan)}. Applies to reels posted from {new Date(earnings.plan.appliesFrom).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}.</span>
-                </p>
+              {earnings.basis === "views" && earnings.plan ? (
+                <a href={`#${PLAN_ANCHOR}`} className="mt-2 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#1f5131] underline-offset-2 hover:underline">
+                  See your pay plan
+                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6" /></svg>
+                </a>
               ) : null}
               {earnings.basis === "views" && (earnings.unmeasuredApproved || earnings.unmeasuredPending) ? (
                 <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-[#8a5300]">
@@ -922,9 +925,12 @@ function AccountDetail({
       </section>
       {earnings ? (
         <p className="-mt-1 text-[11.5px] leading-5 text-[#8a928c]">
-          Estimates use the gig&apos;s listed rate. Reel approval credits reviewed earnings to your wallet; new views need another review.
+          {earnings.basis === "views" && earnings.plan
+            ? `Estimates use your pay plan for reels posted from ${formatDate(earnings.plan.appliesFrom)} and the gig's rate for earlier reels. Approved reels are credited to your wallet; new views need another review.`
+            : "Estimates use the gig's listed rate. Reel approval credits reviewed earnings to your wallet; new views need another review."}
         </p>
       ) : null}
+      {account.payoutPlan ? <div id={PLAN_ANCHOR} className="scroll-mt-24"><PayoutPlanCard account={account} /></div> : null}
 
       {String(account.payoutType).trim().toLowerCase() === "per 1k views" ? <ViewPayoutClaims key={account.id} accountId={account.id} /> : null}
 

@@ -1,4 +1,5 @@
 "use client";
+import { compactViews } from "@/lib/payoutPlans";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useSocialAccounts } from "@/lib/useSocialAccounts";
 import { fetchCreatorDashboard, type DashboardWallet } from "@/lib/creatorDashboardClient";
@@ -5973,7 +5974,7 @@ export default function DashboardPage() {
                                     const profileIssue = socialAccounts.load.state === "ready" ? socialAccounts.load.accountIssues?.find(matchesSelectedGig) ?? null : null;
                                     const needsProfileFix = !gigAccount && !!profileIssue;
                                     const linkedHandle = gigAccount?.handle ?? (!profileIssue && accountSetup?.status === "Verified" ? accountSetup.handle : null);
-                                    const reelPay = payoutPhrase(selectedGig.payout, selectedGig.payoutType);
+                                    const reelPay = gigAccount?.payoutPlan ? `${formatMoney(gigAccount.payoutPlan.baseINR)} per approved reel on your pay plan, plus more once a reel passes ${compactViews(gigAccount.payoutPlan.thresholdViews)} views` : payoutPhrase(selectedGig.payout, selectedGig.payoutType);
                                     const posting = postingProgress(gigAccount ?? profileIssue, payoutBatches);
                                     const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
                                     const money = (amount: number) => formatMoney(amount, posting.symbol);

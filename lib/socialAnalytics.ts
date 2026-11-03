@@ -1,7 +1,7 @@
 import { formatAmount } from "./money";
 import { countedReels } from "./reelTracking";
 import type { SocialAccountWalletCredits, SocialPostWalletCredit } from "./socialWallet";
-import { cumulativePaise, termsForReel, type AccountPayoutPlan } from "./payoutPlans";
+import { cumulativePaise, postPayoutTerms, type AccountPayoutPlan } from "./payoutPlans";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -407,7 +407,7 @@ export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payou
   if (type === "per 1k views") {
     if (!isValidViewPayoutRate(account.payout)) return undefined;
     // Reels on a creator payout plan earn their base plus the rate past the threshold; the rest earn the plain rate.
-    const termsFor = (post: SocialPost) => post.walletCredit ? post.walletCredit.payoutTerms ?? termsForReel(undefined, rate.amount) : termsForReel(account.payoutPlan, rate.amount, post.postedAt);
+    const termsFor = (post: SocialPost) => postPayoutTerms(post, account.payoutPlan, rate.amount);
     const planned = (post: SocialPost) => termsFor(post).mode !== "cpm";
     const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && !planned(post) && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
     const planPaise = (status: SocialPostStatus) => posts.filter((post) => post.status === status && planned(post))

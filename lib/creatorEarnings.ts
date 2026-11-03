@@ -106,7 +106,7 @@ const normalizeHandle = (handle?: string) => String(handle ?? "").trim().replace
  * or queued for that account (payout items are matched by handle). Drives the "post, then get paid" steps.
  */
 export function postingProgress(
-  account: (Pick<LinkedSocialAccount, "handle" | "posts" | "payout" | "payoutType"> & { linkedAt?: string }) | null | undefined,
+  account: (Pick<LinkedSocialAccount, "handle" | "posts" | "payout" | "payoutType" | "payoutPlan"> & { linkedAt?: string }) | null | undefined,
   batches: Array<{ status: string; items: Array<{ amountINR: number; handle?: string }> }>,
 ) {
   // Reels from before the account was linked don't count towards posting progress or pay.
