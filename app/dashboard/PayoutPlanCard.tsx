@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
-import { compactViews, formatINR, planCopy, planReelSummary } from "@/lib/payoutPlans";
+import { compactViews, formatINR, planCopy, planReelSummary, type AccountPayoutPlan } from "@/lib/payoutPlans";
 import { countedReels } from "@/lib/reelTracking";
 import { parsePayoutAmount, type LinkedSocialAccount, type SocialPost } from "@/lib/socialAnalytics";
 import { cx, formatDate } from "./dashboardUi";
@@ -16,6 +16,46 @@ const STATUS: Record<SocialPost["status"], { label: string; className: string }>
   rejected: { label: "Not approved", className: "bg-[#fde4e1] text-[#8e1f1a]" },
 };
 const VISIBLE = 4;
+
+function SelectedBadge({ compact }: { compact?: boolean }) {
+  return (
+    <span className={cx("inline-flex max-w-full items-center gap-1.5 rounded-full bg-[#1f4f37] font-semibold text-white shadow-[0_1px_0_rgba(0,0,0,0.04)]", compact ? "px-2 py-0.5 text-[10.5px]" : "px-2.5 py-1 text-[11px]")}>
+      <svg viewBox="0 0 24 24" className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} fill="#f2c94c" aria-hidden="true"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9Z" /></svg>
+      <span className="truncate">{compact ? "Selected for a special pay plan" : "Selected for you"}</span>
+    </span>
+  );
+}
+
+/** The earnings tile for creators on a pay plan: the estimate, the plan in two numbers, and a link to the details. */
+export function PlanEarningsTile({ plan, earned, approvedViews, pendingValue, warning, href, className }: {
+  plan: AccountPayoutPlan; earned: string; approvedViews: number; pendingValue: string; warning?: string; href: string; className?: string;
+}) {
+  return (
+    <div className={cx("flex min-w-0 flex-col rounded-xl border border-[#cfe3d4] bg-[linear-gradient(160deg,#f1f8ef,#f8fbf6)] p-3.5 sm:p-4", className)}>
+      <SelectedBadge compact />
+      <div className="mt-3 text-[12px] font-medium text-[#3b5a47]">Your earnings <span className="font-normal text-[#7a8f80]">(estimate)</span></div>
+      <div className="mt-1 break-words text-[24px] font-semibold leading-none tracking-[-0.01em] tabular-nums text-[#16301f] sm:text-[26px]">{earned}</div>
+
+      <dl className="mt-3 grid grid-cols-2 overflow-hidden rounded-lg bg-white/80 ring-1 ring-[#dcebdd]">
+        <div className="min-w-0 px-3 py-2">
+          <dt className="text-[11px] text-[#5d7466]">Per reel</dt>
+          <dd className="mt-0.5 text-[15px] font-semibold tabular-nums text-[#1a201c]">{formatINR(plan.baseINR)}</dd>
+        </div>
+        <div className="min-w-0 border-l border-[#e6efe6] px-3 py-2">
+          <dt className="truncate text-[11px] text-[#5d7466]">After {compactViews(plan.thresholdViews)} views</dt>
+          <dd className="mt-0.5 text-[15px] font-semibold tabular-nums text-[#1a201c]">{formatINR(plan.rateINR)}<span className="text-[11px] font-medium text-[#5d7466]"> / 1K</span></dd>
+        </div>
+      </dl>
+
+      <p className="mt-2.5 text-[11.5px] tabular-nums text-[#5d7466]">{approvedViews.toLocaleString("en-IN")} approved views · {pendingValue} in review</p>
+      {warning ? <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-4 text-[#8a5300]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#d99a06]" aria-hidden="true" />{warning}</p> : null}
+      <a href={href} className="mt-3 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#1f4f37] px-3 text-[12.5px] font-semibold text-white transition hover:bg-[#2a6447] sm:mt-auto sm:self-start">
+        See how your plan works
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6" /></svg>
+      </a>
+    </div>
+  );
+}
 
 function reelTitle(caption?: string) {
   const text = String(caption ?? "").replace(/#[\p{L}\p{N}_]+/gu, "").replace(/\s{2,}/g, " ").trim();
@@ -38,14 +78,11 @@ export default function PayoutPlanCard({ account }: { account: LinkedSocialAccou
     <section aria-labelledby={`${id}-title`} className="overflow-hidden rounded-2xl border border-[#cfe3d4] bg-white">
       {/* What the plan pays */}
       <div className="bg-[linear-gradient(135deg,#f1f8ef,#f8fbf6)] px-4 pb-4 pt-4 sm:px-5 sm:pt-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#1f4f37] px-2.5 py-1 text-[11px] font-semibold text-white">
-            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9Z" /></svg>
-            Your special pay plan
-          </span>
-          <span className="text-[11.5px] text-[#5d7466]">For reels posted from {from}</span>
-        </div>
-        <h3 id={`${id}-title`} className="mt-2.5 text-[20px] font-semibold leading-tight tracking-[-0.01em] text-[#16301f] sm:text-[22px]">{copy.headline}</h3>
+        <SelectedBadge />
+        <h3 id={`${id}-title`} className="mt-3 text-[20px] font-semibold leading-tight tracking-[-0.01em] text-[#16301f] sm:text-[23px]">You&apos;ve been selected for a special pay plan</h3>
+        <p className="mt-1.5 max-w-[60ch] text-[13px] leading-5 text-[#3b5a47]">
+          Earn <b className="font-semibold text-[#16301f]">{formatINR(plan.baseINR)} for every approved reel</b> you post from {from}, and more when a reel takes off.
+        </p>
 
         <ol className="mt-3 grid gap-2 sm:grid-cols-2">
           <li className="flex gap-3 rounded-xl bg-white/80 p-3 ring-1 ring-[#dcebdd]">

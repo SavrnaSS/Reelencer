@@ -6,7 +6,6 @@ import SocialSyncStatus from "@/app/_components/SocialSyncStatus";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { accountPlatformFor, isPlatformProfileUrl, payoutPhrase } from "@/lib/accountSetup";
-import { formatINR } from "@/lib/payoutPlans";
 import type { SocialAccountsState } from "@/lib/useSocialAccounts";
 import { trackingStartInput } from "@/lib/reelTracking";
 import {
@@ -42,7 +41,7 @@ import ReelEarningsSummary from "./ReelEarningsSummary";
 import AddAccountsPanel, { AccountsRail, AddAccountSheet, useAccountRequests, type SheetMode } from "./AddAccountsPanel";
 import LinkedAccountRecovery from "./LinkedAccountRecovery";
 import ViewMilestoneCard from "./ViewMilestoneCard";
-import PayoutPlanCard from "./PayoutPlanCard";
+import PayoutPlanCard, { PlanEarningsTile } from "./PayoutPlanCard";
 
 const PLAN_ANCHOR = "pay-plan";
 
@@ -872,6 +871,20 @@ function AccountDetail({
           {viewSummary.oldestCapturedAt ? <p className="mt-1.5 text-[10.5px] text-[#8a928c]">Counts measured {formatRelative(viewSummary.oldestCapturedAt).toLowerCase()}</p> : null}
           <p className="mt-1.5 text-[10.5px] text-[#8a928c]">Automatic checks every 5 minutes; access limits can delay updates.</p>
         </div>
+        {earnings?.basis === "views" && earnings.plan ? (
+          <PlanEarningsTile
+            plan={earnings.plan}
+            earned={earnings.earned}
+            approvedViews={earnings.approvedViews}
+            pendingValue={earnings.pendingValue}
+            href={`#${PLAN_ANCHOR}`}
+            warning={[
+              earnings.unmeasuredApproved ? `${earnings.unmeasuredApproved} approved reel${earnings.unmeasuredApproved === 1 ? "" : "s"} waiting for a view count` : null,
+              earnings.unmeasuredPending ? `${earnings.unmeasuredPending} reel${earnings.unmeasuredPending === 1 ? "" : "s"} in review without counts` : null,
+            ].filter(Boolean).join(" · ") || undefined}
+            className={cx("order-last col-span-2 lg:order-none", grid.earningsWideDesktop ? "lg:col-span-2" : "lg:col-span-1")}
+          />
+        ) : (
         <div
           className={cx(
             "flex flex-col rounded-xl border border-[#cfe3d4] bg-[#f4f9f2] p-3.5 sm:p-4",
@@ -887,8 +900,8 @@ function AccountDetail({
               {/* Breakdown instead of one long sentence */}
               <dl className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11.5px] sm:grid-cols-3">
                 <div className="min-w-0">
-                  <dt className="text-[#5d7466]">{earnings.basis === "views" && earnings.plan ? "Your pay" : "Rate"}</dt>
-                  <dd className="font-semibold tabular-nums text-[#1a201c]">{earnings.basis === "views" ? (earnings.plan ? `${formatINR(earnings.plan.baseINR)} / reel` : `${earnings.rate} / 1K views`) : `${earnings.rate} / reel`}</dd>
+                  <dt className="text-[#5d7466]">Rate</dt>
+                  <dd className="font-semibold tabular-nums text-[#1a201c]">{earnings.basis === "views" ? `${earnings.rate} / 1K views` : `${earnings.rate} / reel`}</dd>
                 </div>
                 <div className="min-w-0">
                   <dt className="text-[#5d7466]">{earnings.basis === "views" ? "Approved views" : "Approved reels"}</dt>
@@ -899,12 +912,6 @@ function AccountDetail({
                     <dd className="break-words font-semibold tabular-nums text-[#1a201c]">{earnings.pendingValue}</dd>
                   </div>
               </dl>
-              {earnings.basis === "views" && earnings.plan ? (
-                <a href={`#${PLAN_ANCHOR}`} className="mt-2 inline-flex items-center gap-1 text-[11.5px] font-semibold text-[#1f5131] underline-offset-2 hover:underline">
-                  See your pay plan
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14m-6-6 6 6 6-6" /></svg>
-                </a>
-              ) : null}
               {earnings.basis === "views" && (earnings.unmeasuredApproved || earnings.unmeasuredPending) ? (
                 <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-4 text-[#8a5300]">
                   <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#d99a06]" aria-hidden="true" />
@@ -921,6 +928,7 @@ function AccountDetail({
             <div className="mt-1.5 text-[11.5px] text-[#5d7466]">{pay ? "as listed on the gig" : "See the gig for pay details"}</div>
           )}
         </div>
+        )}
         <ViewMilestoneCard account={account} className={!grid.earningsWideMobile ? "col-span-2 lg:col-span-1" : undefined} />
       </section>
       {earnings ? (
