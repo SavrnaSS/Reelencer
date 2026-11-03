@@ -1,5 +1,6 @@
 "use client";
 
+import { shortPlan } from "@/lib/payoutPlans";
 import { apiFetch as fetch } from "@/lib/api/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVisibleRefresh } from "@/lib/useVisibleRefresh";
@@ -571,9 +572,9 @@ function AccountDetail({
                     ? {
                         label: "View earnings",
                         value: rupees(wallet.approved + wallet.pending),
-                        sub: `${rupees(wallet.approved)} credited · ${wallet.pending ? `${rupees(wallet.pending)} not yet credited` : "nothing waiting"} · ${earnings.rate} / 1,000 views${wallet.missingCounts ? ` · ${wallet.missingCounts} missing counts` : ""}`,
+                        sub: `${rupees(wallet.approved)} credited · ${wallet.pending ? `${rupees(wallet.pending)} not yet credited` : "nothing waiting"} · ${"plan" in earnings && earnings.plan ? `Plan: ${shortPlan(earnings.plan)}` : `${earnings.rate} / 1,000 views`}${wallet.missingCounts ? ` · ${wallet.missingCounts} missing counts` : ""}`,
                       }
-                    : { label: "Estimated view earnings", value: earnings.earned, sub: `${formatCompact(earnings.approvedViews)} approved views at ${earnings.rate} / 1,000${earnings.unmeasuredApproved ? ` · ${earnings.unmeasuredApproved} missing counts` : ""}${earnings.pending ? ` · ${earnings.pendingValue} in review` : ""}${earnings.unmeasuredPending ? ` · ${earnings.unmeasuredPending} pending counts` : ""}` }
+                    : { label: "Estimated view earnings", value: earnings.earned, sub: `${formatCompact(earnings.approvedViews)} approved views at ${"plan" in earnings && earnings.plan ? `plan ${shortPlan(earnings.plan)}` : `${earnings.rate} / 1,000`}${earnings.unmeasuredApproved ? ` · ${earnings.unmeasuredApproved} missing counts` : ""}${earnings.pending ? ` · ${earnings.pendingValue} in review` : ""}${earnings.unmeasuredPending ? ` · ${earnings.unmeasuredPending} pending counts` : ""}` }
                   : { label: "Approved reels", value: String(earnings.approved), sub: `${earnings.earned} owed at ${earnings.rate}${earnings.pending ? ` · ${earnings.pending} to review` : ""}` }
                 : { label: "Approved reels", value: String(countedReels(account.posts, account.linkedAt).filter((p) => p.status === "approved").length), sub: account.payout ? `${account.payout}${account.payoutType ? ` · ${account.payoutType}` : ""}` : "" },
             ].map((item) => (

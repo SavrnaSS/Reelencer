@@ -10,6 +10,8 @@ import {
 } from "@/lib/adminWorkerDirectory";
 import WorkerBulkActions, { BulkBarButton } from "./WorkerBulkActions";
 import BroadcastComposer from "./BroadcastComposer";
+import PayoutPlansDialog, { usePayoutPlans } from "./PayoutPlansDialog";
+import { shortPlan } from "@/lib/payoutPlans";
 import { apiFetch } from "@/lib/api/client";
 import {
   ACTIVITY_PRESETS, DEFAULT_ACTIVITY_FILTERS, SETUP_LABELS, activeActivityFilterCount, isPresetActive, matchesActivity, presetFilters,
@@ -81,6 +83,22 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
+  const [planFilter, setPlanFilter] = useState<string>("all");
+  const payoutPlans = usePayoutPlans();
+  // Creator (auth user id) → their payout plan, for row chips and the plan filter.
+  const planByUser = useMemo(() => {
+    const plans = new Map((payoutPlans.snapshot?.plans ?? []).map(plan => [plan.id, plan]));
+    const gigRates = new Map((payoutPlans.snapshot?.gigs ?? []).map(gig => [gig.id, Number(gig.rateINR)]));
+    const result = new Map<string, { id: string; name: string; label: string; active: boolean }>();
+    for (const member of payoutPlans.snapshot?.members ?? []) {
+      const plan = plans.get(member.planId);
+      if (!plan) continue;
+      const rate = Number(plan.rate_inr ?? (plan.gig_id ? gigRates.get(plan.gig_id) : undefined) ?? 0);
+      result.set(member.workerId, { id: plan.id, name: plan.name, active: plan.active, label: rate > 0 ? shortPlan({ mode: plan.mode, rateINR: rate, baseINR: Number(plan.base_inr), thresholdViews: Number(plan.threshold_views) }) : `${Number(plan.base_inr).toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 })} base` });
+    }
+    return result;
+  }, [payoutPlans.snapshot]);
   const [now, setNow] = useState(() => Date.now());
   const tick = useCallback(async () => { setNow(Date.now()); }, []);
   useVisibleRefresh(tick, 60_000);
@@ -107,7 +125,14 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
 
   const query = localSearch;
   const base = useMemo(() => filterWorkerDirectory(workers, { query, status, assignment, payment, sort }), [workers, query, status, assignment, payment, sort]);
-  const filtered = useMemo(() => activityCount && activity ? base.filter(worker => matchesActivity(activityFor(worker), activityFilters, now)) : base, [base, activity, activityCount, activityFilters, activityFor, now]);
+  const filtered = useMemo(() => {
+    const byActivity = activityCount && activity ? base.filter(worker => matchesActivity(activityFor(worker), activityFilters, now)) : base;
+    if (planFilter === "all") return byActivity;
+    return byActivity.filter(worker => {
+      const plan = worker.userId ? planByUser.get(worker.userId) : undefined;
+      return planFilter === "standard" ? !plan : planFilter === "any" ? !!plan : plan?.id === planFilter;
+    });
+  }, [base, activity, activityCount, activityFilters, activityFor, now, planFilter, planByUser]);
   // Each quick view with the people in it (from the directory's other filters), for the chips and the email composer.
   const presetViews = useMemo(() => ACTIVITY_PRESETS.map(preset => {
     const filters = presetFilters(preset);
@@ -121,7 +146,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     const record = activityFor(worker);
     return record?.applications.find(application => matchesActivity({ ...record, applications: [application] }, activityFilters, now));
   };
-  const filterKey = JSON.stringify([query, status, assignment, payment, sort, pageSize, activityFilters]);
+  const filterKey = JSON.stringify([query, status, assignment, payment, sort, pageSize, activityFilters, planFilter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const page = Math.min(pageCount, pagination.key === filterKey ? pagination.page : 1);
   const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
@@ -142,9 +167,9 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     setSelected(result.ids);
     setNotice(result.limitReached ? `The batch limit is ${MAX_WORKER_SELECTION} users. Your first ${MAX_WORKER_SELECTION} selections are retained; remaining users are unselected.` : null);
   };
-  const extraFilters = Number(assignment !== "all") + Number(payment !== "all") + Number(sort !== "name_asc") + Number(status === "all") + activityCount;
+  const extraFilters = Number(assignment !== "all") + Number(payment !== "all") + Number(sort !== "name_asc") + Number(status === "all") + Number(planFilter !== "all") + activityCount;
   const hasFilters = !!localSearch || extraFilters > 0 || status !== "current";
-  const resetFilters = () => { setLocalSearch(""); setAssignment("all"); setPayment("all"); setStatus("current"); setSort("name_asc"); setActivityFilters(DEFAULT_ACTIVITY_FILTERS); };
+  const resetFilters = () => { setLocalSearch(""); setAssignment("all"); setPayment("all"); setStatus("current"); setSort("name_asc"); setPlanFilter("all"); setActivityFilters(DEFAULT_ACTIVITY_FILTERS); };
   const exportSelection = () => {
     const url = URL.createObjectURL(new Blob([workerDirectoryCsv(selectedWorkers)], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -163,6 +188,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     <div className={styles.searchRow}>
       <label className={styles.search} htmlFor={`${id}-search`}><span className={styles.visuallyHidden}>Search users</span><WorkerGlyph name="search" /><input id={`${id}-search`} type="search" value={localSearch} onChange={event => setLocalSearch(event.target.value)} placeholder="Search name, email or ID" /></label>
       <button type="button" className={styles.emailToggle} aria-label={`Email users (${filtered.length} in this view)`} title="Email the users in this view or your selection" disabled={!filtered.length && !selectedWorkers.length} onClick={() => setComposerOpen(true)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></svg></button>
+      <button type="button" className={styles.emailToggle} aria-label="Payout plans" title="Custom payout plans for selected creators" onClick={() => setPlansOpen(true)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 15l3-3 3 2 4-5M7 8h4" /></svg></button>
       <button type="button" className={styles.filterToggle} aria-label={extraFilters ? `Filters (${extraFilters} applied)` : "Filters"} title="Filter and sort users" aria-expanded={filtersOpen} aria-controls={`${id}-filters`} onClick={() => setFiltersOpen(open => !open)}><WorkerGlyph name="filter" /><span>Filters</span>{extraFilters > 0 ? <b>{extraFilters}</b> : null}</button>
     </div>
     <div className={styles.presets} role="group" aria-label="Quick views">
@@ -182,6 +208,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
       <label htmlFor={`${id}-joined`}><span>Joined</span><select id={`${id}-joined`} value={activityFilters.joined} disabled={!activity} onChange={event => setActivityFilter("joined", event.target.value as ActivityFilters["joined"])}><option value="all">Any time</option><option value="7d">In the last 7 days</option><option value="30d">In the last 30 days</option><option value="new">Under 20 days (new)</option><option value="established">20+ days (established)</option></select></label>
       <label htmlFor={`${id}-kyc`}><span>KYC</span><select id={`${id}-kyc`} value={activityFilters.kyc} disabled={!activity} onChange={event => setActivityFilter("kyc", event.target.value as ActivityFilters["kyc"])}><option value="all">Any KYC</option><option value="none">Not submitted</option><option value="pending">Waiting for review</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>
       <label htmlFor={`${id}-payment`}><span>Payment details</span><select id={`${id}-payment`} value={payment} onChange={event => setPayment(event.target.value as typeof payment)}><option value="all">Any verification</option><option value="verified">Verified</option><option value="unverified">Not verified</option></select></label>
+      <label htmlFor={`${id}-plan`}><span>Payout plan</span><select id={`${id}-plan`} value={planFilter} disabled={!payoutPlans.snapshot} onChange={event => setPlanFilter(event.target.value)}><option value="all">Any pay</option><option value="any">On a payout plan</option><option value="standard">Standard pay</option>{(payoutPlans.snapshot?.plans ?? []).map(plan => <option key={plan.id} value={plan.id}>{plan.name}{plan.active ? "" : " (paused)"}</option>)}</select></label>
 
       <p className={styles.filterHeading}>Applications</p>
       <label htmlFor={`${id}-gig`} className={styles.filterWide}><span>Gig</span><select id={`${id}-gig`} value={activityFilters.gig} disabled={!activity} onChange={event => setActivityFilter("gig", event.target.value)}><option value="all">Any gig</option>{(activity?.gigs ?? []).map(gig => <option key={gig.id} value={gig.id}>{gig.title} · {gig.company}</option>)}</select></label>
@@ -202,7 +229,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
     <WorkerBulkActions
       workers={selectedWorkers}
       note={hiddenCount > 0 ? `${hiddenCount} hidden by filters · kept across pages` : "Kept across pages and filters"}
-      leadingActions={<><BulkBarButton icon="mail" label="Email" primary onClick={() => setComposerOpen(true)} /><BulkBarButton icon="download" label="Export CSV" onClick={exportSelection} /></>}
+      leadingActions={<><BulkBarButton icon="mail" label="Email" primary onClick={() => setComposerOpen(true)} /><BulkBarButton icon="plan" label="Payout plan" onClick={() => setPlansOpen(true)} /><BulkBarButton icon="download" label="Export CSV" onClick={exportSelection} /></>}
       onClear={() => { setSelected(new Set()); setNotice(null); }} onCompleted={async result => {
       const completed = new Set(result.items.filter(item => item.status === "success").map(item => item.workerId));
       setSelected(previous => new Set([...previous].filter(workerId => !completed.has(workerId))));
@@ -243,6 +270,10 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
                 const label = match.setup !== "none" ? SETUP_LABELS[match.setup] : match.status === "Accepted" ? "Approved" : match.status;
                 return <span className={styles.activityChip} title={gigTitles.get(match.gigId) ?? match.gigId}>{label}{match.handle ? ` · @${match.handle}` : ""}<small>{gigTitles.get(match.gigId) ?? "Gig"}</small></span>;
               })()}
+              {(() => {
+                const plan = worker.userId ? planByUser.get(worker.userId) : undefined;
+                return plan ? <span className={`${styles.chipPlan} ${plan.active ? "" : styles.chipPlanPaused}`} title={`${plan.name}${plan.active ? "" : " (paused)"}: ${plan.label}`}>◆ {plan.label}</span> : null;
+              })()}
               {worker.resubmitCount > 0 ? <span className={styles.chipWarn}>{worker.resubmitCount} {worker.resubmitCount === 1 ? "resubmit" : "resubmits"}</span> : null}
               {worker.upiId ? worker.upiVerified
                 ? <span className={styles.chipOk} title={destinationLabel(worker.upiId, { full: true, holder: worker.upiHolderName })}>{parseDestination(worker.upiId)?.method === "Bank" ? "Bank verified" : "UPI verified"}</span>
@@ -259,6 +290,7 @@ export default function WorkerDirectory({ workers, selectedWorkerId, onSelect, o
       {pageRows.length === 0 && <div className={styles.empty}><WorkerGlyph name="search" /><strong>No users match these filters</strong><p>Try another name, worker ID or access status.</p>{hasFilters ? <button type="button" onClick={resetFilters}>Clear filters</button> : null}</div>}
     </div>
 
+    {plansOpen ? <PayoutPlansDialog selected={selectedWorkers} workers={workers} snapshot={payoutPlans.snapshot} loadError={payoutPlans.error} onReload={payoutPlans.reload} onClose={() => setPlansOpen(false)} /> : null}
     {composerOpen ? <BroadcastComposer selected={selectedWorkers} filtered={filtered} presets={activity ? presetViews : []} filters={activityFilters} activePresetId={activePresetId} onClose={() => setComposerOpen(false)} /> : null}
 
     <div className={styles.pagination} aria-label="User directory pagination">

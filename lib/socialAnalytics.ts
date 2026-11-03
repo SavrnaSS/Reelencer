@@ -1,6 +1,7 @@
 import { formatAmount } from "./money";
 import { countedReels } from "./reelTracking";
 import type { SocialAccountWalletCredits, SocialPostWalletCredit } from "./socialWallet";
+import { cumulativePaise, termsForReel, type AccountPayoutPlan } from "./payoutPlans";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -168,6 +169,8 @@ export type LinkedSocialAccount = {
   posts: SocialPost[];
   /** Lifetime approved reel credits, including historical reels no longer listed. Not the available balance. */
   walletCredits?: SocialAccountWalletCredits;
+  /** The creator's custom payout plan on this account, for reels that haven't started earning. */
+  payoutPlan?: import("./payoutPlans").AccountPayoutPlan;
 };
 
 export type SnapshotMetric = "followers" | "following" | "reach" | "impressions" | "profileViews" | "engagements" | "linkClicks" | "posts";
@@ -392,7 +395,7 @@ export function isValidViewPayoutRate(payout?: string): boolean {
 
 /** Reel earnings estimates: approved results and pending review stay separate; view rates are prorated and rounded to cents. */
 /** Reels posted before the account was linked never earn, so they're left out when `linkedAt` is known. */
-export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payout" | "payoutType"> & { linkedAt?: string }) {
+export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payout" | "payoutType"> & { linkedAt?: string; payoutPlan?: AccountPayoutPlan }) {
   const type = String(account.payoutType ?? "").trim().toLowerCase();
   if (type !== "per post" && type !== "per 1k views") return undefined;
   const rate = parsePayoutAmount(account.payout);
@@ -403,16 +406,28 @@ export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payou
   const money = (n: number) => formatAmount(n, rate.symbol);
   if (type === "per 1k views") {
     if (!isValidViewPayoutRate(account.payout)) return undefined;
-    const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
+    // Reels on a creator payout plan earn their base plus the rate past the threshold; the rest earn the plain rate.
+    const termsFor = (post: SocialPost) => post.walletCredit ? post.walletCredit.payoutTerms ?? termsForReel(undefined, rate.amount) : termsForReel(account.payoutPlan, rate.amount, post.postedAt);
+    const planned = (post: SocialPost) => termsFor(post).mode !== "cpm";
+    const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && !planned(post) && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
+    const planPaise = (status: SocialPostStatus) => posts.filter((post) => post.status === status && planned(post))
+      .reduce((sum, post) => sum + Number(cumulativePaise(Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0, termsFor(post))), 0);
     const approvedPosts = measured("approved");
     const pendingPosts = measured("submitted");
-    const approvedViews = approvedPosts.reduce((sum, post) => sum + (post.views ?? 0), 0);
-    const pendingViews = pendingPosts.reduce((sum, post) => sum + (post.views ?? 0), 0);
-    const amountFor = (views: number) => Number((BigInt(views) * BigInt(Math.round(rate.amount * 100)) + BigInt(500)) / BigInt(1000)) / 100;
+    const approvedPlanned = posts.filter((post) => post.status === "approved" && planned(post));
+    const pendingPlanned = posts.filter((post) => post.status === "submitted" && planned(post));
+    const views = (list: SocialPost[]) => list.reduce((sum, post) => sum + (Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0), 0);
+    const approvedViews = views(approvedPosts) + views(approvedPlanned);
+    const pendingViews = views(pendingPosts) + views(pendingPlanned);
+    const amountFor = (n: number) => Number((BigInt(n) * BigInt(Math.round(rate.amount * 100)) + BigInt(500)) / BigInt(1000)) / 100;
+    const approvedAmount = (Math.round(amountFor(views(approvedPosts)) * 100) + planPaise("approved")) / 100;
+    const pendingAmount = (Math.round(amountFor(views(pendingPosts)) * 100) + planPaise("submitted")) / 100;
     return { approved, pending, basis: "views" as const, approvedViews, pendingViews,
-      unmeasuredApproved: approved - approvedPosts.length, unmeasuredPending: pending - pendingPosts.length,
-      rateAmount: rate.amount, symbol: rate.symbol, approvedAmount: amountFor(approvedViews), pendingAmount: amountFor(pendingViews),
-      rate: money(rate.amount), earned: money(amountFor(approvedViews)), pendingValue: money(amountFor(pendingViews)) };
+      // Plan reels earn their base unmeasured, so they never count as missing a view count.
+      unmeasuredApproved: approved - approvedPosts.length - approvedPlanned.length, unmeasuredPending: pending - pendingPosts.length - pendingPlanned.length,
+      rateAmount: rate.amount, symbol: rate.symbol, approvedAmount, pendingAmount,
+      plan: account.payoutPlan as AccountPayoutPlan | undefined,
+      rate: money(rate.amount), earned: money(approvedAmount), pendingValue: money(pendingAmount) };
   }
   const approvedAmount = Math.round(approved * rate.amount * 100) / 100;
   const pendingAmount = Math.round(pending * rate.amount * 100) / 100;

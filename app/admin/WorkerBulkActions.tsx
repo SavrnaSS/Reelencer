@@ -91,8 +91,10 @@ async function request(path: string, init: RequestInit, controller: AbortControl
 }
 
 /** A button styled like the bar's own actions, for actions passed in as `leadingActions`. */
-export function BulkBarButton({ icon, label, onClick, primary }: { icon: "mail" | "download"; label: string; onClick: () => void; primary?: boolean }) {
-  const path = icon === "mail" ? <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></> : <><path d="M12 4v11M7 10l5 5 5-5" /><path d="M5 20h14" /></>;
+export function BulkBarButton({ icon, label, onClick, primary }: { icon: "mail" | "download" | "plan"; label: string; onClick: () => void; primary?: boolean }) {
+  const path = icon === "mail" ? <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></>
+    : icon === "plan" ? <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 15l3-3 3 2 4-5M7 8h4" /></>
+    : <><path d="M12 4v11M7 10l5 5 5-5" /><path d="M5 20h14" /></>;
   return <button type="button" className={`${styles.actionButton} ${primary ? styles.primaryAction : ""}`} onClick={onClick}>
     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{path}</svg><span>{label}</span>
   </button>;

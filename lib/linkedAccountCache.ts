@@ -1,4 +1,5 @@
 import type { LinkedSocialAccount } from "./socialAnalytics";
+import { readAccountPayoutPlan } from "./payoutPlans";
 import { readProfileHealth } from "./accountProfileHealth";
 import { readSocialAccountWalletCredits, readSocialPostWalletCredit } from "./socialWallet";
 
@@ -41,6 +42,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
       return {
         ...pick(account, ["id", "applicationId", "gigId", "gigTitle", "company", "workerCode", "platform", "handle", "profileUrl", "status", "linkedAt", "payout", "payoutType"]),
         ...(account.walletCredits !== undefined ? { walletCredits: readSocialAccountWalletCredits(account.walletCredits) } : {}),
+        ...(readAccountPayoutPlan(account.payoutPlan) ? { payoutPlan: readAccountPayoutPlan(account.payoutPlan) } : {}),
         ...(readProfileHealth(account.profileHealth) ? { profileHealth: readProfileHealth(account.profileHealth) } : {}),
         sync: pick(account.sync, ["available", "status", "lastSyncedAt", "lastAttemptAt", "nextSyncAt", "inProgress", "consecutiveFailures", "provider", "errorCode", "error"]),
         snapshots: account.snapshots.map(snapshot => {

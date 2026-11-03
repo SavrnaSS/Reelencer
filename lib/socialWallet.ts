@@ -1,9 +1,13 @@
+import { readPayoutTerms, type PayoutTerms } from "./payoutPlans";
+
 /** Read-only wallet evidence, never a browser-calculated balance or a credit instruction. */
 export type SocialPostWalletCredit = {
   creditedINR: number;
   consumedViews: number;
   pendingClaimINR: number;
   fixedCredit: boolean;
+  /** Present when the reel earns under a creator payout plan (frozen once it starts earning). */
+  payoutTerms?: PayoutTerms;
 };
 
 export type SocialAccountWalletCredits = { amountINR: number; reels: number };
@@ -15,7 +19,8 @@ const count = (value: unknown): value is number => typeof value === "number" && 
 
 export function readSocialPostWalletCredit(value: unknown): SocialPostWalletCredit | undefined {
   if (!record(value) || !amount(value.creditedINR) || !count(value.consumedViews) || !amount(value.pendingClaimINR) || typeof value.fixedCredit !== "boolean") return undefined;
-  return { creditedINR: value.creditedINR, consumedViews: value.consumedViews, pendingClaimINR: value.pendingClaimINR, fixedCredit: value.fixedCredit };
+  const payoutTerms = readPayoutTerms(value.payoutTerms);
+  return { creditedINR: value.creditedINR, consumedViews: value.consumedViews, pendingClaimINR: value.pendingClaimINR, fixedCredit: value.fixedCredit, ...(payoutTerms ? { payoutTerms } : {}) };
 }
 
 export function readSocialAccountWalletCredits(value: unknown): SocialAccountWalletCredits | undefined {

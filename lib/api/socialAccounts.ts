@@ -1,4 +1,5 @@
 import "server-only";
+import { readAccountPayoutPlan } from "@/lib/payoutPlans";
 import { accountPlatformFor, isPlatformProfileUrl, readStoredAccountSetup } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decodeWorkerName, resolveNotificationContext, sendLifecycleNotification, type MailStatus } from "@/lib/api/gigApplications";
@@ -156,6 +157,7 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
       payout: str(gig?.payout),
       payoutType: str(gig?.payout_type),
       ...(accountWallet.has(String(r.id)) ? { walletCredits: readSocialAccountWalletCredits({ amountINR: accountWallet.get(String(r.id))?.creditedINR, reels: accountWallet.get(String(r.id))?.creditedReels }) } : {}),
+      ...(() => { const payoutPlan = readAccountPayoutPlan(accountWallet.get(String(r.id))?.payoutPlan); return payoutPlan ? { payoutPlan } : {}; })(),
       sync: toSync(r, config),
       snapshots: (snapshots.data ?? []).filter((s) => String(s.account_id) === String(r.id)).reverse().map(toSnapshot),
       posts: (() => {

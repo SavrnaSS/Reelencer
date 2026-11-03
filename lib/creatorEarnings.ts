@@ -2,6 +2,7 @@ import { reelEarnings, type LinkedSocialAccount } from "./socialAnalytics";
 import { needsProfileRecovery } from "./accountProfileHealth";
 import { countedReels } from "./reelTracking";
 import { readSocialAccountWalletCredits, readSocialPostWalletCredit } from "./socialWallet";
+import { outstandingPaise, termsForReel } from "./payoutPlans";
 
 export type AccountEarnings = {
   accountId: string;
@@ -39,11 +40,12 @@ export function summarizeAccountEarnings(accounts: LinkedSocialAccount[]) {
         const needsReview = post.status === "submitted" || post.status === "approved";
         if (hasInrRate && needsReview) {
           if (earnings.basis === "views") {
-            if (Number.isSafeInteger(post.views) && post.views! >= 0 && post.views! > credit.consumedViews) {
-              const rate = BigInt(Math.round(earnings.rateAmount * 100));
-              const cumulative = (views: number) => (BigInt(views) * rate + BigInt(500)) / BigInt(1000);
-              paise += Number(cumulative(post.views!) - cumulative(credit.consumedViews));
-            }
+            // Plan reels owe their base on approval (measured or not), then the rate past the threshold.
+            // The read model reports plan terms for every plan reel, so verified reels without them are plain.
+            const terms = credit.payoutTerms ?? termsForReel(undefined, earnings.rateAmount);
+            const views = Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views : undefined;
+            if (terms.mode !== "cpm" && !terms.started && credit.consumedViews === 0 && credit.creditedINR === 0) paise += outstandingPaise(views, 0, terms);
+            else if (views !== undefined && views > credit.consumedViews) paise += outstandingPaise(views, credit.consumedViews, { ...terms, started: true });
           } else if (!credit.fixedCredit && credit.creditedINR === 0 && credit.consumedViews === 0) {
             paise += Math.round(earnings.rateAmount * 100);
           }

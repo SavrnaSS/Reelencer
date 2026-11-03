@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api/client";
-import { adjustedViewAmount, type ViewAdjustment, type ViewClaim, type ViewReviewEvidence, type ViewReviewRequest } from "@/lib/viewPayoutReview";
+import { adjustedViewAmount, claimItemPlanLabel, type ViewAdjustment, type ViewClaim, type ViewReviewEvidence, type ViewReviewRequest } from "@/lib/viewPayoutReview";
 
 const money = (n: number) => `₹${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const count = (n: number) => Number(n).toLocaleString("en-IN");
@@ -48,7 +48,8 @@ export default function ViewClaimReview({ claim, busy, onSubmit, onCancel }: { c
     if ((excluded > 0 && assessment !== "mixed") || (excluded === 0 && assessment === "mixed")) invalid = "Use the mixed assessment when excluding views; otherwise choose no artificial activity found.";
     if (payable <= 0) invalid = "No payable amount remains. Choose hard rejection to permanently exclude the covered views.";
     if (loading || error || evidence.length !== claim.view_payout_claim_items.length) invalid = "Load the saved evidence before approving.";
-    if (evidence.some(item => item.currentStatus !== "approved" || item.currentViews === undefined || item.currentViews < Number(claim.view_payout_claim_items.find(p => p.id === item.itemId)?.to_views))) invalid = "The current reel evidence changed. Refresh it or reject the claim for correction.";
+    // A plan's base-only interval (zero frozen views) doesn't need a measured count.
+    if (evidence.some(item => { const frozen = Number(claim.view_payout_claim_items.find(p => p.id === item.itemId)?.to_views); return item.currentStatus !== "approved" || (item.currentViews === undefined ? frozen > 0 : item.currentViews < frozen); })) invalid = "The current reel evidence changed. Refresh it or reject the claim for correction.";
   }
   const patch = (id: string, change: Partial<Draft>) => setDrafts(previous => ({ ...previous, [id]: { ...(previous[id] ?? { views: "", reason: "" }), ...change } }));
   return (
@@ -85,6 +86,7 @@ export default function ViewClaimReview({ claim, busy, onSubmit, onCancel }: { c
         return (
           <div key={item.id} className="space-y-2 rounded-lg border border-[#e3e5e1] bg-white p-3">
             <a href={item.url} target="_blank" rel="noreferrer noopener" className="block truncate text-[12px] font-semibold text-[#2b5d4a] underline">{item.url}</a>
+            {claimItemPlanLabel(item) ? <p className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[#eef4ff] px-2 py-0.5 text-[11px] font-semibold text-[#2f4b8a]"><span aria-hidden="true">◆</span><span className="truncate">{claimItemPlanLabel(item)}</span></p> : null}
             <dl className="grid grid-cols-2 gap-2 text-[11.5px] sm:grid-cols-4">
               <div><dt className="text-[#7a827c]">Claimed new views</dt><dd className="font-semibold">{count(Number(item.to_views) - Number(item.from_views))}</dd></div>
               <div><dt className="text-[#7a827c]">Frozen total</dt><dd className="font-semibold">{count(item.to_views)}</dd></div>

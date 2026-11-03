@@ -1,18 +1,30 @@
+import { cumulativePaise, shortPlan } from "./payoutPlans";
+
 export type ViewAuthenticity = "unreviewed" | "organic" | "mixed" | "suspected" | "insufficient";
-export type ViewClaimItem = { id: string; post_id: string; url: string; from_views: number; to_views: number; amount_inr: number; source: string; captured_at: string; excluded_views?: number; reviewed_amount_inr?: number | null; deduction_reason?: string; evidence_url?: string };
+export type ViewClaimItem = { id: string; post_id: string; url: string; from_views: number; to_views: number; amount_inr: number; source: string; captured_at: string; excluded_views?: number; reviewed_amount_inr?: number | null; deduction_reason?: string; evidence_url?: string;
+  /** Frozen payout-plan terms; absent or 'cpm' on plain per-1K intervals. */
+  payout_mode?: "cpm" | "beyond" | "all"; item_rate_inr?: number | null; base_inr?: number; threshold_views?: number; plan_name?: string; opens_plan?: boolean };
 export type ViewClaim = { id: string; worker_id: string; status: string; amount_inr: number; rate_inr: number; views: number; note: string; created_at: string; work_item_id?: string; authenticity_review?: ViewAuthenticity; approved_views?: number | null; deducted_views?: number | null; approved_amount_inr?: number | null; worker?: { worker_code: string; display_name: string }; account?: { handle: string; gig?: { title: string } }; view_payout_claim_items: ViewClaimItem[] };
 export type ViewAdjustment = { itemId: string; excludedViews: number; reason: string; evidenceUrl?: string };
 export type ViewReviewRequest = { action: "review"; claimId: string; decision: "Approved" | "Rejected" | "Hard rejected"; note: string; assessment: Exclude<ViewAuthenticity, "unreviewed">; adjustments: ViewAdjustment[] };
 export type ViewObservation = { captured_at: string; views: number; likes: number | null; comments: number | null; source: string };
 export type ViewReviewEvidence = { itemId: string; currentViews?: number; currentStatus?: string; capturedAt?: string; observations: ViewObservation[]; interactionRate?: number; flags: string[] };
 
-/** Same cumulative rounding as the database; excluded views retain their consumed range. */
-export function adjustedViewAmount(item: Pick<ViewClaimItem, "from_views" | "to_views">, rate: number, excluded: number) {
+/** Same cumulative rounding as the database; excluded views retain their consumed range. Plan intervals use their frozen terms. */
+export function adjustedViewAmount(item: Pick<ViewClaimItem, "from_views" | "to_views" | "payout_mode" | "item_rate_inr" | "base_inr" | "threshold_views" | "opens_plan">, rate: number, excluded: number) {
   const from = Number(item.from_views), to = Number(item.to_views);
-  if (![from, to, excluded].every(Number.isSafeInteger) || from < 0 || to <= from || excluded < 0 || excluded > to - from || !Number.isFinite(rate) || rate <= 0) throw new Error("Invalid view adjustment.");
-  const cents = BigInt(Math.round(rate * 100));
-  const cumulative = (n: number) => (BigInt(n) * cents + BigInt(500)) / BigInt(1000);
-  return Number(cumulative(to - excluded) - cumulative(from)) / 100;
+  const opens = !!item.opens_plan;
+  if (![from, to, excluded].every(Number.isSafeInteger) || from < 0 || (opens ? to < from : to <= from) || excluded < 0 || excluded > to - from || !Number.isFinite(rate) || rate <= 0) throw new Error("Invalid view adjustment.");
+  const mode = item.payout_mode ?? "cpm";
+  const terms = { mode, rateINR: mode === "cpm" ? rate : Number(item.item_rate_inr ?? rate), baseINR: Number(item.base_inr ?? 0), thresholdViews: Number(item.threshold_views ?? 0) };
+  return Number(cumulativePaise(to - excluded, terms) - (opens ? BigInt(0) : cumulativePaise(from, terms))) / 100;
+}
+
+/** "Plan base ₹200 + ₹49/1K after 10K" for plan intervals; undefined for plain ones. */
+export function claimItemPlanLabel(item: Pick<ViewClaimItem, "payout_mode" | "item_rate_inr" | "base_inr" | "threshold_views" | "plan_name" | "opens_plan">) {
+  if (!item.payout_mode || item.payout_mode === "cpm") return undefined;
+  const terms = { mode: item.payout_mode, rateINR: Number(item.item_rate_inr ?? 0), baseINR: Number(item.base_inr ?? 0), thresholdViews: Number(item.threshold_views ?? 0) };
+  return `${item.plan_name || "Payout plan"} · ${shortPlan(terms)}${item.opens_plan ? " · includes base" : ""}`;
 }
 
 /** Signals describe the available evidence, never a verdict about individual viewers. */
