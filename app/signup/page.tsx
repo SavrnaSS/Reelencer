@@ -6,15 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AuthFeedback } from "@/app/_components/AuthFeedback";
 import { AuthField, AuthShell, AuthSubmit, CarriedEmailCheck, CarriedEmailNote, PasswordToggle, authInputClass } from "@/app/_components/AuthShell";
 import { supabase } from "@/lib/supabaseClient";
+import { friendlyAuthError } from "@/lib/authErrors";
 import { stashAuthEmail, useCarriedEmail } from "@/lib/authEmailHandoff";
 import { confirmState, passwordStrength } from "@/lib/passwordStrength";
 import { CheckInbox } from "@/app/_components/ResendConfirmation";
 
 type SignupMissingField = "fullName" | "email" | "password" | "confirm" | "terms";
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error ? error.message : fallback;
-}
 
 function formatMissingList(items: string[]) {
   if (items.length <= 1) return items[0] ?? "";
@@ -151,7 +148,8 @@ function SignupPageInner() {
       if (!res.ok) {
         if (body.code === "weak_password") setMissingFields({ password: true });
         if (body.code === "invalid_email") setMissingFields({ email: true });
-        showAuthError(body.error || "Unable to create account right now.");
+        // Server errors are already written for creators; a gateway timeout returns no JSON body.
+        showAuthError(body.error || friendlyAuthError({ status: res.status }, "We couldn't create your account right now. Please try again."));
         return;
       }
       // Kept for this tab so an expired-link page or the login screen can offer a one-tap resend.
@@ -160,7 +158,7 @@ function SignupPageInner() {
       setConfirm("");
       setSentTo(emailNorm);
     } catch (error) {
-      showAuthError(errorMessage(error, "Unexpected error while creating your account."));
+      showAuthError(friendlyAuthError(error, "Something went wrong while creating your account. Please try again."));
     } finally {
       setLoading(false);
     }

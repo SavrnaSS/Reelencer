@@ -8,6 +8,7 @@ import { AuthFeedback } from "@/app/_components/AuthFeedback";
 import { AuthField, AuthShell, AuthSubmit, CarriedEmailCheck, CarriedEmailNote, PasswordToggle, authInputClass } from "@/app/_components/AuthShell";
 import { toLegacyRole, type AnyAppRole } from "@/lib/roles";
 import { supabase } from "@/lib/supabaseClient";
+import { friendlyAuthError, isAuthNetworkFailure } from "@/lib/authErrors";
 import { CREATOR_HOME_HREF } from "@/lib/routes";
 import { clearAuthEmail, useCarriedEmail } from "@/lib/authEmailHandoff";
 import { ResendConfirmation, requestConfirmationEmail } from "@/app/_components/ResendConfirmation";
@@ -31,46 +32,6 @@ function nowStamp() {
   const d = new Date();
   const pad2 = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  if (!(error instanceof Error)) return fallback;
-  const message = error.message.trim();
-  if (!message || message === "{}" || message === "[]") return fallback;
-  return message;
-}
-
-function authErrorMessage(error: { message?: string; code?: string; status?: number } | null | undefined, fallback: string) {
-  const message = error?.message?.trim();
-
-  if (error?.code === "invalid_credentials") return "Invalid email or password.";
-  if (error?.code === "email_not_confirmed") return "Confirm your email before logging in.";
-  if (isSupabaseNetworkFailure(error)) return "Supabase is unreachable. Check the project URL in your environment settings.";
-  if (message && message !== "{}" && message !== "[]") return message;
-  if (error?.status === 0) return "Unable to reach Supabase. Check the project URL and network connection.";
-
-  return fallback;
-}
-
-function isSupabaseNetworkFailure(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const err = error as { message?: unknown; code?: unknown; status?: unknown; name?: unknown };
-  const message = String(err.message ?? "").toLowerCase();
-  const code = String(err.code ?? "").toLowerCase();
-  const name = String(err.name ?? "").toLowerCase();
-  const status = Number(err.status ?? 0);
-
-  return (
-    code === "supabase_network_error" ||
-    status === 0 ||
-    status === 520 ||
-    name.includes("fetch") ||
-    message.includes("supabase network request failed") ||
-    message.includes("failed to fetch") ||
-    message.includes("fetch failed") ||
-    message.includes("load failed") ||
-    message.includes("networkerror")
-  );
 }
 
 function safeNextPath(next: string | null, role: Role) {
@@ -237,7 +198,7 @@ function LoginPageInner() {
       if (!alive) return;
 
       if (!ensured.profile) {
-        showAuthError(`Signed in, but profile could not be loaded (${ensured.error || "unknown error"}).`);
+        showAuthError("You're signed in, but we couldn't open your workspace. Please try again in a moment.");
         return;
       }
 
@@ -277,18 +238,18 @@ function LoginPageInner() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: emailNorm, password });
       if (error || !data.session) {
-        if (isLocalDevHost() && isSupabaseNetworkFailure(error)) {
+        if (isLocalDevHost() && isAuthNetworkFailure(error)) {
           completeDevFallbackSignIn();
           return;
         }
-        showAuthError(authErrorMessage(error, "We could not sign you in with those credentials."));
+        showAuthError(friendlyAuthError(error, "We couldn't sign you in. Please try again."));
         if (error?.code === "email_not_confirmed") setUnconfirmedEmail(emailNorm);
         return;
       }
 
       const ensured = await fetchOrEnsureProfile();
       if (!ensured.profile) {
-        showAuthError(`Signed in, but profile could not be loaded (${ensured.error || "unknown error"}).`);
+        showAuthError("You're signed in, but we couldn't open your workspace. Please try again in a moment.");
         return;
       }
 
@@ -301,11 +262,11 @@ function LoginPageInner() {
       clearAuthEmail();
       router.replace(safeNextPath(nextParam, role));
     } catch (error) {
-      if (isLocalDevHost() && isSupabaseNetworkFailure(error)) {
+      if (isLocalDevHost() && isAuthNetworkFailure(error)) {
         completeDevFallbackSignIn();
         return;
       }
-      showAuthError(errorMessage(error, "Unexpected error while signing in."));
+      showAuthError(friendlyAuthError(error, "Something went wrong while signing you in. Please try again."));
     } finally {
       signingInRef.current = false;
       setLoading(false);
@@ -330,7 +291,7 @@ function LoginPageInner() {
       }
       showAuthInfo(`If ${emailNorm} has an account, a reset link is on its way. Check your inbox and spam folder.`);
     } catch (error) {
-      showAuthError(errorMessage(error, "Unable to send reset link right now."));
+      showAuthError(friendlyAuthError(error, "We couldn't send the reset link right now. Please try again."));
     } finally {
       setResettingPassword(false);
     }

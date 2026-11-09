@@ -6,12 +6,13 @@ export async function supabaseBrowserFetch(input: RequestInfo | URL, init?: Requ
 
     return new Response(
       JSON.stringify({
-        message: `Supabase network request failed: ${detail}`,
+        // Neutral wording: this can surface in the UI. The code is what callers match on.
+        message: `Network request failed: ${detail}`,
         code: "supabase_network_error",
       }),
       {
         status: 520,
-        statusText: "Supabase network unavailable",
+        statusText: "Network unavailable",
         headers: { "Content-Type": "application/json" },
       }
     );

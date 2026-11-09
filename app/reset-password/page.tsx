@@ -9,6 +9,7 @@ import { ResendConfirmation } from "@/app/_components/ResendConfirmation";
 import { readAuthEmail, stashAuthEmail } from "@/lib/authEmailHandoff";
 import { confirmState, passwordStrength } from "@/lib/passwordStrength";
 import { supabase } from "@/lib/supabaseClient";
+import { AUTH_COPY, friendlyAuthError } from "@/lib/authErrors";
 
 type Phase = "checking" | "ready" | "invalid" | "done";
 
@@ -82,8 +83,8 @@ function ResetPasswordInner() {
     try {
       const { data, error } = await supabase.auth.updateUser({ password });
       if (error) {
-        const same = /different from the old|same password/i.test(error.message);
-        return fail(same ? "Choose a password you haven't used for this account before." : error.message || "Unable to update your password.", { password: same });
+        const text = friendlyAuthError(error, "We couldn't update your password. Please try again.");
+        return fail(text, { password: text === AUTH_COPY.samePassword || text === AUTH_COPY.weakPassword });
       }
       // Hand the address to the login form in-tab (not in the URL) so they can sign in with the new password.
       const email = data.user?.email || accountEmail || emailHint;
@@ -91,7 +92,7 @@ function ResetPasswordInner() {
       await supabase.auth.signOut();
       setPhase("done");
     } catch (error) {
-      fail(error instanceof Error ? error.message : "Unable to update your password.");
+      fail(friendlyAuthError(error, "We couldn't update your password. Please try again."));
     } finally {
       setLoading(false);
     }
