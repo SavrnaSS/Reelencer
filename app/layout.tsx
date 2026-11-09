@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { BRAND_ASSETS } from "@/lib/brand";
 import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, SITE_TAGLINE, SITE_TITLE, SITE_URL, absoluteUrl } from "@/lib/site";
 import "./globals.css";
@@ -127,6 +128,8 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
         />
         {children}
+        {/* Vercel Web Analytics: page views only, no cookies. Inactive outside Vercel deployments. */}
+        <Analytics />
       </body>
     </html>
   );
