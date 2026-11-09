@@ -6,6 +6,7 @@ import { linkSocialAccount } from "@/lib/api/socialLink";
 import { firstName, renderBrandEmail, type EmailIllustration, type EmailTone } from "@/lib/email/brandEmail";
 import { emailBaseUrl, sendEmail, type EmailCategory } from "@/lib/email/send";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isUuid } from "@/lib/api/work";
 
 export const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -147,12 +148,15 @@ export async function resolveNotificationContext(sb: ReturnType<typeof supabaseA
   const workerCode = String(row?.worker_code ?? "");
   const gigId = String(row?.gig_id ?? "");
   const decodedWorker = decodeWorkerName(row?.worker_name);
+  // workers.user_id and profiles.id are uuid columns: comparing a WKR- code with them is a Postgres error, not a miss.
+  const byUserId = isUuid(workerCode);
+  const none = Promise.resolve({ data: null, error: null });
   const [{ data: worker }, { data: workerByUserId }, { data: gig }, { data: workerProfileByCode }, { data: workerProfileById }, { data: kycByWorker }, { data: siblingApps }] = await Promise.all([
     sb.from("workers").select("id,user_id,email,name").eq("id", workerCode).maybeSingle(),
-    sb.from("workers").select("id,user_id,email,name").eq("user_id", workerCode).maybeSingle(),
+    byUserId ? sb.from("workers").select("id,user_id,email,name").eq("user_id", workerCode).maybeSingle() : none,
     sb.from("gigs").select("title,company").eq("id", gigId).maybeSingle(),
     sb.from("profiles").select("id,display_name,worker_code").eq("worker_code", workerCode).maybeSingle(),
-    sb.from("profiles").select("id,display_name,worker_code").eq("id", workerCode).maybeSingle(),
+    byUserId ? sb.from("profiles").select("id,display_name,worker_code").eq("id", workerCode).maybeSingle() : none,
     sb.from("worker_kyc").select("user_id").eq("worker_id", workerCode).order("reviewed_at", { ascending: false }).limit(1).maybeSingle(),
     sb.from("gig_applications").select("worker_name,applied_at").eq("worker_code", workerCode).order("applied_at", { ascending: false }).limit(25),
   ]);
