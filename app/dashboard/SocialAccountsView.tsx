@@ -42,6 +42,9 @@ import AddAccountsPanel, { AccountsRail, AddAccountSheet, useAccountRequests, ty
 import LinkedAccountRecovery from "./LinkedAccountRecovery";
 import ViewMilestoneCard from "./ViewMilestoneCard";
 import PayoutPlanCard, { PlanEarningsTile } from "./PayoutPlanCard";
+import CpmHealthCard, { CPM_ANCHOR, ReelCpmBadge, useAccountCpm } from "./CpmHealthCard";
+import { CPM_REASONS, type AdjustedReel } from "@/lib/cpmAdjustments";
+import { formatINR } from "@/lib/payoutPlans";
 
 const PLAN_ANCHOR = "pay-plan";
 
@@ -202,8 +205,11 @@ function PostRow({
   onWithdraw,
   onScreenshot,
   importSlot,
+  cpm,
 }: {
   post: SocialPost;
+  /** Set when the team lowered this reel's CPM. */
+  cpm?: AdjustedReel<SocialPost>;
   /** Performance rank among reels with results; none while waiting for numbers. */
   rank?: number;
   best: boolean;
@@ -285,6 +291,7 @@ function PostRow({
         {!post.submittedByWorker && (post.source === "api" || post.source === "profile") ? <span className="rounded-full bg-[#e0ecf8] px-1.5 py-px text-[10.5px] font-semibold text-[#1f4a73]">Auto-detected</span> : null}
         {post.source === "screenshot" ? <span className="rounded-full bg-[#f3ecfb] px-1.5 py-px text-[10.5px] font-semibold text-[#5b3a87]">From screenshot</span> : null}
         {chip ? <span className={cx("rounded-full px-1.5 py-px text-[10.5px] font-semibold", chip.className)}>{chip.label}</span> : null}
+        {cpm ? <ReelCpmBadge reel={cpm} /> : null}
       </div>
 
       {/* Relative performance against the best reel */}
@@ -365,7 +372,7 @@ function PostRow({
 }
 
 /** Compact table for tablets and desktops: every reel's numbers side by side. */
-function ReelTable({ posts, topPostId, rankOf, onScreenshot }: { posts: SocialPost[]; topPostId?: string; rankOf: Map<string, number>; onScreenshot?: (post: SocialPost) => void }) {
+function ReelTable({ posts, topPostId, rankOf, onScreenshot, cpmOf }: { posts: SocialPost[]; topPostId?: string; rankOf: Map<string, number>; onScreenshot?: (post: SocialPost) => void; cpmOf?: Map<string, AdjustedReel<SocialPost>> }) {
   const cols = (["views", "reach", "likes", "comments", "shares", "saves"] as const).filter((k) => k === "views" || posts.some((p) => p[k] !== undefined));
   return (
     <div className="mt-3 overflow-x-auto rounded-2xl border border-[#ebedea] bg-white">
@@ -397,6 +404,7 @@ function ReelTable({ posts, topPostId, rankOf, onScreenshot }: { posts: SocialPo
                     {post.postedAt ? formatDate(post.postedAt) : "No date"}
                     {!post.submittedByWorker && (post.source === "profile" || post.source === "api") ? <span className="rounded-full bg-[#e0ecf8] px-1.5 py-px text-[10px] font-semibold text-[#1f4a73]">Auto-detected</span> : null}
                     {chip ? <span className={cx("rounded-full px-1.5 py-px text-[10px] font-semibold", chip.className)}>{chip.label}</span> : null}
+                    {cpmOf?.get(post.id) ? <ReelCpmBadge reel={cpmOf.get(post.id)!} compact /> : null}
                   </div>
                 </td>
                 {cols.map((c) => (
@@ -681,6 +689,10 @@ function AccountDetail({
   const followerMilestone = nextMilestone(followers.value, pace, now);
   const bestDay = bestPostingDay(account.posts);
   const earnings = reelEarnings(account);
+  const cpm = useAccountCpm(account);
+  const cpmOf = useMemo(() => new Map((cpm?.reels ?? []).map((reel) => [reel.post.id, reel])), [cpm]);
+  // Framed as what was detected on the creator's profile, with the CPM it leads to.
+  const cpmNotice = cpm ? `${cpm.reasons[0] ? CPM_REASONS[cpm.reasons[0].reason].detected : "Low interaction detected on your reels"} · CPM ${formatINR(cpm.rateINR)}/1K on ${cpm.reels.length} reel${cpm.reels.length === 1 ? "" : "s"}` : undefined;
   const pay = payoutPhrase(account.payout, account.payoutType);
   const pendingReview = account.posts.filter((p) => p.status === "submitted").length;
   const topPost = account.posts.find((p) => p.id === topPostId);
@@ -878,6 +890,7 @@ function AccountDetail({
             approvedViews={earnings.approvedViews}
             pendingValue={earnings.pendingValue}
             href={`#${PLAN_ANCHOR}`}
+            cpmNotice={cpmNotice ? { text: cpmNotice, href: `#${CPM_ANCHOR}` } : undefined}
             warning={[
               earnings.unmeasuredApproved ? `${earnings.unmeasuredApproved} approved reel${earnings.unmeasuredApproved === 1 ? "" : "s"} waiting for a view count` : null,
               earnings.unmeasuredPending ? `${earnings.unmeasuredPending} reel${earnings.unmeasuredPending === 1 ? "" : "s"} in review without counts` : null,
@@ -927,6 +940,12 @@ function AccountDetail({
           ) : (
             <div className="mt-1.5 text-[11.5px] text-[#5d7466]">{pay ? "as listed on the gig" : "See the gig for pay details"}</div>
           )}
+          {cpmNotice ? (
+            <a href={`#${CPM_ANCHOR}`} className="mt-2.5 inline-flex items-start gap-1.5 rounded-lg bg-[#fff4ea] px-2.5 py-1.5 text-[11.5px] font-medium leading-4 text-[#9a3412] ring-1 ring-[#fbdcc4] transition hover:bg-[#ffeadb]">
+              <svg viewBox="0 0 24 24" className="mt-px h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7l10 10M17 9v8H9" /></svg>
+              <span>{cpmNotice} · <span className="underline underline-offset-2">raise it</span></span>
+            </a>
+          ) : null}
         </div>
         )}
         <ViewMilestoneCard account={account} className={!grid.earningsWideMobile ? "col-span-2 lg:col-span-1" : undefined} />
@@ -938,6 +957,7 @@ function AccountDetail({
             : "Estimates use the gig's listed rate. Reel approval credits reviewed earnings to your wallet; new views need another review."}
         </p>
       ) : null}
+      <CpmHealthCard account={account} />
       {account.payoutPlan ? <div id={PLAN_ANCHOR} className="scroll-mt-24"><PayoutPlanCard account={account} /></div> : null}
 
       {String(account.payoutType).trim().toLowerCase() === "per 1k views" ? <ViewPayoutClaims key={account.id} accountId={account.id} /> : null}
@@ -1199,7 +1219,7 @@ function AccountDetail({
         ) : null}
         {visibleReels.length && reelView === "table" ? (
           <div className="hidden md:block">
-            <ReelTable posts={visibleReels} rankOf={rankOf} topPostId={countedPosts.length > 1 ? topPostId : undefined} onScreenshot={canImport ? (post) => { setReelView("cards"); setImporting(post.id); } : undefined} />
+            <ReelTable posts={visibleReels} cpmOf={cpmOf} rankOf={rankOf} topPostId={countedPosts.length > 1 ? topPostId : undefined} onScreenshot={canImport ? (post) => { setReelView("cards"); setImporting(post.id); } : undefined} />
           </div>
         ) : null}
         {visibleReels.length ? (
@@ -1208,6 +1228,7 @@ function AccountDetail({
               <PostRow
                 key={post.id}
                 post={post}
+                cpm={cpmOf.get(post.id)}
                 rank={rankOf.get(post.id)}
                 best={post.id === topPostId && countedPosts.length > 1}
                 performance={{ score: post.status === "rejected" ? 0 : postScore(post, metricLabel), avgScore, maxScore, metricLabel }}

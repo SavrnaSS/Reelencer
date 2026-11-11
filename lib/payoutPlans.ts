@@ -19,7 +19,26 @@ export type PayoutTerms = {
   planName?: string;
   /** True once the reel has a frozen earnings interval: its base is already paid or forfeited. */
   started?: boolean;
+  /** Set when the team lowered this reel's CPM: `rateINR` is the adjusted rate and this is the rate it replaced. */
+  standardRateINR?: number;
+  cpmAdjusted?: boolean;
+  /** The adjusted rate starts after this many views; earlier views keep `standardRateINR`. */
+  cpmAfterViews?: number;
 };
+
+/** The team's per-reel CPM adjustment, as stored on the reel. */
+export type CpmAdjustment = { rateINR: number; reasons: string[]; note?: string; at?: string;
+  /** The lower rate applies to views past this count (0: every view). */
+  afterViews: number;
+  /** Net change the adjustments made to money already credited (negative when taken back). */
+  walletChangeINR?: number };
+
+/** A reel's terms with its adjusted CPM applied (idempotent: terms that already carry it are left as they are). */
+export function applyCpmAdjustment(terms: PayoutTerms, adjustment: CpmAdjustment | undefined): PayoutTerms {
+  if (!adjustment || !(adjustment.rateINR > 0)) return terms;
+  const standardRateINR = terms.standardRateINR ?? terms.rateINR;
+  return { ...terms, rateINR: adjustment.rateINR, standardRateINR, cpmAdjusted: true, cpmAfterViews: Math.max(0, Math.trunc(adjustment.afterViews || 0)) };
+}
 
 /** A creator's current plan on one linked account, for reels that haven't started earning. */
 export type AccountPayoutPlan = PayoutTerms & { mode: PayoutPlanMode; appliesFrom: string };
@@ -56,9 +75,25 @@ const paise = (amount: number) => BigInt(Math.round(amount * 100));
 /** Same as SQL round(views × rate / 1000, 2), in paise. Half-up; inputs are non-negative. */
 const ratePaise = (views: number, rate: number) => (BigInt(Math.max(0, Math.trunc(views))) * paise(rate) + BigInt(500)) / BigInt(1000);
 
-/** Cumulative earnings for a reel at `views`, in paise. Every interval is a difference of two of these. */
-export function cumulativePaise(views: number, terms: Pick<PayoutTerms, "mode" | "rateINR" | "baseINR" | "thresholdViews">): bigint {
+type CumulativeTerms = Pick<PayoutTerms, "mode" | "rateINR" | "baseINR" | "thresholdViews"> & Partial<Pick<PayoutTerms, "standardRateINR" | "cpmAfterViews" | "cpmAdjusted">>;
+
+/**
+ * Cumulative earnings for a reel at `views`, in paise. Every interval is a difference of two of these.
+ * With an adjusted CPM that starts after N views (public.reel_payout_cumulative_split), views up to N keep the
+ * standard rate: f_standard(min(v, N)) + f_adjusted(v) − f_adjusted(min(v, N)).
+ */
+export function cumulativePaise(views: number, terms: CumulativeTerms): bigint {
   const v = Math.max(0, Math.trunc(Number.isFinite(views) ? views : 0));
+  if (terms.cpmAdjusted && terms.standardRateINR && terms.cpmAfterViews !== undefined) {
+    const plain = { mode: terms.mode, rateINR: terms.rateINR, baseINR: terms.baseINR, thresholdViews: terms.thresholdViews };
+    const head = Math.min(v, Math.max(0, Math.trunc(terms.cpmAfterViews)));
+    const tail = basePaise(v, plain) - basePaise(head, plain);
+    return basePaise(head, { ...plain, rateINR: terms.standardRateINR }) + (tail > BigInt(0) ? tail : BigInt(0));
+  }
+  return basePaise(v, terms);
+}
+
+function basePaise(v: number, terms: Pick<PayoutTerms, "mode" | "rateINR" | "baseINR" | "thresholdViews">): bigint {
   if (terms.mode === "beyond") return paise(terms.baseINR) + ratePaise(v - terms.thresholdViews, terms.rateINR);
   if (terms.mode === "all") {
     if (v <= terms.thresholdViews) return paise(terms.baseINR);
@@ -69,7 +104,7 @@ export function cumulativePaise(views: number, terms: Pick<PayoutTerms, "mode" |
 }
 
 /** What a reel at `views` earns in total under `terms`, in rupees. */
-export function reelPayoutINR(views: number, terms: Pick<PayoutTerms, "mode" | "rateINR" | "baseINR" | "thresholdViews">) {
+export function reelPayoutINR(views: number, terms: CumulativeTerms) {
   return Number(cumulativePaise(views, terms)) / 100;
 }
 
@@ -163,6 +198,7 @@ export function readPayoutTerms(value: unknown): PayoutTerms | undefined {
     ...(typeof row.planId === "string" ? { planId: row.planId } : {}),
     ...(typeof row.planName === "string" && row.planName ? { planName: row.planName } : {}),
     ...(typeof row.started === "boolean" ? { started: row.started } : {}),
+    ...(row.cpmAdjusted === true && Number(row.standardRateINR) > 0 ? { cpmAdjusted: true, standardRateINR: Number(row.standardRateINR), cpmAfterViews: Number.isSafeInteger(Number(row.cpmAfterViews)) && Number(row.cpmAfterViews) >= 0 ? Number(row.cpmAfterViews) : 0 } : {}),
   };
 }
 
@@ -177,13 +213,13 @@ export function readAccountPayoutPlan(value: unknown): AccountPayoutPlan | undef
  * The terms a reel earns under on the creator's side: the read model's frozen terms when present, plain pay for
  * other reels the wallet already knows, and otherwise the account's current plan if the reel falls in its window.
  */
-export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms } }, plan: AccountPayoutPlan | undefined, gigRate: number): PayoutTerms {
-  if (post.walletCredit) return post.walletCredit.payoutTerms ?? termsForReel(undefined, gigRate);
-  return termsForReel(plan, gigRate, post.postedAt);
+export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment }, plan: AccountPayoutPlan | undefined, gigRate: number): PayoutTerms {
+  const terms = post.walletCredit ? post.walletCredit.payoutTerms ?? termsForReel(undefined, gigRate) : termsForReel(plan, gigRate, post.postedAt);
+  return applyCpmAdjustment(terms, post.cpmAdjustment);
 }
 
-type PlanPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms } };
-export type PlanReel<P> = { post: P; views: number; measured: boolean; earnsINR: number; progress: number; remainingToBoost: number; boosted: boolean };
+type PlanPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment };
+export type PlanReel<P> = { post: P; views: number; measured: boolean; earnsINR: number; progress: number; remainingToBoost: number; boosted: boolean; rateINR: number; cpmAdjusted: boolean };
 
 /**
  * A creator's reels split by how they're paid, for the pay plan card. Rejected reels earn nothing and are left out;
@@ -204,7 +240,7 @@ export function planReelSummary<P extends PlanPost>(posts: readonly P[], plan: A
       continue;
     }
     const threshold = terms.thresholdViews;
-    reels.push({ post, views, measured, earnsINR: reelPayoutINR(views, terms), progress: Math.min(1, views / threshold), remainingToBoost: Math.max(0, threshold + 1 - views), boosted: views > threshold });
+    reels.push({ post, views, measured, earnsINR: reelPayoutINR(views, terms), progress: Math.min(1, views / threshold), remainingToBoost: Math.max(0, threshold + 1 - views), boosted: views > threshold, rateINR: terms.rateINR, cpmAdjusted: !!terms.cpmAdjusted });
   }
   const sum = (list: PlanReel<P>[]) => list.reduce((total, reel) => total + Math.round(reel.earnsINR * 100), 0) / 100;
   const approved = reels.filter(reel => reel.post.status === "approved");

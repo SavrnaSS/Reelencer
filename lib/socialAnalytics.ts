@@ -1,7 +1,7 @@
 import { formatAmount } from "./money";
 import { countedReels } from "./reelTracking";
 import type { SocialAccountWalletCredits, SocialPostWalletCredit } from "./socialWallet";
-import { cumulativePaise, postPayoutTerms, type AccountPayoutPlan } from "./payoutPlans";
+import { cumulativePaise, postPayoutTerms, type AccountPayoutPlan, type CpmAdjustment } from "./payoutPlans";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -62,6 +62,8 @@ export type SocialPost = {
   removedSilently?: boolean;
   /** Actual credits and frozen consumed view intervals; absent while wallet evidence is unavailable. */
   walletCredit?: SocialPostWalletCredit;
+  /** The team lowered this reel's CPM (rate per 1K views), with the reasons the creator sees. */
+  cpmAdjustment?: CpmAdjustment;
 };
 
 /** Per-reel measurements are independent of the last successful profile check. */
@@ -409,22 +411,26 @@ export function reelEarnings(account: Pick<LinkedSocialAccount, "posts" | "payou
     // Reels on a creator payout plan earn their base plus the rate past the threshold; the rest earn the plain rate.
     const termsFor = (post: SocialPost) => postPayoutTerms(post, account.payoutPlan, rate.amount);
     const planned = (post: SocialPost) => termsFor(post).mode !== "cpm";
-    const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && !planned(post) && typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0);
-    const planPaise = (status: SocialPostStatus) => posts.filter((post) => post.status === status && planned(post))
-      .reduce((sum, post) => sum + Number(cumulativePaise(Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0, termsFor(post))), 0);
+    // Plain reels whose CPM the team adjusted are priced one by one, at their own rate.
+    const adjusted = (post: SocialPost) => !planned(post) && !!termsFor(post).cpmAdjusted;
+    const hasViews = (post: SocialPost) => typeof post.views === "number" && Number.isSafeInteger(post.views) && post.views >= 0;
+    const measured = (status: SocialPostStatus) => posts.filter((post) => post.status === status && !planned(post) && !adjusted(post) && hasViews(post));
+    const ownPaise = (list: SocialPost[]) => list.reduce((sum, post) => sum + Number(cumulativePaise(hasViews(post) ? post.views! : 0, termsFor(post))), 0);
     const approvedPosts = measured("approved");
     const pendingPosts = measured("submitted");
     const approvedPlanned = posts.filter((post) => post.status === "approved" && planned(post));
     const pendingPlanned = posts.filter((post) => post.status === "submitted" && planned(post));
-    const views = (list: SocialPost[]) => list.reduce((sum, post) => sum + (Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0), 0);
-    const approvedViews = views(approvedPosts) + views(approvedPlanned);
-    const pendingViews = views(pendingPosts) + views(pendingPlanned);
+    const approvedAdjusted = posts.filter((post) => post.status === "approved" && adjusted(post) && hasViews(post));
+    const pendingAdjusted = posts.filter((post) => post.status === "submitted" && adjusted(post) && hasViews(post));
+    const views = (list: SocialPost[]) => list.reduce((sum, post) => sum + (hasViews(post) ? post.views! : 0), 0);
+    const approvedViews = views(approvedPosts) + views(approvedPlanned) + views(approvedAdjusted);
+    const pendingViews = views(pendingPosts) + views(pendingPlanned) + views(pendingAdjusted);
     const amountFor = (n: number) => Number((BigInt(n) * BigInt(Math.round(rate.amount * 100)) + BigInt(500)) / BigInt(1000)) / 100;
-    const approvedAmount = (Math.round(amountFor(views(approvedPosts)) * 100) + planPaise("approved")) / 100;
-    const pendingAmount = (Math.round(amountFor(views(pendingPosts)) * 100) + planPaise("submitted")) / 100;
+    const approvedAmount = (Math.round(amountFor(views(approvedPosts)) * 100) + ownPaise(approvedPlanned) + ownPaise(approvedAdjusted)) / 100;
+    const pendingAmount = (Math.round(amountFor(views(pendingPosts)) * 100) + ownPaise(pendingPlanned) + ownPaise(pendingAdjusted)) / 100;
     return { approved, pending, basis: "views" as const, approvedViews, pendingViews,
       // Plan reels earn their base unmeasured, so they never count as missing a view count.
-      unmeasuredApproved: approved - approvedPosts.length - approvedPlanned.length, unmeasuredPending: pending - pendingPosts.length - pendingPlanned.length,
+      unmeasuredApproved: approved - approvedPosts.length - approvedPlanned.length - approvedAdjusted.length, unmeasuredPending: pending - pendingPosts.length - pendingPlanned.length - pendingAdjusted.length,
       rateAmount: rate.amount, symbol: rate.symbol, approvedAmount, pendingAmount,
       plan: account.payoutPlan as AccountPayoutPlan | undefined,
       rate: money(rate.amount), earned: money(approvedAmount), pendingValue: money(pendingAmount) };

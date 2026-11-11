@@ -27,8 +27,10 @@ function SelectedBadge({ compact }: { compact?: boolean }) {
 }
 
 /** The earnings tile for creators on a pay plan: the estimate, the plan in two numbers, and a link to the details. */
-export function PlanEarningsTile({ plan, earned, approvedViews, pendingValue, warning, href, className }: {
+export function PlanEarningsTile({ plan, earned, approvedViews, pendingValue, warning, href, className, cpmNotice }: {
   plan: AccountPayoutPlan; earned: string; approvedViews: number; pendingValue: string; warning?: string; href: string; className?: string;
+  /** Reels the team gave a lower CPM, linking to how to raise it. */
+  cpmNotice?: { text: string; href: string };
 }) {
   return (
     <div className={cx("flex min-w-0 flex-col rounded-xl border border-[#cfe3d4] bg-[linear-gradient(160deg,#f1f8ef,#f8fbf6)] p-3.5 sm:p-4", className)}>
@@ -48,6 +50,12 @@ export function PlanEarningsTile({ plan, earned, approvedViews, pendingValue, wa
       </dl>
 
       <p className="mt-2.5 text-[11.5px] tabular-nums text-[#5d7466]">{approvedViews.toLocaleString("en-IN")} approved views · {pendingValue} in review</p>
+      {cpmNotice ? (
+        <a href={cpmNotice.href} className="mt-2 inline-flex items-start gap-1.5 rounded-lg bg-[#fff4ea] px-2.5 py-1.5 text-[11.5px] font-medium leading-4 text-[#9a3412] ring-1 ring-[#fbdcc4] transition hover:bg-[#ffeadb]">
+          <svg viewBox="0 0 24 24" className="mt-px h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7l10 10M17 9v8H9" /></svg>
+          <span>{cpmNotice.text} · <span className="underline underline-offset-2">raise it</span></span>
+        </a>
+      ) : null}
       {warning ? <p className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-4 text-[#8a5300]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#d99a06]" aria-hidden="true" />{warning}</p> : null}
       <a href={href} className="mt-3 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#1f4f37] px-3 text-[12.5px] font-semibold text-white transition hover:bg-[#2a6447] sm:mt-auto sm:self-start">
         See how your plan works
@@ -132,7 +140,7 @@ export default function PayoutPlanCard({ account }: { account: LinkedSocialAccou
         <h4 className="text-[13.5px] font-semibold text-[#1a201c]">Your reels on this plan</h4>
         {reels.length ? (
           <ul className="mt-2.5 space-y-2">
-            {visible.map(({ post, views, measured, earnsINR, progress, remainingToBoost, boosted }) => (
+            {visible.map(({ post, views, measured, earnsINR, progress, remainingToBoost, boosted, rateINR }) => (
               <li key={post.id} className="rounded-xl border border-[#eef0ec] p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -152,7 +160,7 @@ export default function PayoutPlanCard({ account }: { account: LinkedSocialAccou
                 </div>
                 <p className="mt-1.5 text-[11.5px] leading-5 text-[#616a64]">
                   {!measured ? "Views will show once Instagram shares them. You still get the base pay."
-                    : boosted ? <><b className="font-semibold text-[#7a5600]">Past {compactViews(plan.thresholdViews)} views:</b> {plan.mode === "all" ? `paid ${formatINR(plan.rateINR)} per 1,000 views` : `+${formatINR(plan.rateINR)} for every 1,000 views past ${compactViews(plan.thresholdViews)}`} · {views.toLocaleString("en-IN")} views</>
+                    : boosted ? <><b className="font-semibold text-[#7a5600]">Past {compactViews(plan.thresholdViews)} views:</b> {plan.mode === "all" ? `paid ${formatINR(rateINR)} per 1,000 views` : `+${formatINR(rateINR)} for every 1,000 views past ${compactViews(plan.thresholdViews)}`} · {views.toLocaleString("en-IN")} views</>
                     : <>{views.toLocaleString("en-IN")} of {plan.thresholdViews.toLocaleString("en-IN")} views · <b className="font-semibold text-[#1f5131]">{remainingToBoost.toLocaleString("en-IN")} more</b> to start earning more</>}
                 </p>
               </li>

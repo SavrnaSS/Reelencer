@@ -658,6 +658,12 @@ function AccountDetail({
                 replacePost(outcome.post);
                 return { ok: true as const };
               }}
+              onSetCpm={async (post, input) => {
+                const outcome = await reelAction<{ post: SocialPost; wallet?: { walletChangeINR: number; unrecoveredINR: number } }>(post.id, { action: "set_cpm", id: post.id, ...input });
+                if ("error" in outcome) return outcome;
+                replacePost(outcome.post);
+                return { ok: true as const, wallet: outcome.wallet };
+              }}
               onResumeViews={async (post) => {
                 const outcome = await reelAction<{ post: SocialPost }>(post.id, { action: "resume_views", id: post.id });
                 if ("error" in outcome) return outcome;

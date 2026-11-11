@@ -2,7 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { reelTracking, trackingStartLabel, type ReelTracking } from "@/lib/reelTracking";
-import { formatCompact, type LinkedSocialAccount, type SocialPost } from "@/lib/socialAnalytics";
+import { formatCompact, isValidViewPayoutRate, parsePayoutAmount, type LinkedSocialAccount, type SocialPost } from "@/lib/socialAnalytics";
+import { postPayoutTerms } from "@/lib/payoutPlans";
+import ReelCpmEditor, { CpmChip, type CpmInput, type CpmWalletResult } from "./ReelCpmEditor";
+import { CPM_REASONS, type CpmReason } from "@/lib/cpmAdjustments";
 import { BulkBar, ConfirmDialog, ICONS, Icon, SelectAllCheckbox, Spinner, StatusChip, btnBase, btnGhost, btnIcon, btnPrimary, bulkBtn, fieldClass, formatDate, formatRelative, runPool, usePersistedState, type BulkProgress } from "./adminUi";
 
 // Admin: an account's reels with the tracking window made visible. Reels count from the day the account was linked
@@ -43,6 +46,7 @@ export default function ReelList({
   onRemove,
   onRestore,
   onResumeViews,
+  onSetCpm,
 }: {
   account: LinkedSocialAccount;
   now: number;
@@ -54,6 +58,8 @@ export default function ReelList({
   onRestore: (post: SocialPost) => Promise<{ ok: true } | Failure>;
   /** Unpins a team-entered view count and switches back to Instagram's public count. */
   onResumeViews: (post: SocialPost) => Promise<{ ok: true } | Failure>;
+  /** Lowers a reel's CPM (rate per 1K views), or restores the standard rate with `rateINR: null`. */
+  onSetCpm?: (post: SocialPost, input: CpmInput) => Promise<{ ok: true; wallet?: CpmWalletResult } | Failure>;
 }) {
   const [status, setStatus] = useState<StatusView>("tracked");
   const [source, setSource] = useState<SourceView>("all");
@@ -74,8 +80,15 @@ export default function ReelList({
   // Remembered per admin, so a team that always removes quietly isn't asked to switch every time.
   const [mode, setMode] = usePersistedState<RemovalMode>("reelencer.reelRemovalMode", "notify", ["notify", "silent"]);
 
+  const [cpmOpen, setCpmOpen] = useState<string | null>(null);
+  // Per-1K-views gigs only: each reel's CPM, after any adjustment the team made.
+  const gigRate = String(account.payoutType ?? "").trim().toLowerCase() === "per 1k views" && isValidViewPayoutRate(account.payout) ? parsePayoutAmount(account.payout)?.amount : undefined;
+  const termsOf = (post: SocialPost) => (gigRate ? postPayoutTerms(post, account.payoutPlan, gigRate) : undefined);
+
   const since = trackingStartLabel(account.linkedAt);
   const rows: Row[] = useMemo(() => account.posts.map((post) => ({ post, tracking: reelTracking(post.postedAt, account.linkedAt), removed: !!post.removedAt })), [account.posts, account.linkedAt]);
+
+  const adjustedCount = gigRate ? rows.filter((row) => !row.removed && row.post.status !== "rejected" && row.post.cpmAdjustment).length : 0;
 
   const counts = useMemo(() => {
     const kept = rows.filter((row) => !row.removed);
@@ -128,8 +141,11 @@ export default function ReelList({
       const text = value === undefined || value === null ? "" : String(value);
       return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
-    const header = ["posted_at", "status", "tracking", "source", "views", "likes", "comments", "caption", "url", "updated_at"];
-    const lines = visible.map(({ post, tracking, removed }) => [post.postedAt ?? "", removed ? "removed" : post.status, tracking, sourceOf(post), post.views ?? "", post.likes ?? "", post.comments ?? "", post.caption ?? "", post.url, post.updatedAt].map(escape).join(","));
+    const header = ["posted_at", "status", "tracking", "source", "views", "likes", "comments", "cpm_inr", "standard_cpm_inr", "caption", "url", "updated_at"];
+    const lines = visible.map(({ post, tracking, removed }) => {
+      const terms = termsOf(post);
+      return [post.postedAt ?? "", removed ? "removed" : post.status, tracking, sourceOf(post), post.views ?? "", post.likes ?? "", post.comments ?? "", terms?.rateINR ?? "", terms ? terms.standardRateINR ?? terms.rateINR : "", post.caption ?? "", post.url, post.updatedAt].map(escape).join(",");
+    });
     const href = URL.createObjectURL(new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" }));
     Object.assign(document.createElement("a"), { href, download: `${account.handle}-reels.csv` }).click();
     URL.revokeObjectURL(href);
@@ -378,6 +394,7 @@ export default function ReelList({
           ) : null}
           <span className="ml-1">{visible.length} {visible.length === 1 ? "reel" : "reels"}</span> · ▶ {formatCompact(totals.views)} · ♥ {formatCompact(totals.likes)}
           {status !== "before_link" && totals.approvedViews ? <span className="text-[#1f5131]"> · {formatCompact(totals.approvedViews)} approved views</span> : null}
+          {adjustedCount ? <span className="text-[#9a3f0b]"> · {adjustedCount} at a lowered CPM</span> : null}
           {filtersOn ? (
             <button type="button" className="ml-2 font-semibold text-[#2b5d4a] hover:underline" onClick={() => changeView(() => { setSource("all"); setPeriod("all"); setQuery(""); })}>
               Clear filters
@@ -491,6 +508,10 @@ export default function ReelList({
                   <span title="Likes">♥ {formatCompact(post.likes)}</span>
                   <span title="Comments">💬 {formatCompact(post.comments)}</span>
                 </div>
+                {(() => {
+                  const terms = termsOf(post);
+                  return terms && onSetCpm && !before && shownStatus !== "rejected" ? <CpmChip terms={terms} open={cpmOpen === post.id} disabled={busy || !!progress} onClick={() => setCpmOpen((open) => (open === post.id ? null : post.id))} /> : null;
+                })()}
                 {shownStatus === "submitted" && !before ? (
                   <div className="flex w-full gap-1.5 sm:w-auto">
                     <button type="button" className={`${btnPrimary} h-8 flex-1 px-2.5 text-[12px] sm:flex-none`} disabled={busy || !!bulk?.running || !!progress} onClick={() => void review(post, "approved")}>
@@ -514,6 +535,35 @@ export default function ReelList({
                         Dismiss
                       </button>
                     </span>
+                  </div>
+                ) : null}
+                {cpmOpen === post.id && onSetCpm && termsOf(post) ? (
+                  <ReelCpmEditor
+                    post={post}
+                    terms={termsOf(post)!}
+                    onClose={() => setCpmOpen(null)}
+                    onSave={async (input) => {
+                      setWorking((current) => new Set(current).add(post.id));
+                      const result = await onSetCpm(post, input);
+                      setWorking((current) => { const next = new Set(current); next.delete(post.id); return next; });
+                      if (!("error" in result)) {
+                        const wallet = result.wallet;
+                        const rupee = (amount: number) => `₹${Math.abs(amount).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+                        const walletText = wallet && wallet.walletChangeINR !== 0 ? ` Wallet ${wallet.walletChangeINR > 0 ? "credited" : "reduced by"} ${rupee(wallet.walletChangeINR)}.` : "";
+                        const lostText = wallet && wallet.unrecoveredINR > 0 ? ` ${rupee(wallet.unrecoveredINR)} was already withdrawn and couldn't be taken back.` : "";
+                        setNotice({
+                          text: (input.rateINR === null ? "Standard CPM restored." : `CPM set to ₹${input.rateINR.toLocaleString("en-IN")} / 1K${input.afterViews ? ` after ${input.afterViews.toLocaleString("en-IN")} views` : ""}.`) + walletText + lostText,
+                          tone: lostText ? "warn" : "ok",
+                        });
+                        return { ok: true as const };
+                      }
+                      return result;
+                    }}
+                  />
+                ) : post.cpmAdjustment && !before && shownStatus !== "rejected" && gigRate ? (
+                  <div className="flex w-full flex-wrap items-center gap-1 text-[11px] text-[#9a3f0b]">
+                    {post.cpmAdjustment.reasons.map((reason) => <span key={reason} className="rounded-[6px] bg-[#fff4ea] px-1.5 py-px">{CPM_REASONS[reason as CpmReason]?.admin ?? reason}</span>)}
+                    {post.cpmAdjustment.note ? <span className="truncate text-[#7a5a44]" title={post.cpmAdjustment.note}>“{post.cpmAdjustment.note}”</span> : null}
                   </div>
                 ) : null}
                 {rejecting?.id === post.id ? (

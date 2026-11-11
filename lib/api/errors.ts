@@ -55,6 +55,11 @@ export function databaseError(error: { code?: string; message?: string } | null)
       reel_wallet_basis_changed: [409, "This reel already has earnings at a different payout basis. Review its wallet history before changing the rate type."],
       reel_removed: [409, "This reel was removed. Restore it before changing its review."],
       weekly_application_limit: [429, "You've used both of this week's applications. A slot opens 7 days after each application."],
+      cpm_not_view_based: [409, "Only reels on a per-1K-views gig have a CPM to adjust."],
+      cpm_not_lower: [400, "Set a CPM above ₹0 and below the reel's standard rate, with at most 2 decimals."],
+      cpm_reason_required: [400, "Pick at least one reason, so the creator knows what to improve."],
+      cpm_after_views_invalid: [400, "Enter the view count the lower CPM starts after (0 for every view)."],
+      cpm_note_too_long: [400, "Keep the note to the creator under 300 characters."],
       reel_before_link: [409, "This reel went live before the account was linked. Only reels posted from the day it was linked can be approved."],
     };
     const match = messages[error.message ?? ""];

@@ -1,5 +1,6 @@
 import "server-only";
 import { readAccountPayoutPlan } from "@/lib/payoutPlans";
+import { readCpmAdjustment, type CpmReason } from "@/lib/cpmAdjustments";
 import { accountPlatformFor, isPlatformProfileUrl, readStoredAccountSetup } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decodeWorkerName, resolveNotificationContext, sendLifecycleNotification, type MailStatus } from "@/lib/api/gigApplications";
@@ -64,6 +65,7 @@ const toPost = (r: Row): SocialPost => ({
   createdAt: String(r.created_at ?? r.updated_at),
   source: r.source === "api" || r.source === "screenshot" || r.source === "profile" ? r.source : "manual",
   ...(r.wallet_credit ? { walletCredit: readSocialPostWalletCredit(r.wallet_credit) } : {}),
+  ...(() => { const cpmAdjustment = readCpmAdjustment(r); return cpmAdjustment ? { cpmAdjustment } : {}; })(),
   ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason), ...(r.removal_silent ? { removedSilently: true } : {}) } : {}),
 });
 
@@ -357,6 +359,21 @@ async function hydratedWalletPost(sb: Sb, post: Row) {
   const { data, error } = await sb.rpc("social_post_wallet_state", { p_posts: [String(post.id)], p_accounts: [String(post.account_id)] });
   databaseError(error);
   return toPost({ ...post, wallet_credit: data?.posts?.[0] });
+}
+
+/**
+ * Lowers one reel's CPM (rate per 1K views) from `afterViews` on, or restores its standard rate with `rateINR: null`.
+ * Estimates, claims, approvals and the money already credited for the reel are all repriced; the wallet result says
+ * how much moved and how much was already withdrawn (and couldn't be taken back).
+ */
+export async function setPostCpm(actorId: string, postId: string, input: { rateINR: number | null; reasons: CpmReason[]; note?: string; afterViews: number }) {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("admin_set_social_post_cpm", { p_actor: actorId, p_post: postId, p_rate: input.rateINR, p_reasons: input.reasons, p_note: input.note?.trim() ?? "", p_after_views: input.afterViews });
+  if (["PGRST202", "42883", "42703", "PGRST204"].includes(error?.code ?? "")) throw new ApiError(503, "Adjusting a reel's CPM needs the latest database updates (202611110001 and 202611110002).", "schema_outdated");
+  databaseError(error);
+  if (!data?.post) throw new ApiError(503, "The CPM change could not be confirmed. Refresh and try again.");
+  const wallet = { walletChangeINR: Number(data.wallet?.walletChangeINR ?? 0), unrecoveredINR: Number(data.wallet?.unrecoveredINR ?? 0) };
+  return { post: await hydratedWalletPost(sb, data.post as Row), wallet };
 }
 
 /** Approvals must never succeed without the matching wallet transaction being installed. */

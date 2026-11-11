@@ -4,8 +4,9 @@ import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
-import { deleteSnapshot, removePost, restorePost, resumePostViews, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { deleteSnapshot, removePost, restorePost, resumePostViews, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, setPostCpm, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
 import { reportMissingAccountProfile, restoreAccountProfile } from "@/lib/api/accountProfileRecovery";
+import { CPM_REASON_IDS } from "@/lib/cpmAdjustments";
 
 // Admin writes for linked accounts: insight check-ins, per-reel results, pause/unlink.
 
@@ -44,6 +45,16 @@ const actions = z.discriminatedUnion("action", [
     pinViews: z.boolean().optional(),
   }),
   z.object({ action: z.literal("resume_views"), id: z.uuid() }),
+  // Lower one reel's CPM (rate per 1K views); null restores the standard rate.
+  z.object({
+    action: z.literal("set_cpm"),
+    id: z.uuid(),
+    rateINR: z.number().positive().max(100_000).multipleOf(0.01).nullable(),
+    reasons: z.array(z.enum(CPM_REASON_IDS)).max(CPM_REASON_IDS.length).default([]),
+    note: z.string().max(300).optional(),
+    /** The lower rate applies to views past this count; 0 means every view. */
+    afterViews: z.number().int().min(0).max(1_000_000_000).default(0),
+  }),
   z.object({ action: z.literal("review_post"), id: z.uuid(), status: z.enum(["approved", "rejected"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
   z.object({ action: z.literal("sync"), accountId: z.uuid() }),
@@ -85,6 +96,8 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
       return NextResponse.json(await removePost(actor.user.id, body.id, body.reason, body.silent), { headers: NO_STORE_HEADERS });
     case "restore_post":
       return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
+    case "set_cpm":
+      return NextResponse.json(await setPostCpm(actor.user.id, body.id, { rateINR: body.rateINR, reasons: body.reasons, note: body.note, afterViews: body.afterViews }), { headers: NO_STORE_HEADERS });
     case "resume_views":
       return NextResponse.json({ post: await resumePostViews(actor.user.id, body.id) }, { headers: NO_STORE_HEADERS });
     case "status":
