@@ -35,12 +35,17 @@ export const CPM_REASONS: Record<CpmReason, { admin: string; title: string; text
   },
 };
 /** The order signals are shown in the creator's profile check. */
+/** Short names for headlines like "Low sign-ups detected on 1 of your reels". */
+export const SIGNAL_SHORT: Record<CpmReason, string> = {
+  low_signups: "Low sign-ups", low_reel_engagement: "Low interaction", low_profile_engagement: "Few profile visits",
+  no_bio_link: "No sign-up link in bio", no_auto_dm: "No auto DM to commenters",
+};
 export const SIGNAL_ORDER: CpmReason[] = ["low_signups", "low_reel_engagement", "low_profile_engagement", "no_bio_link", "no_auto_dm"];
 
 export const REELENCER_LINK = "https://reelencer.com";
 export const COMMENT_KEYWORD = "JOIN";
 
-/** The three things that raise a creator's CPM, each with ready-to-copy text. */
+/** The things that raise a creator's CPM, each with ready-to-copy text. */
 export const CPM_ACTIONS = [
   {
     id: "bio",
@@ -69,6 +74,14 @@ export const CPM_ACTIONS = [
     copyLabel: "Copy caption",
     copy: `Want to earn from reels too? Comment "${COMMENT_KEYWORD}" and I'll DM you the link 🔗 or sign up at reelencer.com (link in bio).`,
     fixes: ["low_signups", "low_reel_engagement"] as CpmReason[],
+  },
+  {
+    id: "story",
+    title: "Regularly post Reelencer's story to encourage users to sign up",
+    text: "Share a story about Reelencer a few times a week, with a link sticker to reelencer.com. Followers who see you earning are the most likely to join.",
+    copyLabel: "Copy story text",
+    copy: "I get paid for my reels with Reelencer 💸 Want to earn too? Sign up free at reelencer.com 👆 (tap the link)",
+    fixes: ["low_signups", "low_profile_engagement"] as CpmReason[],
   },
 ] as const;
 export type CpmActionId = (typeof CPM_ACTIONS)[number]["id"];
