@@ -103,6 +103,42 @@ async function linkMissing(sb: Sb, aliases: string[]) {
   }
 }
 
+/** Accounts per wallet read-model call, and how many calls run at once. */
+const WALLET_BATCH = 10;
+const WALLET_CONCURRENCY = 6;
+
+/**
+ * Wallet evidence for many accounts, read in account batches. One call for every account (the admin list) does
+ * per-account plan lookups for all of them in a single statement and hits the database's statement timeout.
+ */
+async function walletState(sb: Sb, accountIds: string[], posts: Row[]): Promise<{ posts: Row[]; accounts: Row[] }> {
+  const postsByAccount = new Map<string, string[]>();
+  for (const post of posts) {
+    const list = postsByAccount.get(String(post.account_id)) ?? [];
+    list.push(String(post.id));
+    postsByAccount.set(String(post.account_id), list);
+  }
+  const batches: string[][] = [];
+  for (let i = 0; i < accountIds.length; i += WALLET_BATCH) batches.push(accountIds.slice(i, i + WALLET_BATCH));
+  const result = { posts: [] as Row[], accounts: [] as Row[] };
+  let next = 0;
+  const worker = async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      const { data, error } = await sb.rpc("social_post_wallet_state", { p_posts: batch.flatMap(id => postsByAccount.get(id) ?? []), p_accounts: batch });
+      if (error) {
+        // An older deployment may show clearly labelled estimates until its read-model migration is installed.
+        if (["PGRST202", "42883"].includes(error.code ?? "")) return;
+        databaseError(error);
+      }
+      result.posts.push(...(data?.posts ?? []));
+      result.accounts.push(...(data?.accounts ?? []));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(WALLET_CONCURRENCY, batches.length) }, worker));
+  return result;
+}
+
 /**
  * Creators only ever receive reels from the day their account was linked: earlier reels aren't tracked or paid, so
  * they're left out of everything the creator sees (lists, charts, totals). Admins get every reel to audit.
@@ -133,11 +169,9 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
   databaseError(snapshots.error);
   databaseError(posts.error);
   databaseError(gigs.error);
-  const wallet = await sb.rpc("social_post_wallet_state", { p_posts: posts.data.map(post => String(post.id)), p_accounts: ids });
-  // An older deployment may show clearly labelled estimates until its read-model migration is installed.
-  if (wallet.error && !["PGRST202", "42883"].includes(wallet.error.code ?? "")) databaseError(wallet.error);
-  const postWallet = new Map<string, Row>((wallet.data?.posts ?? []).map((state: Row) => [String(state.postId), state]));
-  const accountWallet = new Map<string, Row>((wallet.data?.accounts ?? []).map((state: Row) => [String(state.accountId), state]));
+  const wallet = await walletState(sb, ids, posts.data);
+  const postWallet = new Map<string, Row>(wallet.posts.map((state: Row) => [String(state.postId), state]));
+  const accountWallet = new Map<string, Row>(wallet.accounts.map((state: Row) => [String(state.accountId), state]));
   const gigById = new Map((gigs.data ?? []).map((g) => [String(g.id), g as Row]));
   const config = await resolveSyncConfig();
   return rows.map((r) => {

@@ -28,7 +28,7 @@ before(async () => {
     "202610080003_social_auto_sync.sql", "202610080006_instagram_profile_sync.sql", "202610080007_view_payout_claims.sql",
     "202610080008_reel_view_freshness.sql", "202610080009_view_authenticity_review.sql", "202610290001_reel_tracking_window.sql",
     "202610290002_reel_removal.sql", "202610300001_approved_reel_wallet_credit.sql", "202610300002_social_wallet_read_model.sql",
-    "202611030001_creator_payout_plans.sql", "202611110001_reel_cpm_adjustments.sql", "202611110002_reel_cpm_after_views_and_wallet.sql",
+    "202611030001_creator_payout_plans.sql", "202611110001_reel_cpm_adjustments.sql", "202611110002_reel_cpm_after_views_and_wallet.sql", "202611110003_faster_wallet_read_model.sql",
   ]) await db.exec(await readFile(`supabase/migrations/${name}`, "utf8"));
   await db.exec(`create or replace function public.app_is_admin(p_actor uuid) returns boolean language sql as $$ select p_actor='${admin}'::uuid $$;`);
   await db.exec("grant select on all tables in schema public to service_role");
@@ -203,4 +203,29 @@ test("a raise on a withdrawn credit is paid as a top-up, which a later cut takes
   const cut = await setCpm(post, 30);
   assert.deepEqual(cut.wallet, { walletChangeINR: -20, unrecoveredINR: 0 }, "taken from the top-up still in the wallet");
   assert.equal(await money(), 60);
+});
+
+test("account owners resolve by id, worker code or email, and only when exactly one profile matches", async () => {
+  const owner = (code: string | null) => scalar<string | null>("select public.social_account_owner($1)::text as value", [code]);
+  assert.equal(await owner("WKR-1"), worker);
+  assert.equal(await owner("  wkr-1 "), worker, "case and spaces don't matter");
+  assert.equal(await owner("Creator@Example.test"), worker);
+  assert.equal(await owner(worker.toUpperCase()), worker);
+  assert.equal(await owner("nobody"), null);
+  assert.equal(await owner(""), null);
+  assert.equal(await owner(null), null);
+  await db.query("update public.profiles set email='wkr-1' where id=$1", [other]);
+  assert.equal(await owner("WKR-1"), null, "ambiguous: one profile's code is another's email");
+  await db.query("update public.profiles set email='other@example.test' where id=$1", [other]);
+});
+
+test("the wallet read model still reports each account's plan once", async () => {
+  const plan = await savePlan(standard);
+  await assign(plan.id, [worker]);
+  const mine = await account("WKR-1");
+  const theirs = await account("WKR-2");
+  const state = await scalar<{ accounts: Array<{ accountId: string; payoutPlan?: { planName: string } }> }>("select public.social_post_wallet_state('{}',$1) as value", [[mine.id, theirs.id]]);
+  assert.equal(state.accounts.length, 2);
+  assert.equal(state.accounts.find(a => a.accountId === mine.id)?.payoutPlan?.planName, "Premium creators");
+  assert.equal(state.accounts.find(a => a.accountId === theirs.id)?.payoutPlan, undefined);
 });
