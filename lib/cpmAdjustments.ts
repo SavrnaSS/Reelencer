@@ -100,7 +100,7 @@ export function readCpmAdjustment(value: unknown): CpmAdjustment | undefined {
   const at = typeof (row.cpm_override_at ?? row.at) === "string" ? String(row.cpm_override_at ?? row.at) : undefined;
   const after = Number(row.cpm_after_views ?? row.afterViews ?? 0);
   const wallet = Number(row.cpm_wallet_change_inr ?? row.walletChangeINR ?? 0);
-  return { rateINR, reasons, afterViews: Number.isSafeInteger(after) && after >= 0 ? after : 0, ...(note ? { note } : {}), ...(at ? { at } : {}), ...(Number.isFinite(wallet) && wallet !== 0 ? { walletChangeINR: wallet } : {}) };
+  return { rateINR, reasons, afterViews: Number.isSafeInteger(after) && after >= 0 ? after : 0, ...(note ? { note } : {}), ...(at ? { at } : {}), ...(Number.isFinite(wallet) && wallet !== 0 ? { walletChangeINR: wallet } : {}), ...((row.cpm_from_now ?? row.fromNow) === true ? { fromNow: true } : {}) };
 }
 
 type CpmPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; createdAt?: string; caption?: string; url?: string; walletCredit?: { payoutTerms?: import("./payoutPlans").PayoutTerms }; cpmAdjustment?: CpmAdjustment };

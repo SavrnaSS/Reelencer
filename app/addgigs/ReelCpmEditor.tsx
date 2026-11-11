@@ -11,7 +11,7 @@ import CpmSplitBar from "@/app/_components/CpmSplitBar";
 // restore the standard rate. The database reprices the reel's credited earnings too
 // (202611110002_reel_cpm_after_views_and_wallet.sql); money already withdrawn can't be taken back.
 
-export type CpmInput = { rateINR: number | null; reasons: CpmReason[]; note?: string; afterViews: number };
+export type CpmInput = { rateINR: number | null; reasons: CpmReason[]; note?: string; afterViews: number; fromNow?: boolean };
 export type CpmWalletResult = { walletChangeINR: number; unrecoveredINR: number };
 
 const money = /^\d+(\.\d{1,2})?$/;
@@ -59,7 +59,9 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
   const current = post.cpmAdjustment;
   const [rate, setRate] = useState(current ? String(current.rateINR) : "");
   const [after, setAfter] = useState(String(current?.afterViews ?? 0));
-  const [customAfter, setCustomAfter] = useState(() => !!current && !(START_PRESETS as readonly number[]).includes(current.afterViews));
+  // "From now" is the default for a new adjustment: nothing the reel already earned changes.
+  const [fromNow, setFromNow] = useState(() => (current ? !!current.fromNow : true));
+  const [customAfter, setCustomAfter] = useState(() => !!current && !current.fromNow && !(START_PRESETS as readonly number[]).includes(current.afterViews));
   const [reasons, setReasons] = useState<Set<CpmReason>>(() => new Set((current?.reasons ?? ["low_signups"]) as CpmReason[]));
   const [note, setNote] = useState(current?.note ?? "");
   const [busy, setBusy] = useState<"save" | "restore" | null>(null);
@@ -67,22 +69,23 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
 
   const value = Number(rate);
   const validRate = money.test(rate.trim()) && value > 0 && value < standard;
-  const afterViews = Number(after);
-  const validAfter = /^\d+$/.test(after.trim()) && afterViews <= 1_000_000_000;
-  const valid = validRate && validAfter;
   const views = Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0;
+  // Approved views already credited: repriced in the wallet on save (estimate; excluded views aren't known here).
+  const credited = post.walletCredit && post.walletCredit.creditedINR > 0 ? post.walletCredit.consumedViews : 0;
+  // From now: the server starts at the reel's count when saved (never below credited views); preview the same.
+  const afterViews = fromNow ? Math.max(views, credited) : Number(after);
+  const validAfter = fromNow || (/^\d+$/.test(after.trim()) && afterViews <= 1_000_000_000);
+  const valid = validRate && validAfter;
   const plan = terms.mode !== "cpm";
   const base = { mode: terms.mode, baseINR: terms.baseINR, thresholdViews: terms.thresholdViews, rateINR: standard };
   const next = valid ? { ...base, rateINR: value, standardRateINR: standard, cpmAdjusted: true, cpmAfterViews: afterViews } : undefined;
   const nowEarns = Number(cumulativePaise(views, terms)) / 100;
   const nextEarns = next ? Number(cumulativePaise(views, next)) / 100 : undefined;
-  // Approved views already credited: repriced in the wallet on save (estimate; excluded views aren't known here).
-  const credited = post.walletCredit && post.walletCredit.creditedINR > 0 ? post.walletCredit.consumedViews : 0;
   const walletNow = Number(cumulativePaise(credited, terms)) / 100;
   const walletChange = (target: typeof base) => Math.round((Number(cumulativePaise(credited, target)) / 100 - walletNow) * 100) / 100;
   const presets = cpmPresets(standard);
   const drop = validRate ? Math.round((1 - value / standard) * 100) : 0;
-  const changed = !current || value !== current.rateINR || afterViews !== current.afterViews || note.trim() !== (current.note ?? "") || [...reasons].sort().join() !== [...current.reasons].sort().join();
+  const changed = !current || value !== current.rateINR || fromNow !== !!current.fromNow || (!fromNow && afterViews !== current.afterViews) || note.trim() !== (current.note ?? "") || [...reasons].sort().join() !== [...current.reasons].sort().join();
   const lead = CPM_REASON_IDS.find((reason) => reasons.has(reason));
   const title = String(post.caption ?? "").replace(/#[\p{L}\p{N}_]+/gu, "").replace(/\s{2,}/g, " ").trim() || post.url;
 
@@ -108,7 +111,7 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
       className="w-full overflow-hidden rounded-[16px] bg-white shadow-[0_8px_30px_-12px_rgba(26,32,28,0.25)] ring-1 ring-[#eadfd3]"
       onSubmit={(event) => {
         event.preventDefault();
-        if (valid && reasons.size) void submit({ rateINR: value, reasons: [...reasons], note: note.trim() || undefined, afterViews }, "save");
+        if (valid && reasons.size) void submit({ rateINR: value, reasons: [...reasons], note: note.trim() || undefined, afterViews: fromNow ? 0 : afterViews, fromNow }, "save");
       }}
     >
       {/* Header */}
@@ -123,7 +126,7 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
             <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#1a201c] ring-1 ring-[#ece4da]">Full rate {formatINR(standard)}/1K</span>
             {plan ? <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#3b443e] ring-1 ring-[#ece4da]">Plan: {formatINR(terms.baseINR)} base up to {compactViews(terms.thresholdViews)}</span> : null}
             <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#3b443e] ring-1 ring-[#ece4da]">{views.toLocaleString("en-IN")} views</span>
-            {current ? <span className="rounded-[6px] bg-[#fff1e6] px-1.5 py-0.5 text-[#9a3f0b] ring-1 ring-[#f6d5bb]">Now {formatINR(current.rateINR)}/1K{current.afterViews ? ` after ${compactViews(current.afterViews)}` : ""}</span> : null}
+            {current ? <span className="rounded-[6px] bg-[#fff1e6] px-1.5 py-0.5 text-[#9a3f0b] ring-1 ring-[#f6d5bb]">Now {formatINR(current.rateINR)}/1K{current.fromNow ? ` from ${compactViews(current.afterViews)} views` : current.afterViews ? ` after ${compactViews(current.afterViews)}` : ""}</span> : null}
           </div>
         </div>
         <button type="button" onClick={onClose} className="-mr-1 -mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[#6b746e] transition hover:bg-white hover:text-[#1a201c]" aria-label="Close">
@@ -168,16 +171,22 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
 
           <section>
             {step(2, "Lower CPM starts", "earlier views keep the full rate")}
-            <div className="mt-2 grid grid-cols-2 gap-1 rounded-[12px] bg-[#f3f4f2] p-1 sm:grid-cols-4" role="radiogroup" aria-label="Lower CPM starts">
-              {[...START_PRESETS.map((start) => ({ key: String(start), label: start === 0 ? "First view" : `After ${compactViews(start)}`, on: !customAfter && afterViews === start, pick: () => { setCustomAfter(false); setAfter(String(start)); } })),
-                { key: "custom", label: "Custom", on: customAfter, pick: () => setCustomAfter(true) }].map((option) => (
+            <div className="mt-2 grid grid-cols-3 gap-1 rounded-[12px] bg-[#f3f4f2] p-1 sm:grid-cols-5" role="radiogroup" aria-label="Lower CPM starts">
+              {[{ key: "now", label: "From now", on: fromNow, pick: () => { setFromNow(true); setCustomAfter(false); } },
+                ...START_PRESETS.map((start) => ({ key: String(start), label: start === 0 ? "First view" : `After ${compactViews(start)}`, on: !fromNow && !customAfter && Number(after) === start, pick: () => { setFromNow(false); setCustomAfter(false); setAfter(String(start)); } })),
+                { key: "custom", label: "Custom", on: !fromNow && customAfter, pick: () => { setFromNow(false); setCustomAfter(true); } }].map((option) => (
                 <button key={option.key} type="button" role="radio" aria-checked={option.on} onClick={option.pick}
                   className={`h-8 rounded-[9px] text-[12.5px] font-semibold transition ${option.on ? "bg-white text-[#1a201c] shadow-[0_1px_3px_rgba(26,32,28,0.15)]" : "text-[#5b645e] hover:text-[#1a201c]"}`}>
                   {option.label}
                 </button>
               ))}
             </div>
-            {customAfter ? (
+            {fromNow ? (
+              <p className="mt-2 flex items-start gap-1.5 rounded-[10px] bg-[#f4f9f2] px-2.5 py-2 text-[11.5px] leading-4 text-[#1f5131] ring-1 ring-[#d6e9d4]">
+                <svg viewBox="0 0 24 24" className="mt-px h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+                <span>Starts at the reel&apos;s views when you save ({afterViews.toLocaleString("en-IN")} now). Everything it earned so far keeps {formatINR(standard)}; only new views earn the lower CPM. The wallet doesn&apos;t change.</span>
+              </p>
+            ) : customAfter ? (
               <div className="mt-2 flex items-center gap-2">
                 <input inputMode="numeric" autoFocus value={after} onChange={(e) => setAfter(e.target.value.replace(/\D/g, ""))} aria-label="Lower CPM starts after this many views" placeholder="e.g. 7500" aria-invalid={!validAfter}
                   className={`${fieldClass} h-9 w-36 tabular-nums`} />
@@ -245,7 +254,7 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
       {/* Actions */}
       <div className="flex flex-col gap-2 border-t border-[#eef0ec] bg-[#fafbf9] px-3.5 py-2.5 sm:flex-row sm:items-center sm:px-4">
         <p className="min-w-0 flex-1 text-[11.5px] leading-4 text-[#6b746e]">
-          {credited ? "Saving reprices approved earnings in the wallet. Money already withdrawn can't be taken back." : "The new rate applies when the reel is approved."}
+          {fromNow ? "From now: only views after saving earn the lower CPM. The wallet doesn't change." : credited ? "Saving reprices approved earnings in the wallet. Money already withdrawn can't be taken back." : "The new rate applies when the reel is approved."}
         </p>
         <div className="flex flex-wrap gap-1.5 sm:flex-nowrap">
           {current ? (
@@ -258,7 +267,7 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
           <button type="submit" disabled={!valid || !reasons.size || !!busy || !changed}
             className={`${btnPrimary} h-9 flex-[2] bg-[#9a3f0b] hover:bg-[#7f330a] disabled:bg-[#e8e3de] disabled:text-[#8a8079] disabled:opacity-100 disabled:shadow-none sm:flex-none`}>
             {busy === "save" ? <Spinner /> : null}
-            {valid ? `Set ${formatINR(value)}/1K${afterViews ? ` after ${compactViews(afterViews)}` : ""}` : "Set CPM"}
+            {valid ? `Set ${formatINR(value)}/1K${fromNow ? " from now" : afterViews ? ` after ${compactViews(afterViews)}` : ""}` : "Set CPM"}
           </button>
         </div>
       </div>

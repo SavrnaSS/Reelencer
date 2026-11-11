@@ -400,10 +400,10 @@ async function hydratedWalletPost(sb: Sb, post: Row) {
  * Estimates, claims, approvals and the money already credited for the reel are all repriced; the wallet result says
  * how much moved and how much was already withdrawn (and couldn't be taken back).
  */
-export async function setPostCpm(actorId: string, postId: string, input: { rateINR: number | null; reasons: CpmReason[]; note?: string; afterViews: number }) {
+export async function setPostCpm(actorId: string, postId: string, input: { rateINR: number | null; reasons: CpmReason[]; note?: string; afterViews: number; fromNow?: boolean }) {
   const sb = supabaseAdmin();
-  const { data, error } = await sb.rpc("admin_set_social_post_cpm", { p_actor: actorId, p_post: postId, p_rate: input.rateINR, p_reasons: input.reasons, p_note: input.note?.trim() ?? "", p_after_views: input.afterViews });
-  if (["PGRST202", "42883", "42703", "PGRST204"].includes(error?.code ?? "")) throw new ApiError(503, "Adjusting a reel's CPM needs the latest database updates (202611110001 and 202611110002).", "schema_outdated");
+  const { data, error } = await sb.rpc("admin_set_social_post_cpm", { p_actor: actorId, p_post: postId, p_rate: input.rateINR, p_reasons: input.reasons, p_note: input.note?.trim() ?? "", p_after_views: input.afterViews, p_from_now: input.fromNow ?? false });
+  if (["PGRST202", "42883", "42703", "PGRST204"].includes(error?.code ?? "")) throw new ApiError(503, "Adjusting a reel's CPM needs the latest database updates (202611110001 to 202611110004).", "schema_outdated");
   databaseError(error);
   if (!data?.post) throw new ApiError(503, "The CPM change could not be confirmed. Refresh and try again.");
   const wallet = { walletChangeINR: Number(data.wallet?.walletChangeINR ?? 0), unrecoveredINR: Number(data.wallet?.unrecoveredINR ?? 0) };

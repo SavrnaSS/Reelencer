@@ -222,7 +222,7 @@ export default function CpmHealthCard({ account }: { account: LinkedSocialAccoun
                       <svg viewBox="0 0 24 24" className="h-3 w-3 shrink-0 text-[#9aa29c]" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6m0-6L10 14M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
                     </a>
                     <p className="mt-0.5 text-[11.5px] tabular-nums text-[#7a827c]">
-                      {reel.post.postedAt ? formatDate(reel.post.postedAt) : "No date"} · {formatCompact(reel.views)} views{reel.afterViews ? ` · lower CPM after ${formatCompact(reel.afterViews)}` : ""}
+                      {reel.post.postedAt ? formatDate(reel.post.postedAt) : "No date"} · {formatCompact(reel.views)} views{reel.post.cpmAdjustment?.fromNow ? ` · lower CPM on new views${reel.post.cpmAdjustment.at ? ` since ${formatDate(reel.post.cpmAdjustment.at)}` : ""}` : reel.afterViews ? ` · lower CPM after ${formatCompact(reel.afterViews)}` : ""}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">

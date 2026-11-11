@@ -552,7 +552,7 @@ export default function ReelList({
                         const walletText = wallet && wallet.walletChangeINR !== 0 ? ` Wallet ${wallet.walletChangeINR > 0 ? "credited" : "reduced by"} ${rupee(wallet.walletChangeINR)}.` : "";
                         const lostText = wallet && wallet.unrecoveredINR > 0 ? ` ${rupee(wallet.unrecoveredINR)} was already withdrawn and couldn't be taken back.` : "";
                         setNotice({
-                          text: (input.rateINR === null ? "Standard CPM restored." : `CPM set to ₹${input.rateINR.toLocaleString("en-IN")} / 1K${input.afterViews ? ` after ${input.afterViews.toLocaleString("en-IN")} views` : ""}.`) + walletText + lostText,
+                          text: (input.rateINR === null ? "Standard CPM restored." : `CPM set to ₹${input.rateINR.toLocaleString("en-IN")} / 1K${input.fromNow ? " from now: only new views earn the lower rate" : input.afterViews ? ` after ${input.afterViews.toLocaleString("en-IN")} views` : ""}.`) + walletText + lostText,
                           tone: lostText ? "warn" : "ok",
                         });
                         return { ok: true as const };

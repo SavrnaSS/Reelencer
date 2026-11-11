@@ -91,3 +91,9 @@ test("a lower CPM that starts after N views keeps the standard rate for the firs
   assert.equal(summary.lostINR, 145, "only the 5K views past the start cost anything");
   assert.equal(adjustedViewAmount({ from_views: 0, to_views: 10_000, payout_mode: "cpm", item_rate_inr: 20, standard_rate_inr: 49, cpm_after_views: 5_000 }, 49, 0), 345);
 });
+
+test("a from-now adjustment keeps its flag through the API and cache", () => {
+  assert.equal(readCpmAdjustment({ cpm_override_inr: 20, cpm_override_reasons: ["low_signups"], cpm_after_views: 2_970, cpm_from_now: true })?.fromNow, true);
+  assert.equal(readCpmAdjustment({ rateINR: 20, reasons: ["low_signups"], afterViews: 2_970, fromNow: true })?.fromNow, true);
+  assert.equal(readCpmAdjustment({ rateINR: 20, reasons: ["low_signups"], afterViews: 0 })?.fromNow, undefined);
+});

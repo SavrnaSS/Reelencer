@@ -31,7 +31,9 @@ export type CpmAdjustment = { rateINR: number; reasons: string[]; note?: string;
   /** The lower rate applies to views past this count (0: every view). */
   afterViews: number;
   /** Net change the adjustments made to money already credited (negative when taken back). */
-  walletChangeINR?: number };
+  walletChangeINR?: number;
+  /** Set "from now": `afterViews` is the reel's view count when the team saved it. */
+  fromNow?: boolean };
 
 /** A reel's terms with its adjusted CPM applied (idempotent: terms that already carry it are left as they are). */
 export function applyCpmAdjustment(terms: PayoutTerms, adjustment: CpmAdjustment | undefined): PayoutTerms {

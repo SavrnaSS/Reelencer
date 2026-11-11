@@ -54,6 +54,8 @@ const actions = z.discriminatedUnion("action", [
     note: z.string().max(300).optional(),
     /** The lower rate applies to views past this count; 0 means every view. */
     afterViews: z.number().int().min(0).max(1_000_000_000).default(0),
+    /** Start at the reel's view count when saved (read in the database); nothing already earned changes. */
+    fromNow: z.boolean().default(false),
   }),
   z.object({ action: z.literal("review_post"), id: z.uuid(), status: z.enum(["approved", "rejected"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
@@ -97,7 +99,7 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
     case "restore_post":
       return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
     case "set_cpm":
-      return NextResponse.json(await setPostCpm(actor.user.id, body.id, { rateINR: body.rateINR, reasons: body.reasons, note: body.note, afterViews: body.afterViews }), { headers: NO_STORE_HEADERS });
+      return NextResponse.json(await setPostCpm(actor.user.id, body.id, { rateINR: body.rateINR, reasons: body.reasons, note: body.note, afterViews: body.afterViews, fromNow: body.fromNow }), { headers: NO_STORE_HEADERS });
     case "resume_views":
       return NextResponse.json({ post: await resumePostViews(actor.user.id, body.id) }, { headers: NO_STORE_HEADERS });
     case "status":

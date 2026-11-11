@@ -28,7 +28,7 @@ before(async () => {
     "202610080003_social_auto_sync.sql", "202610080006_instagram_profile_sync.sql", "202610080007_view_payout_claims.sql",
     "202610080008_reel_view_freshness.sql", "202610080009_view_authenticity_review.sql", "202610290001_reel_tracking_window.sql",
     "202610290002_reel_removal.sql", "202610300001_approved_reel_wallet_credit.sql", "202610300002_social_wallet_read_model.sql",
-    "202611030001_creator_payout_plans.sql", "202611110001_reel_cpm_adjustments.sql", "202611110002_reel_cpm_after_views_and_wallet.sql", "202611110003_faster_wallet_read_model.sql",
+    "202611030001_creator_payout_plans.sql", "202611110001_reel_cpm_adjustments.sql", "202611110002_reel_cpm_after_views_and_wallet.sql", "202611110003_faster_wallet_read_model.sql", "202611110004_reel_cpm_from_now.sql",
   ]) await db.exec(await readFile(`supabase/migrations/${name}`, "utf8"));
   await db.exec(`create or replace function public.app_is_admin(p_actor uuid) returns boolean language sql as $$ select p_actor='${admin}'::uuid $$;`);
   await db.exec("grant select on all tables in schema public to service_role");
@@ -59,9 +59,9 @@ const quote = (accountId: string) => scalar<{ claimableViews: number; claimableI
 const submit = (accountId: string) => scalar<{ id: string; amount_inr: number }>("select public.submit_view_payout_claim($1,$2) as value", [worker, accountId]);
 const standard = { name: "Premium creators", baseINR: "200", thresholdViews: "10000", mode: "beyond" };
 
-type CpmResult = { post: { cpm_override_inr: string | null; cpm_wallet_change_inr: string }; wallet: { walletChangeINR: number; unrecoveredINR: number } };
-const setCpm = (post: string, rate: number | null, reasons: string[] = ["low_reel_engagement"], note = "", actor = admin, after = 0) =>
-  scalar<CpmResult>("select public.admin_set_social_post_cpm($1,$2,$3,$4,$5,$6) as value", [actor, post, rate, reasons, note, after]);
+type CpmResult = { post: { cpm_override_inr: string | null; cpm_wallet_change_inr: string; cpm_after_views: string; cpm_from_now: boolean }; wallet: { walletChangeINR: number; unrecoveredINR: number } };
+const setCpm = (post: string, rate: number | null, reasons: string[] = ["low_reel_engagement"], note = "", actor = admin, after = 0, fromNow = false) =>
+  scalar<CpmResult>("select public.admin_set_social_post_cpm($1,$2,$3,$4,$5,$6,$7) as value", [actor, post, rate, reasons, note, after, fromNow]);
 /** Puts every wallet credit of the creator into a payout, as a withdrawal would. */
 async function withdrawAll() {
   const batch = await scalar<string>("insert into public.payout_batches(worker_id,cycle_label,period_start,period_end,status) values($1,'Week',current_date,current_date,'Paid') returning id as value", [worker]);
@@ -228,4 +228,32 @@ test("the wallet read model still reports each account's plan once", async () =>
   assert.equal(state.accounts.length, 2);
   assert.equal(state.accounts.find(a => a.accountId === mine.id)?.payoutPlan?.planName, "Premium creators");
   assert.equal(state.accounts.find(a => a.accountId === theirs.id)?.payoutPlan, undefined);
+});
+
+test("from now: the lower CPM starts at today's views and nothing already earned changes", async () => {
+  const { id } = await account();
+  const post = await reel(id, 2_000);
+  await approve(post);
+  assert.equal(await money(), 98);
+  await setViews(post, 3_000);
+  const result = await setCpm(post, 20, ["low_signups"], "", admin, 999_999, true);
+  assert.deepEqual(result.wallet, { walletChangeINR: 0, unrecoveredINR: 0 }, "the wallet is untouched");
+  assert.equal(Number(result.post.cpm_after_views), 3_000, "starts at the database's count, ignoring the screen's number");
+  assert.equal(result.post.cpm_from_now, true);
+  await setViews(post, 5_000);
+  await approve(post);
+  assert.equal(await money(), 98 + 49 + 40, "1K uncredited views from before still pay ₹49; the 2K after pay ₹20");
+  const cleared = await setCpm(post, null);
+  assert.equal(cleared.post.cpm_from_now, false);
+  assert.equal(await money(), 98 + 49 + 98, "restoring reprices the newer views back to ₹49");
+});
+
+test("from now never starts below views already credited", async () => {
+  const { id } = await account();
+  const post = await reel(id, 4_000);
+  await approve(post);
+  await db.query("update public.social_account_posts set views=1000 where id=$1", [post]);
+  const result = await setCpm(post, 20, ["low_signups"], "", admin, 0, true);
+  assert.equal(Number(result.post.cpm_after_views), 4_000, "the count dropped, but 4K views were already credited");
+  assert.equal(result.wallet.walletChangeINR, 0);
 });
