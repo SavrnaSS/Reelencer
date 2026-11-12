@@ -11,5 +11,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${SITE_URL}/login`, lastModified: BUILT_AT, changeFrequency: "yearly", priority: 0.4 },
     { url: `${SITE_URL}/terms`, lastModified: new Date("2026-09-28"), changeFrequency: "yearly", priority: 0.3 },
     { url: `${SITE_URL}/privacy`, lastModified: new Date("2026-09-28"), changeFrequency: "yearly", priority: 0.3 },
+    { url: `${SITE_URL}/delete-account`, lastModified: new Date("2026-11-12"), changeFrequency: "yearly", priority: 0.2 },
   ];
 }

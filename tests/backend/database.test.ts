@@ -1046,3 +1046,31 @@ test('a team-pinned view count survives sync, records the public count beside it
   assert.equal(await scalar<number>("select count(*)::int as value from public.audit_events where action='social_post_views_resumed' and resource_id=$1", [post.id]), 1);
   assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.resume_social_post_live_views(uuid,uuid)','execute') as value"), false);
 });
+
+test('creators can delete their own account: access stops, purge is scheduled once, admins and API roles cannot use it', async () => {
+  const self='5e1fde1e-0000-4000-8000-000000000001';
+  await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'self-delete@example.test',now())",[self]);
+  await db.query('select public.bootstrap_worker($1)',[self]);
+  const del=(user:string,reason:string|null='Not posting reels any more')=>scalar<{status:string;changed:boolean;deletedAt:string;purgeAfter:string}>('select public.request_own_worker_deletion($1,$2) as value',[user,reason]);
+  const first=await del(self);
+  assert.equal(first.status,'deleted');
+  assert.equal(first.changed,true);
+  assert.equal(Date.parse(first.purgeAfter)-Date.parse(first.deletedAt),7*24*60*60_000,'seven-day restore window');
+  assert.equal(await scalar<boolean>('select active as value from public.profiles where id=$1',[self]),false);
+  assert.equal(await scalar<boolean>('select active as value from public.workers where user_id=$1',[self]),false);
+  assert.equal(await scalar<number>("select count(*)::int as value from public.worker_deletion_jobs where user_id=$1 and status<>'completed'",[self]),1,'permanent deletion is queued');
+  const event=await scalar<{actor:string;action:string}>("select jsonb_build_object('actor',actor_label,'action',action) as value from public.worker_moderation_events where user_id=$1",[self]);
+  assert.deepEqual(event,{actor:'Creator (self-service)',action:'delete'});
+  await assert.rejects(db.query("select public.record_worker_access($1,'8.8.8.8')",[self]),/account_inactive/);
+  const again=await del(self,null);
+  assert.equal(again.changed,false,'a retry does not extend the deadline or duplicate audit events');
+  assert.equal(again.deletedAt,first.deletedAt);
+  assert.equal(await scalar<number>('select count(*)::int as value from public.worker_moderation_events where user_id=$1',[self]),1);
+  await assert.rejects(del(admin),/forbidden/);
+  assert.equal(await scalar<boolean>('select active as value from public.profiles where id=$1',[admin]),true);
+  assert.equal(await scalar<boolean>("select has_function_privilege('authenticated','public.request_own_worker_deletion(uuid,text)','execute') as value"),false);
+  assert.equal(await scalar<boolean>("select has_function_privilege('anon','public.request_own_worker_deletion(uuid,text)','execute') as value"),false);
+  // Within the window the team can still restore the account with the normal admin action.
+  assert.equal((await scalar<{status:string}>("select public.moderate_worker($1,$2,'restore','Creator asked to restore the account') as value",[admin,self])).status,'active');
+  assert.equal(await scalar<boolean>('select active as value from public.profiles where id=$1',[self]),true);
+});
