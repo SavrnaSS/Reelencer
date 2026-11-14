@@ -1,12 +1,38 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { fetchInstagramBusinessProfile } from "../../lib/api/instagramGraph";
+import { fetchInstagramBusinessBiography, fetchInstagramBusinessProfile } from "../../lib/api/instagramGraph";
 import { SocialSyncError } from "../../lib/socialSyncSchedule";
 
 const original = globalThis.fetch;
 afterEach(() => { globalThis.fetch = original; });
 const config = { metaAccessToken: "private-api-token", metaIgBusinessId: "1784000001" };
 const response = (body: unknown, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+
+test("bio verification requests no media feed and accepts a biography without analytics counts", async () => {
+  const biography = "a".repeat(700) + " RL-ABC234";
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${config.metaAccessToken}`);
+    const fields = url.searchParams.get("fields")!;
+    assert.equal(fields, "business_discovery.username(creator){id,username,biography}");
+    assert.equal(fields.includes("media.limit"), false);
+    return response({ business_discovery: { id: "123", username: "creator", biography } });
+  };
+  const result = await fetchInstagramBusinessBiography("creator", config);
+  assert.equal(result.biography, biography);
+  assert.equal(result.followers, undefined);
+  assert.equal(result.source, "meta_api");
+  assert.deepEqual(result.media, []);
+});
+
+test("official biography reads distinguish an empty biography from absent data and reject the wrong username", async () => {
+  globalThis.fetch = async () => response({ business_discovery: { username: "creator", biography: "" } });
+  assert.equal((await fetchInstagramBusinessBiography("creator", config)).biography, "");
+  globalThis.fetch = async () => response({ business_discovery: { username: "creator", followers_count: 1 } });
+  await assert.rejects(fetchInstagramBusinessBiography("creator", config), /did not expose.*biography/);
+  globalThis.fetch = async () => response({ business_discovery: { username: "other.creator", biography: "RL-ABC234" } });
+  await assert.rejects(fetchInstagramBusinessBiography("creator", config), /requested account/);
+});
 
 test("official discovery authenticates in headers, verifies the handle and never invents reel views", async () => {
   globalThis.fetch = async (input, init) => {

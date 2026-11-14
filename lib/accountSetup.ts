@@ -13,6 +13,7 @@ export type AccountSetupStatus = "Submitted" | "ChangesRequested" | "Verified";
  * team checks the code by opening the profile.
  */
 export type AccountOwnership = "found" | "missing" | "unreadable" | "manual";
+export type AccountOwnershipSource = "public_profile" | "public_embed" | "meta_api";
 
 /** What the browser sees. A legacy password never leaves the server; `hasPassword` says one is stored. */
 export type AccountSetupView = {
@@ -28,6 +29,9 @@ export type AccountSetupView = {
   verifyCode?: string;
   ownership?: AccountOwnership;
   ownershipDetail?: string;
+  /** Actual biography returned by the latest successful read; an empty string means a measured empty bio. */
+  biography?: string;
+  ownershipSource?: AccountOwnershipSource;
   /** Last automatic bio check. */
   checkedAt?: string;
   /** Earliest retry permitted after the profile reader requested a pause. */
@@ -70,6 +74,8 @@ export function readStoredAccountSetup(raw: unknown): StoredAccountSetup | undef
     verifyCode: verifyCode && VERIFY_CODE.test(verifyCode) ? verifyCode : undefined,
     ownership: OWNERSHIP.find((o) => o === v.ownership),
     ownershipDetail: text("ownershipDetail"),
+    biography: typeof v.biography === "string" ? v.biography.slice(0, 4000) : undefined,
+    ownershipSource: (["public_profile", "public_embed", "meta_api"] as const).find(source => source === v.ownershipSource),
     checkedAt: text("checkedAt"),
     ownershipRetryAt: text("ownershipRetryAt") && Number.isFinite(Date.parse(String(v.ownershipRetryAt))) ? String(v.ownershipRetryAt) : undefined,
     followers: count("followers"),

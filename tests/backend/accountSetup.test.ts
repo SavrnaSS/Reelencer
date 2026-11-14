@@ -112,3 +112,16 @@ test('provider retry deadlines survive public setup serialization and invalid da
   assert.equal(readStoredAccountSetup({ ...base, ownershipRetryAt: 'invalid' })?.ownershipRetryAt, undefined);
   assert.equal(readStoredAccountSetup({ ...base, ownershipRetryAt: 123 })?.ownershipRetryAt, undefined);
 });
+
+test('actual bio evidence and its provider survive redaction, including an empty biography', () => {
+  const base = { platform: 'Instagram', handle: 'glowco.pune', status: 'Submitted', passwordEnc: 'enc:v1:private' };
+  for (const biography of ['', 'Creator\nRL-ABC234']) {
+    const view = publicAccountSetup({ ...base, biography, ownershipSource: 'public_profile' })!;
+    assert.equal(view.biography, biography);
+    assert.equal(view.ownershipSource, 'public_profile');
+    assert.equal('passwordEnc' in view, false);
+  }
+  const invalid = publicAccountSetup({ ...base, biography: 123, ownershipSource: 'user-supplied-provider' })!;
+  assert.equal(invalid.biography, undefined);
+  assert.equal(invalid.ownershipSource, undefined);
+});

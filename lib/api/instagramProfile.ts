@@ -2,14 +2,15 @@ import "server-only";
 import { canonicalInstagramReelUrl } from "@/lib/socialAnalytics";
 import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
 import { matchesAccountOwnershipCode } from "@/lib/accountOwnershipCode";
+import type { AccountOwnershipSource } from "@/lib/accountSetup";
 
 type Row = Record<string, unknown>;
 export type ProfilePost = { externalId: string; url: string; caption?: string; postedAt?: string; views?: number; likes?: number; comments?: number };
-export type InstagramProfile = { externalId?: string; followers?: number; following?: number; posts?: number; biography?: string; isPrivate?: boolean; media: ProfilePost[]; note: string };
+export type InstagramProfile = { externalId?: string; followers?: number; following?: number; posts?: number; biography?: string; isPrivate?: boolean; source?: AccountOwnershipSource; media: ProfilePost[]; note: string };
 
 export function normalizeInstagramHandle(input: string): string {
   const handle = input.trim().replace(/^@/, "");
-  if (!/^[a-zA-Z0-9._]{1,30}$/.test(handle)) throw new Error("Enter a valid Instagram handle, without a URL.");
+  if (!/^(?!.*\.\.)(?!\.)(?!.*\.$)[a-zA-Z0-9._]{1,30}$/.test(handle)) throw new Error("Enter a valid Instagram handle, without a URL.");
   return handle.toLowerCase();
 }
 
@@ -162,13 +163,17 @@ async function readPage(path: string, signal: AbortSignal): Promise<string> {
       headers: { Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
       signal, cache: "no-store", redirect: "manual",
     });
-  } catch { throw new Error("Instagram profile could not be reached. Try later or update from screenshots."); }
+  } catch {
+    if (signal.aborted) throw new SocialSyncError("Instagram's profile read timed out. Please try again shortly.", "timeout");
+    throw new SocialSyncError("Instagram profile could not be reached. Please try again shortly.", "unavailable");
+  }
   if (response.status === 429) {
     const retry = response.headers.get("retry-after");
     const delay = retry && /^\d+$/.test(retry) ? Number(retry) * 1000 : retry ? Math.max(0, Date.parse(retry) - Date.now()) : 0;
     throw new SocialSyncError("Instagram has temporarily limited profile reads. Automatic sync will retry later; use screenshots meanwhile.", "rate_limited", delay || 0);
   }
   if (response.status >= 300 && response.status < 400) throw new SocialSyncError("Instagram redirected this profile read to a page that may require login. Connect the Instagram API in Auto-sync for eligible professional accounts, or add insight screenshots.", "login_required");
+  if (response.status === 401 || response.status === 403) throw new SocialSyncError("Instagram requires login to read this profile from the server.", "login_required");
   if ((response.status === 404 || response.status === 410) && /^\/[a-zA-Z0-9._]+\/$/.test(path)) throw new ProfileNotFoundError("Instagram could not find this profile. Check whether its username changed.");
   if (!response.ok) throw new Error(`Instagram profile is unavailable (${response.status}). Check the handle or update from screenshots.`);
   if (!response.headers.get("content-type")?.includes("text/html")) throw new Error("Instagram returned an unreadable profile page.");
@@ -186,6 +191,9 @@ async function readPage(path: string, signal: AbortSignal): Promise<string> {
       html += decoder.decode(value, { stream: true });
     }
     html += decoder.decode();
+  } catch (error) {
+    if (signal.aborted) throw new SocialSyncError("Instagram's profile response timed out. Please try again shortly.", "timeout");
+    throw error;
   } finally { await reader.cancel().catch(() => undefined); }
   return html;
 }
@@ -451,7 +459,7 @@ export function extractInstagramProfileSummary(html: string, input: string): Omi
     externalId: (typeof identity === "string" || typeof identity === "number") && String(identity).length <= 100 ? String(identity) : undefined,
     followers: count(row(profile?.edge_followed_by).count ?? profile?.follower_count ?? profile?.followers_count),
     following: count(row(profile?.edge_follow).count ?? profile?.following_count ?? profile?.follows_count),
-    posts: count(row(profile?.edge_owner_to_timeline_media).count ?? profile?.media_count ?? profile?.posts_count),
+    posts: count(row(profile?.edge_owner_to_timeline_media).count ?? profile?.media_count ?? profile?.all_media_count ?? profile?.posts_count),
     biography: profile ? biographyFromProfile(profile) : undefined,
     isPrivate: typeof profile?.is_private === "boolean" ? profile.is_private : undefined,
     note: "Read from the matching public Instagram profile. Hidden counts remain unavailable.",
@@ -478,15 +486,17 @@ export function extractInstagramProfileSummary(html: string, input: string): Omi
 /** Two bounded public reads; never treat a caption, login page or reflected code as ownership evidence. */
 export async function fetchInstagramProfileSummary(input: string, lookFor?: string, options: { signal?: AbortSignal } = {}): Promise<InstagramProfileSummary> {
   const handle = normalizeInstagramHandle(input);
-  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(6000)]) : AbortSignal.timeout(6000);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
+  if (signal.aborted) throw new SocialSyncError("Instagram's bio check was cancelled before reading the profile.", "timeout");
   let firstError: unknown;
   for (const [index, path] of [`/${handle}/`, `/${handle}/embed/`].entries()) {
     try {
-      const html = await readPage(path, AbortSignal.any([signal, AbortSignal.timeout(index === 0 ? 3500 : 2500)]));
+      const html = await readPage(path, AbortSignal.any([signal, AbortSignal.timeout(index === 0 ? 5000 : 3000)]));
       const summary = extractInstagramProfileSummary(html, handle);
       if (lookFor && summary.biography === undefined) throw new SocialSyncError("Instagram did not expose this account's biography. Your ownership code could not be checked yet.", "unavailable");
       return {
         ...summary,
+        source: index ? "public_embed" : "public_profile",
         note: `${summary.note}${index ? " Read from the public profile embed because the main profile was unavailable." : ""}`,
         codeFound: lookFor ? matchesAccountOwnershipCode(summary.biography, lookFor) : undefined,
       };

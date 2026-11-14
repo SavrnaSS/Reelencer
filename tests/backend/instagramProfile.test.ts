@@ -10,7 +10,7 @@ afterEach(() => { globalThis.fetch = realFetch; });
 
 test("validates handles before requesting a fixed Instagram origin", async () => {
   assert.equal(normalizeInstagramHandle(" @Creator.Name "), "creator.name");
-  for (const handle of ["https://evil.test", "../admin", "x?next=/", "", "a".repeat(31)]) {
+  for (const handle of ["https://evil.test", "../admin", "x?next=/", "", "a".repeat(31), ".", "..", ".creator", "creator.", "creator..name"]) {
     await assert.rejects(fetchInstagramProfile(handle), /valid Instagram handle/);
   }
 });
@@ -594,6 +594,7 @@ test("a public profile embed can expose the bio when the primary page is unavail
   };
   const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
   assert.equal(profile.codeFound, true);
+  assert.equal(profile.source, "public_embed");
   assert.match(profile.note, /public profile embed/);
   assert.deepEqual(requests, ["https://www.instagram.com/creator.name/", "https://www.instagram.com/creator.name/embed/"]);
 });
@@ -649,12 +650,31 @@ test("verification does not truncate readable biography evidence at the analytic
   assert.equal((await fetchInstagramProfileSummary("creator.name", "RL-ABC234")).codeFound, true);
 });
 
-test("summary cancellation exhausts the shared budget and never fans out more reads", async () => {
+test("an already cancelled summary never starts network reads", async () => {
   let reads = 0;
   globalThis.fetch = async (_input, init) => {
     reads++; assert.equal(init?.signal?.aborted, true);
     throw new DOMException("Aborted", "AbortError");
   };
   await assert.rejects(fetchInstagramProfileSummary("creator.name", "RL-ABC234", { signal: AbortSignal.abort() }), error => error instanceof SocialSyncError && error.code === "timeout");
-  assert.equal(reads, 1);
+  assert.equal(reads, 0);
+});
+
+test("modern nested profile data exposes the actual biography and all-media count", async () => {
+  const page = html({ require: [["ScheduledServerJS", [], null, [{ __bbox: { result: { data: {
+    xig_user_by_username: { username: "creator.name", biography: "Real bio RL-ABC234", all_media_count: 0, follower_count: 15, is_private: false },
+  } } } }]]] });
+  globalThis.fetch = async () => new Response(page, { headers: { "content-type": "text/html" } });
+  const profile = await fetchInstagramProfileSummary("creator.name", "RL-ABC234");
+  assert.equal(profile.biography, "Real bio RL-ABC234");
+  assert.equal(profile.codeFound, true);
+  assert.equal(profile.posts, 0);
+  assert.equal(profile.source, "public_profile");
+});
+
+test("permission failures remain access failures instead of reporting an empty or missing bio", async () => {
+  for (const status of [401, 403]) {
+    globalThis.fetch = async () => new Response("Permission required", { status });
+    await assert.rejects(fetchInstagramProfileSummary("creator.name", "RL-ABC234"), error => error instanceof SocialSyncError && error.code === "login_required");
+  }
 });

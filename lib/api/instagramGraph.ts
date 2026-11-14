@@ -9,12 +9,13 @@ const row = (value: unknown): Row => value && typeof value === "object" && !Arra
 const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 
 /** Official Business Discovery only; never use saved account passwords or private Instagram endpoints. */
-export async function fetchInstagramBusinessProfile(input: string, config: Pick<SyncConfig, "metaAccessToken" | "metaIgBusinessId">, signal?: AbortSignal): Promise<InstagramProfile> {
+async function readBusinessProfile(input: string, config: Pick<SyncConfig, "metaAccessToken" | "metaIgBusinessId">, signal?: AbortSignal, biographyOnly = false): Promise<InstagramProfile> {
   const handle = normalizeInstagramHandle(input);
   if (!config.metaAccessToken || !/^\d{1,40}$/.test(config.metaIgBusinessId)) throw new SocialSyncError("Connect a Meta access token and Instagram professional account ID in Auto-sync.", "credentials");
   const version = /^v\d+\.\d+$/.test(process.env.META_GRAPH_VERSION ?? "") ? process.env.META_GRAPH_VERSION : "v23.0";
   const url = new URL(`https://graph.facebook.com/${version}/${config.metaIgBusinessId}`);
-  url.searchParams.set("fields", `business_discovery.username(${handle}){id,username,biography,followers_count,follows_count,media_count,media.limit(25){id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count}}`);
+  const fields = biographyOnly ? "id,username,biography" : "id,username,biography,followers_count,follows_count,media_count";
+  url.searchParams.set("fields", `business_discovery.username(${handle}){${fields}${biographyOnly ? "" : ",media.limit(25){id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count}"}}`);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -39,9 +40,16 @@ export async function fetchInstagramBusinessProfile(input: string, config: Pick<
   const result: InstagramProfile = {
     externalId: profile.id ? String(profile.id) : undefined,
     followers: count(profile.followers_count), following: count(profile.follows_count), posts: count(profile.media_count),
-    biography: typeof profile.biography === "string" ? profile.biography.slice(0, 600) : undefined,
-    media: [], note: "Synced through Meta's official Instagram Business Discovery API. Reel views, reach, saves and shares require access to the account's own insights; unavailable numbers are kept separate.",
+    biography: typeof profile.biography === "string" ? profile.biography.slice(0, biographyOnly ? 4000 : 600) : undefined,
+    source: biographyOnly ? "meta_api" : undefined,
+    media: [], note: biographyOnly
+      ? "Read the matching account biography through Meta's official Instagram Business Discovery API."
+      : "Synced through Meta's official Instagram Business Discovery API. Reel views, reach, saves and shares require access to the account's own insights; unavailable numbers are kept separate.",
   };
+  if (biographyOnly) {
+    if (result.biography === undefined) throw new SocialSyncError("Instagram's API did not expose this account's biography.", "unavailable");
+    return result;
+  }
   if ([result.followers, result.following, result.posts].every(value => value === undefined)) throw new SocialSyncError("Instagram's API did not expose statistics for this account.");
   const media = row(profile.media).data;
   const seen = new Set<string>();
@@ -59,4 +67,13 @@ export async function fetchInstagramBusinessProfile(input: string, config: Pick<
     });
   }
   return result;
+}
+
+export function fetchInstagramBusinessProfile(input: string, config: Pick<SyncConfig, "metaAccessToken" | "metaIgBusinessId">, signal?: AbortSignal) {
+  return readBusinessProfile(input, config, signal);
+}
+
+/** Ownership checks need a biography, not a media feed or populated statistics. */
+export function fetchInstagramBusinessBiography(input: string, config: Pick<SyncConfig, "metaAccessToken" | "metaIgBusinessId">, signal?: AbortSignal) {
+  return readBusinessProfile(input, config, signal, true);
 }

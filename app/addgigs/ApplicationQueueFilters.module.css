@@ -1,0 +1,202 @@
+.filters {
+  container: application-filters / inline-size;
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.accounts {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  border-bottom: 1px solid #e6e9e3;
+}
+
+.account {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 5px;
+  border: 0;
+  border-radius: 5px 5px 0 0;
+  color: #616a64;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+
+.account::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: -1px;
+  left: 5px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+}
+
+.account:hover {
+  background: #f8faf6;
+  color: #1f2b24;
+}
+
+.account[aria-pressed="true"] {
+  color: #24533e;
+}
+
+.account[aria-pressed="true"]::after {
+  background: #2e7d4f;
+}
+
+.accountLabel {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.shortLabel {
+  display: none;
+}
+
+.accountCount {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #f0f2ee;
+  color: #737d74;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.account[aria-pressed="true"] .accountCount {
+  background: #ebf4ed;
+  color: #2b6547;
+}
+
+.review {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 0 5px;
+}
+
+.review label {
+  color: #7a827c;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.selectWrap {
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  max-width: 210px;
+  justify-self: end;
+}
+
+.select {
+  display: block;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 30px 0 10px;
+  border: 1px solid #dfe4dc;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b544e;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: normal;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.select[data-active="true"] {
+  font-weight: 600;
+}
+
+.chevron {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: #7a827c;
+}
+
+.account:focus-visible,
+.select:focus-visible {
+  outline: 2px solid #7fa58c;
+  outline-offset: 2px;
+}
+
+@container application-filters (min-width: 420px) {
+  .account {
+    flex-grow: 0;
+    gap: 7px;
+    padding: 8px 12px;
+  }
+
+  .accountLabel {
+    font-size: 12px;
+  }
+
+  .accountCount {
+    font-size: 10.5px;
+  }
+}
+
+@container application-filters (max-width: 300px) {
+  .accounts {
+    gap: 3px;
+  }
+
+  .account {
+    gap: 4px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .accountLabel {
+    font-size: 11px;
+  }
+
+  .accountCount {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .fullLabel {
+    display: none;
+  }
+
+  .shortLabel {
+    display: inline;
+  }
+
+  .review {
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account {
+    transition: none;
+  }
+}

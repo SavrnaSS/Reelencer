@@ -1,14 +1,14 @@
 import "server-only";
 import { matchesAccountOwnershipCode } from "@/lib/accountOwnershipCode";
 import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
-import { fetchInstagramBusinessProfile } from "./instagramGraph";
+import { fetchInstagramBusinessBiography } from "./instagramGraph";
 import { fetchInstagramProfileSummary, normalizeInstagramHandle, type InstagramProfile } from "./instagramProfile";
 import { resolveSyncConfig, type SyncConfig } from "./integrations";
 
 type ProfileSummary = Omit<InstagramProfile, "media"> & { codeFound?: boolean };
 type MetaConfig = Pick<SyncConfig, "metaAccessToken" | "metaIgBusinessId">;
 type Providers = {
-  publicProfile: (handle: string, code: string) => Promise<ProfileSummary>;
+  publicProfile: (handle: string, code: string, signal?: AbortSignal) => Promise<ProfileSummary>;
   config: () => Promise<MetaConfig>;
   businessProfile: (handle: string, config: MetaConfig, signal?: AbortSignal) => Promise<InstagramProfile>;
 };
@@ -32,6 +32,7 @@ function ownership(profile: ProfileSummary | InstagramProfile, code: string): Pr
   return {
     externalId: profile.externalId, followers: profile.followers, following: profile.following, posts: profile.posts,
     biography: profile.biography, isPrivate: profile.isPrivate, note: profile.note,
+    source: profile.source,
     codeFound: matchesAccountOwnershipCode(profile.biography, code),
   };
 }
@@ -52,12 +53,14 @@ function fallbackFailure(publicError: unknown, officialError: unknown) {
 export function createInstagramAccountOwnershipReader(providers: Providers, budgets: Budgets = {}) {
   const totalMs = Math.max(1, Math.min(15_000, budgets.totalMs ?? 15_000));
   const configMs = Math.max(1, Math.min(1_000, budgets.configMs ?? 1_000));
-  return async (input: string, code: string): Promise<ProfileSummary> => {
-    const handle = normalizeInstagramHandle(input);
+  const pending = new Map<string, Promise<ProfileSummary>>();
+  const lookup = async (handle: string, code: string): Promise<ProfileSummary> => {
     const deadline = Date.now() + totalMs;
     let publicError: unknown;
-    try { return ownership(await within(() => providers.publicProfile(handle, code), totalMs), code); }
+    const publicController = new AbortController();
+    try { return ownership(await within(() => providers.publicProfile(handle, code, publicController.signal), totalMs), code); }
     catch (error) { publicError = error; }
+    finally { publicController.abort(); }
 
     if (Date.now() >= deadline) throw publicError;
     let config: MetaConfig;
@@ -74,8 +77,24 @@ export function createInstagramAccountOwnershipReader(providers: Providers, budg
     } catch (error) { throw fallbackFailure(publicError, error); }
     finally { controller.abort(); }
   };
+  return async (input: string, code: string): Promise<ProfileSummary> => {
+    const handle = normalizeInstagramHandle(input);
+    let read = pending.get(handle);
+    if (!read) {
+      read = lookup(handle, code);
+      pending.set(handle, read);
+    }
+    try {
+      // Share the fetched biography, never another application's codeFound result.
+      return ownership(await read, code);
+    } finally {
+      if (pending.get(handle) === read) pending.delete(handle);
+    }
+  };
 }
 
 export const readInstagramAccountOwnership = createInstagramAccountOwnershipReader({
-  publicProfile: fetchInstagramProfileSummary, config: resolveSyncConfig, businessProfile: fetchInstagramBusinessProfile,
+  publicProfile: (handle, code, signal) => fetchInstagramProfileSummary(handle, code, { signal }),
+  config: resolveSyncConfig,
+  businessProfile: fetchInstagramBusinessBiography,
 });

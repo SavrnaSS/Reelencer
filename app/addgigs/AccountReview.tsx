@@ -156,10 +156,10 @@ export default function AccountReview({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionLabel>{platformLabel} account</SectionLabel>
         <div className="flex items-center gap-2 text-[11.5px] text-[#7a827c]">
-          <span title={formatDateTime(setup.submittedAt)}>
-            Sent {formatRelative(setup.submittedAt)}
+          <time dateTime={setup.submittedAt} title={formatDateTime(setup.submittedAt)}>
+            {setup.revision > 1 ? "Resubmitted" : "Submitted"} {formatRelative(setup.submittedAt)}
             {setup.revision > 1 ? ` · revision ${setup.revision}` : ""}
-          </span>
+          </time>
           <StatusChip label={status.label} tone={status.tone} />
         </div>
       </div>
@@ -204,6 +204,14 @@ export default function AccountReview({
               </>
             ) : null}
           </div>
+          {setup.biography !== undefined ? (
+            <div className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1 px-3.5 py-2.5">
+              <dt className="w-24 shrink-0 text-[12px] text-[#7a827c] sm:w-28">Bio read</dt>
+              <dd className="min-w-0 flex-1 basis-40 whitespace-pre-wrap break-words text-[12.5px] leading-5 text-[#4b544e]">
+                {setup.biography.trim() ? setup.biography : <span className="italic text-[#7a827c]">Bio is empty</span>}
+              </dd>
+            </div>
+          ) : null}
           {setup.ownershipDetail || setup.checkedAt ? (
             <div className="bg-[#fafbf9] px-3.5 py-1.5 text-[11.5px] leading-5 text-[#616a64]">
               {setup.ownershipDetail}

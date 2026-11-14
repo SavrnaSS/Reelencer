@@ -89,7 +89,7 @@ export async function getAccountVerifyCode(actor: { aliases: string[] }, applica
   return { verifyCode: accountVerifyCode(String(row.id)) };
 }
 
-type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "checkedAt" | "ownershipRetryAt" | "followers" | "posts" | "isPrivate">;
+type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "biography" | "ownershipSource" | "checkedAt" | "ownershipRetryAt" | "followers" | "posts" | "isPrivate">;
 
 /** Reads the public bio for the code. Never throws: a failed read is recorded so the team can check by hand. */
 async function readOwnership(platformName: string, handle: string, code: string): Promise<OwnershipFields> {
@@ -98,24 +98,28 @@ async function readOwnership(platformName: string, handle: string, code: string)
   if (!canReadBio(platform)) return { ownership: "manual", ownershipDetail: `The reviewer will look for ${code} in the bio when they open the profile.`, checkedAt, ownershipRetryAt: undefined };
   try {
     const profile = await readInstagramAccountOwnership(handle, code);
-    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate, ownershipRetryAt: undefined };
-    if (profile.codeFound) return { ...stats, ownership: "found", ownershipDetail: `${code} found in the bio.`, checkedAt };
+    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate, biography: profile.biography, ownershipSource: profile.source, ownershipRetryAt: undefined };
+    const readAt = new Date().toISOString();
+    if (profile.codeFound) return { ...stats, ownership: "found", ownershipDetail: `${code} found in the bio.`, checkedAt: readAt };
     return {
       ...stats,
       ownership: "missing",
-      ownershipDetail: profile.isPrivate ? `The account is private. Keep ${code} in the bio and make the profile public before verification.` : `${code} isn't in the bio yet.`,
-      checkedAt,
+      ownershipDetail: profile.isPrivate ? `The account is private. Keep ${code} in the bio and make the profile public before verification.`
+        : profile.biography?.trim() ? `${code} isn't in the bio yet.` : `Instagram returned an empty bio. Add ${code} to the bio and save it, then check again.`,
+      checkedAt: readAt,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     return {
       ownership: "unreadable",
+      biography: undefined,
+      ownershipSource: undefined,
       ownershipDetail: error instanceof ProfileNotFoundError
         ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
         : /limited|redirect|login|403|401/i.test(message)
           ? `${platform.label} is limiting profile access. Keep the code in your bio; the team can check it if automatic verification remains unavailable.`
           : `${platform.label} couldn't provide the bio on the last check. Keep the code saved in your bio and try again shortly.`,
-      checkedAt,
+      checkedAt: new Date().toISOString(),
       ownershipRetryAt: new Date(Date.now() + (unreadablePreview(handle, error).retryAfterSeconds ?? 60) * 1000).toISOString(),
     };
   }

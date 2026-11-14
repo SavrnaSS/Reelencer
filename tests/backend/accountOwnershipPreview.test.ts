@@ -9,7 +9,7 @@ import { GET, POST } from "../../app/api/gig-applications/account-setup/route";
 const originalEnv = { ...process.env }, originalFetch = globalThis.fetch;
 const actor = { userId: "11111111-1111-4111-8111-111111111111", aliases: ["QA-CREATOR"] };
 let sequence = 0, applicationId: string, profileReads: number;
-let mode: "found" | "missing_code" | "wrong_profile" | "limited" | "login" | "missing" | "hold";
+let mode: "found" | "empty" | "missing_code" | "wrong_profile" | "limited" | "login" | "missing" | "hold";
 let release: (() => void) | undefined, started: (() => void) | undefined;
 let submitted: StoredAccountSetup | undefined, proposalWrites: number;
 const json = (value: unknown) => Response.json(value);
@@ -35,7 +35,7 @@ beforeEach(() => {
       if (mode === "login") return new Response("Login", { status: 302 });
       if (mode === "missing") return new Response("Missing", { status: 404 });
       const code = accountVerifyCode(applicationId);
-      const biography = mode === "missing_code" ? "Creator bio without verification" : `Creator\n${code}`;
+      const biography = mode === "empty" ? "" : mode === "missing_code" ? "Creator bio without verification" : `Creator\n${code}`;
       const username = mode === "wrong_profile" ? "another_creator" : url.pathname.split("/")[1];
       return new Response(`<div>${code}</div><script type="application/json">${JSON.stringify({ user: { username, biography } })}</script>`, { headers: { "Content-Type": "text/html" } });
     }
@@ -60,11 +60,15 @@ beforeEach(() => {
 
 test("submitted checks persist provider cooldowns and return their remaining retry time", async () => {
   submitted = { platform: "Instagram", handle: "creator.submitted", profileUrl: "https://www.instagram.com/creator.submitted/", email: "", status: "Submitted", revision: 1, submittedAt: new Date(Date.now() - 180_000).toISOString(), checkedAt: new Date(Date.now() - 180_000).toISOString(), ownership: "missing" };
+  submitted.biography = "A biography from an earlier check";
+  submitted.ownershipSource = "public_profile";
   mode = "limited";
   const result = await checkAccountOwnership({ ...actor, isAdmin: false }, applicationId);
   const retryAt = result.proposal?.accountSetup?.ownershipRetryAt;
   assert.ok(retryAt && Date.parse(retryAt) >= Date.now() + 119_000);
   assert.equal(result.proposal?.accountSetup?.ownership, "unreadable");
+  assert.equal(result.proposal?.accountSetup?.biography, undefined);
+  assert.equal(result.proposal?.accountSetup?.ownershipSource, undefined);
   assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
   await assert.rejects(checkAccountOwnership({ ...actor, isAdmin: false }, applicationId), error => error instanceof AccountOwnershipCooldownError && error.retryAfterSeconds >= 119);
   const response = await POST(new NextRequest("https://app.example.test/api/gig-applications/account-setup", { method: "POST", headers: { authorization: "Bearer test-session", "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", applicationId }) }), { params: Promise.resolve({}) });
@@ -79,7 +83,22 @@ test("readable submitted biographies clear an expired provider pause", async () 
   mode = "missing_code";
   const result = await checkAccountOwnership({ ...actor, isAdmin: false }, applicationId);
   assert.equal(result.proposal?.accountSetup?.ownership, "missing");
+  assert.equal(result.proposal?.accountSetup?.biography, "Creator bio without verification");
+  assert.equal(result.proposal?.accountSetup?.ownershipSource, "public_profile");
   assert.equal(result.proposal?.accountSetup?.ownershipRetryAt, undefined);
+  assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
+});
+
+test("a measured empty biography is saved as readable evidence with a missing code", async () => {
+  submitted = { platform: "Instagram", handle: "creator.emptybio", profileUrl: "https://www.instagram.com/creator.emptybio/", email: "", status: "Submitted", revision: 1, submittedAt: new Date(Date.now() - 180_000).toISOString() };
+  mode = "empty";
+  const result = await checkAccountOwnership({ ...actor, isAdmin: true }, applicationId);
+  const setup = result.proposal?.accountSetup;
+  assert.equal(setup?.ownership, "missing");
+  assert.equal(setup?.biography, "");
+  assert.equal(setup?.ownershipSource, "public_profile");
+  assert.match(setup?.ownershipDetail ?? "", /empty bio/i);
+  assert.equal(setup?.ownershipRetryAt, undefined);
   assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
 });
 afterEach(() => { release?.(); globalThis.fetch = originalFetch; process.env = { ...originalEnv }; });

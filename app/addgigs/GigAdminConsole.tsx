@@ -10,10 +10,20 @@ import loadingStyles from "@/app/_components/adminLoading.module.css";
 import { useAdminLive, type AdminLiveKind } from "@/lib/useAdminLive";
 import { createAdminReadQueue } from "@/lib/adminReadQueue";
 import { adminSectionHref, type GigAdminView } from "@/lib/adminNavigation";
+import {
+  applicationQueueSubmission,
+  countApplicationQueueFilters,
+  hasApplicationAccount,
+  matchesApplicationQueueFilter,
+  sortApplicationQueue,
+  type ApplicationQueueFilter,
+  type ApplicationQueueSort,
+} from "@/lib/adminApplicationQueue";
 import LinkedAccountsPanel from "./LinkedAccountsPanel";
 import KycReviewPanel, { type KycRow } from "./KycReviewPanel";
 import CredentialSubmissionsPanel, { type Assignment } from "./CredentialSubmissionsPanel";
 import ApplicationDetail from "./ApplicationDetail";
+import ApplicationQueueFilters from "./ApplicationQueueFilters";
 import {
   Banner,
   BulkBar,
@@ -463,11 +473,19 @@ export default function GigAdminConsole({
     const gigParam = new URLSearchParams(searchKey ?? window.location.search).get("gig");
     queueMicrotask(() => setSelectedGigId(gigParam || "All"));
   }, [active, view, searchKey]);
-  const [applicationStatusFilter, setApplicationStatusFilter] = useState<ApplicationStatus | "All">("All");
+  const [applicationQueueFilter, setApplicationQueueFilter] = useState<ApplicationQueueFilter>("All");
   const [applicationQueueQuery, setApplicationQueueQuery] = useState("");
-  const [applicationQueueSort, setApplicationQueueSort] = useState<"latest" | "oldest" | "worker_asc" | "gig_asc">("latest");
+  const [applicationQueueSort, setApplicationQueueSort] = useState<ApplicationQueueSort>("latest");
+  const applicationQueueList = useRef<HTMLDivElement>(null);
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
   const [selectedApplicationIds, setSelectedApplicationIds] = useState<string[]>([]);
+  const selectApplicationQueueFilter = (filter: ApplicationQueueFilter) => {
+    setApplicationQueueFilter(filter);
+    setSelectedApplicationIds([]);
+    setSelectedApplicationId(null);
+    if (filter === "All") setApplicationQueueQuery("");
+    applicationQueueList.current?.scrollTo({ top: 0 });
+  };
   const [appsRefreshing, setAppsRefreshing] = useState(false);
   const [appsSyncedAt, setAppsSyncedAt] = useState<string | null>(null);
   const [appDrawer, setAppDrawer] = useState<"message" | "automation" | null>(null);
@@ -803,16 +821,17 @@ export default function GigAdminConsole({
   }, [gigs]);
   const gigTitleById = useCallback((gigId: string) => gigById.get(String(gigId))?.title, [gigById]);
   const filteredApps = useMemo(() => {
-    const statusScoped =
-      applicationStatusFilter === "All" ? appsForGig : appsForGig.filter((app) => app.status === applicationStatusFilter);
+    const filterScoped = appsForGig.filter(app => matchesApplicationQueueFilter(app, applicationQueueFilter));
     const query = applicationQueueQuery.trim().toLowerCase();
     const queryScoped = !query
-      ? statusScoped
-      : statusScoped.filter((app) => {
+      ? filterScoped
+      : filterScoped.filter((app) => {
           const gig = gigById.get(String(app.gigId));
           return [
             app.workerName,
             app.workerId,
+            app.proposal?.accountSetup?.handle,
+            app.proposal?.accountSetup?.profileUrl,
             app.proposal?.pitch,
             app.proposal?.approach,
             gig?.title,
@@ -821,22 +840,11 @@ export default function GigAdminConsole({
             .map((value) => String(value ?? "").toLowerCase())
             .some((value) => value.includes(query));
         });
-    const sorted = [...queryScoped];
-    sorted.sort((a, b) => {
-      if (applicationQueueSort === "oldest") return new Date(a.appliedAt).getTime() - new Date(b.appliedAt).getTime();
-      if (applicationQueueSort === "worker_asc") return String(a.workerName ?? a.workerId).localeCompare(String(b.workerName ?? b.workerId));
-      if (applicationQueueSort === "gig_asc") {
-        const aGig = String(gigById.get(String(a.gigId))?.title ?? a.gigId);
-        const bGig = String(gigById.get(String(b.gigId))?.title ?? b.gigId);
-        return aGig.localeCompare(bGig);
-      }
-      return new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime();
-    });
-    return sorted;
-  }, [applicationQueueQuery, applicationQueueSort, applicationStatusFilter, appsForGig, gigById]);
+    return sortApplicationQueue(queryScoped, applicationQueueSort, gigId => gigById.get(String(gigId))?.title);
+  }, [applicationQueueQuery, applicationQueueSort, applicationQueueFilter, appsForGig, gigById]);
   const proposalApps = useMemo(
     () =>
-      apps.filter(
+      appsForGig.filter(
         (app) =>
           !!app.proposal &&
           !!(
@@ -847,21 +855,9 @@ export default function GigAdminConsole({
             app.proposal.portfolio
           )
       ),
-    [apps]
+    [appsForGig]
   );
-  const applicationStatusCounts = useMemo(() => {
-    const counts: Record<ApplicationStatus, number> = {
-      Applied: 0,
-      Pending: 0,
-      Accepted: 0,
-      Rejected: 0,
-      Withdrawn: 0,
-    };
-    for (const app of appsForGig) {
-      counts[app.status] = (counts[app.status] ?? 0) + 1;
-    }
-    return counts;
-  }, [appsForGig]);
+  const applicationQueueCounts = useMemo(() => countApplicationQueueFilters(appsForGig), [appsForGig]);
   const selectedApplication = useMemo(() => {
     if (!filteredApps.length) return null;
     return filteredApps.find((app) => app.id === selectedApplicationId) ?? filteredApps[0];
@@ -3175,12 +3171,12 @@ export default function GigAdminConsole({
             <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 xl:grid-cols-6">
               {[
                 { label: "Total", value: String(appsForGig.length), caption: `${proposalApps.length} proposals`, dot: "bg-[#8a928c]", filter: "All" as const },
-                { label: "Awaiting", value: String(applicationStatusCounts.Pending + applicationStatusCounts.Applied), caption: "Pending + applied", dot: "bg-[#e29a1b]", filter: "Pending" as const },
-                { label: "Approved", value: String(applicationStatusCounts.Accepted), caption: "Accepted", dot: "bg-[#2e7d4f]", filter: "Accepted" as const },
-                { label: "Rejected", value: String(applicationStatusCounts.Rejected), caption: "Needs changes", dot: "bg-[#d4483b]", filter: "Rejected" as const },
+                { label: "Awaiting", value: String(applicationQueueCounts.Pending), caption: "Awaiting review", dot: "bg-[#e29a1b]", filter: "Pending" as const },
+                { label: "Approved", value: String(applicationQueueCounts.Accepted), caption: "Accepted", dot: "bg-[#2e7d4f]", filter: "Accepted" as const },
+                { label: "Rejected", value: String(applicationQueueCounts.Rejected), caption: "Needs changes", dot: "bg-[#d4483b]", filter: "Rejected" as const },
                 {
                   label: "Approval rate",
-                  value: appsForGig.length > 0 ? `${Math.round((applicationStatusCounts.Accepted / appsForGig.length) * 100)}%` : "0%",
+                  value: appsForGig.length > 0 ? `${Math.round((applicationQueueCounts.Accepted / appsForGig.length) * 100)}%` : "0%",
                   caption: "Of all applications",
                   dot: "bg-[#2a78d6]",
                   filter: null,
@@ -3193,7 +3189,7 @@ export default function GigAdminConsole({
                   filter: null,
                 },
               ].map((tile) => {
-                const active = tile.filter && applicationStatusFilter === tile.filter;
+                const active = tile.filter && applicationQueueFilter === tile.filter;
                 const body = (
                   <>
                     <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-[#616a64] sm:text-[12px]">
@@ -3212,10 +3208,7 @@ export default function GigAdminConsole({
                     key={tile.label}
                     type="button"
                     aria-pressed={!!active}
-                    onClick={() => {
-                      setApplicationStatusFilter(tile.filter);
-                      setSelectedApplicationIds([]);
-                    }}
+                    onClick={() => selectApplicationQueueFilter(tile.filter)}
                     className={`${shell} transition hover:border-[#c9cec8]`}
                   >
                     {body}
@@ -3266,7 +3259,7 @@ export default function GigAdminConsole({
                         className={`${fieldClass} h-9 pl-8`}
                         value={applicationQueueQuery}
                         onChange={(e) => setApplicationQueueQuery(e.target.value)}
-                        placeholder="Search worker, gig, proposal"
+                        placeholder="Search worker, account, gig"
                       />
                     </label>
                     <select
@@ -3274,6 +3267,7 @@ export default function GigAdminConsole({
                       value={applicationQueueSort}
                       onChange={(e) => setApplicationQueueSort(e.target.value as typeof applicationQueueSort)}
                       aria-label="Sort queue"
+                      aria-describedby={applicationQueueSort === "latest" || applicationQueueSort === "oldest" ? "application-queue-sort-help" : undefined}
                     >
                       <option value="latest">Latest</option>
                       <option value="oldest">Oldest</option>
@@ -3281,43 +3275,45 @@ export default function GigAdminConsole({
                       <option value="gig_asc">Gig A–Z</option>
                     </select>
                   </div>
-                  <div className="dashboard-chip-scroller -mx-1 flex gap-1 overflow-x-auto px-1" role="tablist" aria-label="Filter by status">
-                    {(["All", "Applied", "Pending", "Accepted", "Rejected", "Withdrawn"] as const).map((status) => {
-                      const count = status === "All" ? appsForGig.length : applicationStatusCounts[status as ApplicationStatus];
-                      const active = applicationStatusFilter === status;
-                      return (
-                        <button
-                          key={status}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2 text-[12px] font-semibold transition ${
-                            active ? "bg-[#1f2b24] text-[#fff]" : "text-[#4b544e] hover:bg-[#f1f3f0]"
-                          }`}
-                          onClick={() => {
-                            setApplicationStatusFilter(status);
-                            setSelectedApplicationIds([]);
-                          }}
-                        >
-                          {status}
-                          <span className={`rounded-[999px] px-1.5 text-[10.5px] leading-[16px] tabular-nums ${active ? "bg-[#fff]/20" : "bg-[#eef0ed]"}`}>{count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {applicationQueueSort === "latest" || applicationQueueSort === "oldest" ? (
+                    <p id="application-queue-sort-help" className="px-1 text-[11px] leading-4 text-[#7a827c]">
+                      {applicationQueueSort === "oldest" ? "Oldest" : "Newest"} first · account submission time, or application time when no account has been sent.
+                    </p>
+                  ) : null}
+                  <ApplicationQueueFilters value={applicationQueueFilter} counts={applicationQueueCounts} onChange={selectApplicationQueueFilter} />
                 </div>
                 {filteredApps.length === 0 ? (
                   <div className="px-4 py-10 text-center">
                     <div className="text-[13.5px] font-semibold text-[#1a201c]">{appsForGig.length === 0 ? "No applications yet" : "Nothing matches"}</div>
-                    <p className="mt-1 text-[12.5px] text-[#7a827c]">{appsForGig.length === 0 ? "Applications for your gigs show up here." : "Try another status, gig or search."}</p>
+                    <p className="mt-1 text-[12.5px] text-[#7a827c]">{appsForGig.length === 0 ? "Applications for your gigs show up here." : "Try another filter, gig or search."}</p>
+                    {appsForGig.length > 0 && (
+                      <button type="button" className={`${btnGhost} mt-3`} onClick={() => selectApplicationQueueFilter("All")}>
+                        Show all applications
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div className="space-y-1 p-2 xl:max-h-[calc(100dvh-260px)] xl:overflow-y-auto xl:overscroll-contain">
+                  <div ref={applicationQueueList} className="space-y-1 p-2 xl:max-h-[calc(100dvh-260px)] xl:overflow-y-auto xl:overscroll-contain">
                       {filteredApps.map((app) => {
                         const relatedGig = gigById.get(String(app.gigId));
                         const active = selectedApplication?.id === app.id;
                         const checked = selectedApplicationIds.includes(app.id);
                         const name = app.workerName ?? app.workerId;
+                        const account = app.proposal?.accountSetup;
+                        const accountSent = hasApplicationAccount(app);
+                        const accountLabel = !accountSent ? "Without account"
+                          : account?.status === "Verified" ? "Account verified"
+                          : account?.status === "ChangesRequested" ? "Awaiting fixes"
+                          : app.status === "Pending" || app.status === "Applied"
+                            ? account?.ownership === "found" ? "Code verified · review" : "Account to check"
+                            : "Account sent";
+                        const accountTone = !accountSent || account?.status === "ChangesRequested" ? "warning"
+                          : account?.status === "Verified" ? "success" : "info";
+                        const submission = applicationQueueSubmission(app);
+                        const accountSubmittedAt = submission.source === "account" ? submission.at : undefined;
+                        const accountSubmissionLabel = account && account.revision > 1 ? "Account resent" : "Account sent";
+                        const appliedAgo = formatRelative(app.appliedAt);
+                        const proposalText = app.proposal?.pitch || app.proposal?.approach;
                         return (
                           <div
                             key={app.id}
@@ -3347,41 +3343,43 @@ export default function GigAdminConsole({
                                   if (!isDesktop) setDetailSheetOpen(true);
                                 }}
                               >
-                                <span className="flex items-center justify-between gap-2">
-                                  <span className="flex min-w-0 items-center gap-2">
-                                    <span aria-hidden className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#eef3ef] text-[10px] font-bold text-[#2b5d4a]">
-                                      {String(name ?? "?").trim().slice(0, 1).toUpperCase() || "?"}
-                                    </span>
-                                    <span className="truncate text-[13.5px] font-semibold text-[#1a201c]">{name || "Unnamed worker"}</span>
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span aria-hidden className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#eef3ef] text-[10px] font-bold text-[#2b5d4a]">
+                                    {String(name ?? "?").trim().slice(0, 1).toUpperCase() || "?"}
                                   </span>
-                                  <span className="shrink-0 text-[11.5px] text-[#8a928c]" title={formatDateTime(app.appliedAt)}>
-                                    {formatRelative(app.appliedAt)}
-                                  </span>
+                                  <span className="truncate text-[13.5px] font-semibold text-[#1a201c]">{name || "Unnamed worker"}</span>
                                 </span>
                                 <span className="mt-0.5 block truncate text-[12.5px] text-[#616a64]">{relatedGig?.title ?? app.gigId}</span>
-                              </button>
-                              <div className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[#7a827c]">
-                                {app.proposal?.pitch || app.proposal?.approach || "No proposal text"}
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                <StatusChip status={app.status} />
-                                {isContentPostingGig(relatedGig?.gigType) && app.status !== "Accepted" && app.status !== "Rejected" ? (
-                                  <span
-                                    className={`inline-flex items-center gap-1 rounded-[999px] px-2 py-0.5 text-[11px] font-medium ${
-                                      app.proposal?.accountSetup?.status === "Submitted"
-                                        ? "bg-[#e6f0fb] text-[#1f4a73]"
-                                        : "bg-[#fff4df] text-[#8a5300]"
-                                    }`}
+                                <span className="relative z-10 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10.5px] leading-4 text-[#7a827c]">
+                                  <time
+                                    className="whitespace-nowrap"
+                                    dateTime={appliedAgo ? app.appliedAt : undefined}
+                                    title={`Form submitted: ${formatDateTime(app.appliedAt)}`}
                                   >
-                                    <Icon d={ICONS.lock} className="h-3 w-3" />
-                                    {app.proposal?.accountSetup?.status === "Submitted"
-                                      ? app.proposal.accountSetup.ownership === "found"
-                                        ? "Code verified · review"
-                                        : "Account to check"
-                                      : app.proposal?.accountSetup?.status === "ChangesRequested"
-                                        ? "Awaiting fixes"
-                                        : "No account yet"}
-                                  </span>
+                                    Applied <span className="font-medium text-[#616a64]">{appliedAgo || "—"}</span>
+                                  </time>
+                                  {accountSubmittedAt ? (
+                                    <time
+                                      className="whitespace-nowrap"
+                                      dateTime={accountSubmittedAt}
+                                      title={`${accountSubmissionLabel}: ${formatDateTime(accountSubmittedAt)}`}
+                                    >
+                                      {accountSubmissionLabel} <span className="font-medium text-[#2b5d4a]">{formatRelative(accountSubmittedAt)}</span>
+                                    </time>
+                                  ) : (
+                                    <span className="whitespace-nowrap text-[#8a928c]" title={accountSent ? "Account submitted; submission time is unavailable." : "No account has been sent yet."}>
+                                      {accountSent ? `${accountSubmissionLabel} —` : "Account not sent"}
+                                    </span>
+                                  )}
+                                </span>
+                              </button>
+                              {proposalText ? (
+                                <div className="mt-1.5 line-clamp-2 text-[12px] leading-5 text-[#7a827c]">{proposalText}</div>
+                              ) : null}
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <StatusChip status={app.status === "Applied" ? "Pending" : app.status} />
+                                {accountSent || isContentPostingGig(relatedGig?.gigType) ? (
+                                  <StatusChip label={accountLabel} tone={accountTone} />
                                 ) : null}
                                 {app.proposal?.whatsappLink?.trim() && (
                                   <span className="inline-flex items-center gap-1 rounded-[999px] bg-[#f1f3f0] px-2 py-0.5 text-[11px] font-medium text-[#4b544e]">
@@ -3480,7 +3478,7 @@ export default function GigAdminConsole({
                 onClose={() => setAppDrawer(null)}
                 onSelectMatches={(ids) => {
                   setSelectedGigId("All");
-                  setApplicationStatusFilter("All");
+                  setApplicationQueueFilter("All");
                   setApplicationQueueQuery("");
                   setSelectedApplicationIds(ids);
                 }}

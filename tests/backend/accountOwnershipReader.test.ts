@@ -113,3 +113,51 @@ test("a stalled official fallback is aborted at the shared deadline", async () =
   await assert.rejects(read("creator", code), error => error === fail);
   assert.equal(signal?.aborted, true);
 });
+
+test("simultaneous checks share a biography read but match each application's own code", async () => {
+  let calls = 0, release: (() => void) | undefined, started: (() => void) | undefined;
+  const didStart = new Promise<void>(resolve => { started = resolve; });
+  const read = createInstagramAccountOwnershipReader({
+    publicProfile: async () => {
+      calls++; started?.();
+      await new Promise<void>(resolve => { release = resolve; });
+      return { ...profile, source: "public_profile" };
+    },
+    config: async () => { throw new Error("Readable biographies need no fallback"); },
+    businessProfile: async () => profile,
+  });
+  const checks = [read("Creator", code), read("@CREATOR", "RL-ZYX987"), read("creator", code)];
+  await didStart; release?.();
+  const results = await Promise.all(checks);
+  assert.equal(calls, 1);
+  assert.deepEqual(results.map(result => result.codeFound), [true, false, true]);
+  assert.ok(results.every(result => result.biography === profile.biography && result.source === "public_profile"));
+});
+
+test("later checks fetch fresh evidence after a success or failure", async () => {
+  let calls = 0;
+  const read = createInstagramAccountOwnershipReader({
+    publicProfile: async () => {
+      calls++;
+      if (calls === 1) throw fail;
+      return { ...profile, biography: calls === 2 ? profile.biography : "The code was removed" };
+    },
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
+    businessProfile: async () => profile,
+  });
+  await assert.rejects(read("creator", code));
+  assert.equal((await read("creator", code)).codeFound, true);
+  assert.equal((await read("creator", code)).codeFound, false);
+  assert.equal(calls, 3, "failed and successful reads must not freeze subsequent manual checks");
+});
+
+test("timed-out public requests receive cancellation rather than continuing in the background", async () => {
+  let signal: AbortSignal | undefined;
+  const read = createInstagramAccountOwnershipReader({
+    publicProfile: async (_handle, _code, pending) => { signal = pending; return new Promise(() => {}); },
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
+    businessProfile: async () => profile,
+  }, { totalMs: 10 });
+  await assert.rejects(read("creator", code), error => error instanceof SocialSyncError && error.code === "timeout");
+  assert.equal(signal?.aborted, true);
+});
