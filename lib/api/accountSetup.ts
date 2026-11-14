@@ -29,7 +29,7 @@ import {
 import { readInstagramAccountOwnership } from "@/lib/api/accountOwnershipReader";
 import { decryptSecretText, deriveSecretBytes } from "@/lib/secretCrypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
+import { classifySyncError, ProfileNotFoundError, SocialSyncError } from "@/lib/socialSyncSchedule";
 
 export function decodePublicWorkerName(raw: unknown) {
   const decoded = decodeWorkerName(raw);
@@ -89,17 +89,17 @@ export async function getAccountVerifyCode(actor: { aliases: string[] }, applica
   return { verifyCode: accountVerifyCode(String(row.id)) };
 }
 
-type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "biography" | "ownershipSource" | "checkedAt" | "ownershipRetryAt" | "followers" | "posts" | "isPrivate">;
+type OwnershipFields = Pick<StoredAccountSetup, "ownership" | "ownershipDetail" | "biography" | "ownershipSource" | "ownershipError" | "checkedAt" | "ownershipRetryAt" | "followers" | "posts" | "isPrivate">;
 
 /** Reads the public bio for the code. Never throws: a failed read is recorded so the team can check by hand. */
-async function readOwnership(platformName: string, handle: string, code: string): Promise<OwnershipFields> {
+async function readOwnership(platformName: string, handle: string, code: string, forceRefresh = false): Promise<OwnershipFields> {
   const platform = accountPlatformFor(platformName);
   const checkedAt = new Date().toISOString();
   if (!canReadBio(platform)) return { ownership: "manual", ownershipDetail: `The reviewer will look for ${code} in the bio when they open the profile.`, checkedAt, ownershipRetryAt: undefined };
   try {
-    const profile = await readInstagramAccountOwnership(handle, code);
-    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate, biography: profile.biography, ownershipSource: profile.source, ownershipRetryAt: undefined };
-    const readAt = new Date().toISOString();
+    const profile = await readInstagramAccountOwnership(handle, code, { forceRefresh });
+    const stats = { followers: profile.followers, posts: profile.posts, isPrivate: profile.isPrivate, biography: profile.biography, ownershipSource: profile.source, ownershipError: undefined, ownershipRetryAt: undefined };
+    const readAt = profile.readAt ?? new Date().toISOString();
     if (profile.codeFound) return { ...stats, ownership: "found", ownershipDetail: `${code} found in the bio.`, checkedAt: readAt };
     return {
       ...stats,
@@ -109,16 +109,21 @@ async function readOwnership(platformName: string, handle: string, code: string)
       checkedAt: readAt,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
+    const ownershipError = classifySyncError(error);
     return {
       ownership: "unreadable",
       biography: undefined,
       ownershipSource: undefined,
+      ownershipError,
       ownershipDetail: error instanceof ProfileNotFoundError
         ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
-        : /limited|redirect|login|403|401/i.test(message)
-          ? `${platform.label} is limiting profile access. Keep the code in your bio; the team can check it if automatic verification remains unavailable.`
-          : `${platform.label} couldn't provide the bio on the last check. Keep the code saved in your bio and try again shortly.`,
+        : ownershipError === "login_required"
+          ? `${platform.label} blocked public reads from this server. Keep the code in your bio. An admin can configure authenticated access or open the profile to review it.`
+          : ownershipError === "credentials"
+            ? "The Instagram connection needs to be renewed. An admin can reconnect it in Linked accounts, then check this bio again."
+            : ownershipError === "rate_limited"
+              ? `${platform.label} has temporarily limited bio checks. Keep the code in your bio; wait for the retry time before checking again.`
+              : `${platform.label} couldn't provide the bio on the last check. Keep the code saved in your bio and try again shortly.`,
       checkedAt: new Date().toISOString(),
       ownershipRetryAt: new Date(Date.now() + (unreadablePreview(handle, error).retryAfterSeconds ?? 60) * 1000).toISOString(),
     };
@@ -176,11 +181,11 @@ export async function previewAccountOwnership(actor: { userId: string; aliases: 
     let value: AccountPreview;
     try {
       const profile = await readInstagramAccountOwnership(handle, code);
-      value = { state: "found", handle, codeFound: !!profile.codeFound, isPrivate: profile.isPrivate, followers: profile.followers, posts: profile.posts };
+      value = { state: "found", handle, codeFound: !!profile.codeFound, isPrivate: profile.isPrivate, followers: profile.followers, posts: profile.posts, checkedAt: profile.readAt };
     } catch (error) {
       value = error instanceof ProfileNotFoundError ? { state: "not_found", handle, retryAfterSeconds: 60 } : unreadablePreview(handle, error);
     }
-    value = { ...value, checkedAt: new Date().toISOString() };
+    value = { ...value, checkedAt: value.checkedAt ?? new Date().toISOString() };
     const ttl = value.state === "unreadable" || value.state === "not_found" ? (value.retryAfterSeconds ?? 30) * 1000 : PREVIEW_CACHE_MS;
     if (previewCache.size > 2000) previewCache.clear();
     previewCache.set(key, { expiresAt: Date.now() + ttl, value });
@@ -371,17 +376,18 @@ export async function checkAccountOwnership(actor: { userId: string; aliases: st
   const decoded = decodeWorkerName(row.worker_name);
   const previous = readStoredAccountSetup(decoded.proposal?.accountSetup);
   if (!previous) throw new ApiError(409, "Submit the account first.");
-  // Nothing left to prove once the team has decided.
-  if (previous.status === "Verified" || row.status === "Accepted" || row.status === "Rejected") return toApplication(row);
+  // Creators stop checking after review; administrators can refresh evidence without reopening the decision.
+  const decided = previous.status === "Verified" || row.status === "Accepted" || row.status === "Rejected";
+  if (!actor.isAdmin && decided) return { ...toApplication(row), mailStatus: null };
   const last = previous.checkedAt ? Date.parse(previous.checkedAt) : 0;
   const providerRetryAt = previous.ownershipRetryAt ? Date.parse(previous.ownershipRetryAt) : 0;
   const wait = Math.max(Number.isFinite(last) ? last + ACCOUNT_REQUEST_LIMITS.recheckSeconds * 1000 : 0, Number.isFinite(providerRetryAt) ? providerRetryAt : 0) - Date.now();
   if (!actor.isAdmin && wait > 0) throw new AccountOwnershipCooldownError(Math.ceil(wait / 1000));
   const verifyCode = previous.verifyCode ?? accountVerifyCode(String(row.id));
-  const setup: StoredAccountSetup = { ...previous, verifyCode, ...(await readOwnership(previous.platform, previous.handle, verifyCode)) };
+  const setup: StoredAccountSetup = { ...previous, verifyCode, ...(await readOwnership(previous.platform, previous.handle, verifyCode, true)) };
   // The write is compare-and-set, so two checks racing can't both see "not found" → "found" and send twice.
   const data = await writeProposal(sb, actor.userId, row, { ...(decoded.proposal ?? {}), accountSetup: setup });
-  const foundNow = setup.ownership === "found" && previous.ownership !== "found";
+  const foundNow = !decided && setup.ownership === "found" && previous.ownership !== "found";
   const mailStatus = foundNow ? await notify(sb, data, ownershipConfirmedMail(setup, gig)) : null;
   return { ...toApplication(data), mailStatus };
 }

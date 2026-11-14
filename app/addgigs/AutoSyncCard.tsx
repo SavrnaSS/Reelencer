@@ -70,8 +70,8 @@ const PROVIDERS: Record<
   instagram: {
     label: "Instagram",
     platformId: "instagram",
-    reads: "Followers, following, post counts and available reel metrics. Connect Meta Business Discovery for eligible public professional accounts. Public profiles and embeds provide a fallback where Instagram allows access. Hidden metrics stay unavailable.",
-    fields: [{ name: "metaAccessToken", label: "Meta access token (optional)", placeholder: "Long-lived access token", secret: true }, { name: "metaIgBusinessId", label: "Your Instagram professional account ID", placeholder: "1784…", secret: false }],
+    reads: "Profile bios for ownership checks, plus available account and reel statistics. Connect Meta Business Discovery for authenticated reads of eligible professional accounts. Public pages are a limited fallback and may be blocked from the hosting server.",
+    fields: [{ name: "metaAccessToken", label: "Meta access token", placeholder: "Long-lived access token", secret: true }, { name: "metaIgBusinessId", label: "Your Instagram professional account ID", placeholder: "1784…", secret: false }],
     steps: [
       { text: "Approve and link the creator's handle. Automatic sync checks Instagram accounts every five minutes, with longer waits after failures." },
       { text: "For reliable professional account reads, connect your Meta app token with the required Instagram permissions and the professional account ID it manages.", href: "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/business_discovery" },
@@ -93,7 +93,7 @@ const PROVIDERS: Record<
 
 function SourceBadge({ connected, fields }: { connected: boolean; fields: FieldState[] }) {
   if (!connected) return <span className="rounded-[999px] bg-[#f1f3f0] px-2 py-0.5 text-[11px] font-semibold text-[#616a64]">Not connected</span>;
-  if (!fields.length) return <span className="rounded-full bg-[#ebf5ee] px-2 py-0.5 text-[11px] font-semibold text-[#1d5c37]">Profile reader ready</span>;
+  if (!fields.length) return <span className="rounded-full bg-[#fff6e5] px-2 py-0.5 text-[11px] font-semibold text-[#9a5b00]">Public access only</span>;
   const env = fields.some((f) => f.source === "env");
   const hint = fields.find((f) => f.source === "app" && f.hint)?.hint;
   return (

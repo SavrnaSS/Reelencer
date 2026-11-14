@@ -63,6 +63,29 @@ test("weekly quota counts legacy application owners once per gig without trustin
   await db.query("update public.workers set id=$2 where user_id=$1", [owner, code]);
 });
 
+test("bio evidence updates preserve decision dates, stale-update protection and application ownership", async () => {
+  type ApplicationRow = { id: string; status: string; worker_name: string; decided_at: string | null };
+  const load = async () => (await db.query<{ row: ApplicationRow }>("select to_jsonb(a) as row from public.gig_applications a where worker_code=$1", [code])).rows[0].row;
+  const update = async (actor: string, expected: ApplicationRow, name: string, status: string) => (await db.query<{ row: ApplicationRow }>("select public.update_gig_application($1,$2,$3,$4,$5) as row", [actor, expected.id, expected, name, status])).rows[0].row;
+  const original = await load();
+  try {
+    const pending = await update(admin, original, "New bio evidence", "Pending");
+    assert.equal(pending.decided_at, null, "An evidence refresh is not a review decision");
+    const approved = await update(admin, pending, "Approved account", "Accepted");
+    assert.ok(approved.decided_at, "A status transition still records a decision");
+    await db.query("update public.gig_applications set decided_at='2026-01-01T12:00:00Z' where id=$1", [original.id]);
+    const beforeRefresh = await load();
+    const refreshed = await update(admin, beforeRefresh, "Refreshed biography", "Accepted");
+    assert.equal(refreshed.status, "Accepted");
+    assert.equal(refreshed.decided_at, beforeRefresh.decided_at, "The original approval date must survive bio rechecks");
+    await assert.rejects(update(admin, beforeRefresh, "Stale evidence", "Accepted"), /invalid_transition/);
+    await assert.rejects(update(peer, refreshed, "Other worker", "Accepted"), /not_found/);
+    await assert.rejects(update(owner, refreshed, "Reopen review", "Pending"), /forbidden/);
+  } finally {
+    await db.query("update public.gig_applications set worker_name=$2,status=$3,decided_at=$4 where id=$1", [original.id, original.worker_name, original.status, original.decided_at]);
+  }
+});
+
 test("deletion hides every application alias immediately without removing retained records or another user's application", async () => {
   await db.query("select public.moderate_worker($1,$2,'delete','User requested account deletion',$3)", [admin, owner, code]);
   assert.deepEqual(await visible(), [peerCode], "An existing canonical owner wins over stale or spoofed encoded metadata");

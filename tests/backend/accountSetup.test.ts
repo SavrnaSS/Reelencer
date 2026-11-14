@@ -124,4 +124,6 @@ test('actual bio evidence and its provider survive redaction, including an empty
   const invalid = publicAccountSetup({ ...base, biography: 123, ownershipSource: 'user-supplied-provider' })!;
   assert.equal(invalid.biography, undefined);
   assert.equal(invalid.ownershipSource, undefined);
+  assert.equal(publicAccountSetup({ ...base, ownershipError: 'login_required' })?.ownershipError, 'login_required');
+  assert.equal(publicAccountSetup({ ...base, ownershipError: 'private-secret-error-message' })?.ownershipError, undefined);
 });

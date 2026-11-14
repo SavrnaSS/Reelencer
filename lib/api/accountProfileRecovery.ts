@@ -63,7 +63,7 @@ async function save(sb: Sb, row: Row, health: AccountProfileHealth, restore?: { 
 async function readProfile(platformName: string, handle: string, code: string): Promise<{ owned: boolean; externalId?: string } | null> {
   const platform = accountPlatformFor(platformName);
   if (platform.id === "instagram") {
-    const profile = await readInstagramAccountOwnership(handle, code);
+    const profile = await readInstagramAccountOwnership(handle, code, { forceRefresh: true });
     if (typeof profile.biography !== "string") return null;
     return { owned: profile.codeFound === true, externalId: profile.externalId };
   }

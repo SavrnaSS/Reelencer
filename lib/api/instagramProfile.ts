@@ -484,7 +484,7 @@ export function extractInstagramProfileSummary(html: string, input: string): Omi
 }
 
 /** Two bounded public reads; never treat a caption, login page or reflected code as ownership evidence. */
-export async function fetchInstagramProfileSummary(input: string, lookFor?: string, options: { signal?: AbortSignal } = {}): Promise<InstagramProfileSummary> {
+export async function fetchInstagramProfileSummary(input: string, lookFor?: string, options: { signal?: AbortSignal; requireBiography?: boolean } = {}): Promise<InstagramProfileSummary> {
   const handle = normalizeInstagramHandle(input);
   const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
   if (signal.aborted) throw new SocialSyncError("Instagram's bio check was cancelled before reading the profile.", "timeout");
@@ -493,7 +493,7 @@ export async function fetchInstagramProfileSummary(input: string, lookFor?: stri
     try {
       const html = await readPage(path, AbortSignal.any([signal, AbortSignal.timeout(index === 0 ? 5000 : 3000)]));
       const summary = extractInstagramProfileSummary(html, handle);
-      if (lookFor && summary.biography === undefined) throw new SocialSyncError("Instagram did not expose this account's biography. Your ownership code could not be checked yet.", "unavailable");
+      if ((lookFor || options.requireBiography) && summary.biography === undefined) throw new SocialSyncError("Instagram did not expose this account's biography. Your ownership code could not be checked yet.", "unavailable");
       return {
         ...summary,
         source: index ? "public_embed" : "public_profile",

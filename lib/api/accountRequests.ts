@@ -128,7 +128,7 @@ async function runChecks(sb: Sb, r: Row): Promise<{ checks: RequestCheck[]; risk
   // the profile and looks for the code.
   if (platform.id === "instagram") {
     try {
-      const profile = await readInstagramAccountOwnership(handle, code);
+      const profile = await readInstagramAccountOwnership(handle, code, { forceRefresh: true });
       const counts = [
         profile.followers !== undefined ? `${formatCompact(profile.followers)} followers` : null,
         profile.posts !== undefined ? `${formatCompact(profile.posts)} posts` : null,

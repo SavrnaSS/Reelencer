@@ -12,6 +12,8 @@ let sequence = 0, applicationId: string, profileReads: number;
 let mode: "found" | "empty" | "missing_code" | "wrong_profile" | "limited" | "login" | "missing" | "hold";
 let release: (() => void) | undefined, started: (() => void) | undefined;
 let submitted: StoredAccountSetup | undefined, proposalWrites: number;
+let applicationStatus: string;
+const decisionTime = "2026-11-01T12:00:00.000Z";
 const json = (value: unknown) => Response.json(value);
 
 beforeEach(() => {
@@ -24,7 +26,7 @@ beforeEach(() => {
   process.env.META_IG_BUSINESS_ACCOUNT_ID = "";
   process.env.NEXT_PUBLIC_ENABLE_DEMO_MODE = "false";
   mode = "found"; profileReads = 0; release = undefined; started = undefined;
-  submitted = undefined; proposalWrites = 0;
+  submitted = undefined; proposalWrites = 0; applicationStatus = "Pending";
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     assert.ok(!init?.method || init.method === "GET" || (submitted && url.pathname === "/rest/v1/rpc/update_gig_application"), "only explicitly mocked submitted-check writes are allowed");
@@ -43,7 +45,7 @@ beforeEach(() => {
     if (url.pathname === "/auth/v1/user") return json({ id: actor.userId, email: "qa@example.test", email_confirmed_at: "2026-01-01T00:00:00Z", is_anonymous: false });
     if (url.pathname === "/rest/v1/profiles") return json([{ worker_code: "QA-CREATOR", active: true }]);
     if (url.pathname === "/rest/v1/workers") return json([{ id: "QA-CREATOR", active: true }]);
-    if (url.pathname === "/rest/v1/gig_applications") return json({ id: applicationId, gig_id: "qa-gig", worker_code: "QA-CREATOR", worker_name: submitted ? encodeWorkerName("QA Creator", { accountSetup: submitted }) : "QA Creator", status: "In review" });
+    if (url.pathname === "/rest/v1/gig_applications") return json({ id: applicationId, gig_id: "qa-gig", worker_code: "QA-CREATOR", worker_name: submitted ? encodeWorkerName("QA Creator", { accountSetup: submitted }) : "QA Creator", status: applicationStatus, decided_at: applicationStatus === "Pending" ? null : decisionTime });
     if (url.pathname === "/rest/v1/rpc/update_gig_application") {
       proposalWrites++;
       const body = JSON.parse(String(init?.body));
@@ -67,6 +69,7 @@ test("submitted checks persist provider cooldowns and return their remaining ret
   const retryAt = result.proposal?.accountSetup?.ownershipRetryAt;
   assert.ok(retryAt && Date.parse(retryAt) >= Date.now() + 119_000);
   assert.equal(result.proposal?.accountSetup?.ownership, "unreadable");
+  assert.equal(result.proposal?.accountSetup?.ownershipError, "rate_limited");
   assert.equal(result.proposal?.accountSetup?.biography, undefined);
   assert.equal(result.proposal?.accountSetup?.ownershipSource, undefined);
   assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
@@ -85,6 +88,7 @@ test("readable submitted biographies clear an expired provider pause", async () 
   assert.equal(result.proposal?.accountSetup?.ownership, "missing");
   assert.equal(result.proposal?.accountSetup?.biography, "Creator bio without verification");
   assert.equal(result.proposal?.accountSetup?.ownershipSource, "public_profile");
+  assert.equal(result.proposal?.accountSetup?.ownershipError, undefined);
   assert.equal(result.proposal?.accountSetup?.ownershipRetryAt, undefined);
   assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
 });
@@ -99,6 +103,43 @@ test("a measured empty biography is saved as readable evidence with a missing co
   assert.equal(setup?.ownershipSource, "public_profile");
   assert.match(setup?.ownershipDetail ?? "", /empty bio/i);
   assert.equal(setup?.ownershipRetryAt, undefined);
+  assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
+});
+
+test("administrators refresh approved-account bio evidence without reopening review or sending another notification", async () => {
+  applicationStatus = "Accepted";
+  submitted = { platform: "Instagram", handle: "creator.approved", profileUrl: "https://www.instagram.com/creator.approved/", email: "", status: "Verified", revision: 2, submittedAt: decisionTime, reviewedAt: decisionTime, ownership: "unreadable", ownershipError: "login_required" };
+  const result = await checkAccountOwnership({ ...actor, isAdmin: true }, applicationId);
+  assert.equal(result.status, "Accepted");
+  assert.equal(result.decidedAt, decisionTime);
+  assert.equal(result.proposal?.accountSetup?.status, "Verified");
+  assert.equal(result.proposal?.accountSetup?.reviewedAt, decisionTime);
+  assert.equal(result.proposal?.accountSetup?.revision, 2);
+  assert.equal(result.proposal?.accountSetup?.ownership, "found");
+  assert.equal(result.proposal?.accountSetup?.biography, `Creator\n${accountVerifyCode(applicationId)}`);
+  assert.equal(result.proposal?.accountSetup?.ownershipError, undefined);
+  assert.equal(result.mailStatus, null);
+  assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
+});
+
+test("creators cannot refresh a decided account or someone else's account", async () => {
+  applicationStatus = "Accepted";
+  submitted = { platform: "Instagram", handle: "creator.decided", profileUrl: "https://www.instagram.com/creator.decided/", email: "", status: "Verified", revision: 1, submittedAt: decisionTime, ownership: "unreadable" };
+  const result = await checkAccountOwnership({ ...actor, isAdmin: false }, applicationId);
+  assert.equal(result.proposal?.accountSetup?.ownership, "unreadable");
+  await assert.rejects(checkAccountOwnership({ ...actor, aliases: ["ANOTHER-CREATOR"], isAdmin: false }, applicationId), /Application not found/);
+  assert.equal(profileReads, 0); assert.equal(proposalWrites, 0);
+});
+
+test("administrators can read a rejected account without sending ownership confirmation or changing the decision", async () => {
+  applicationStatus = "Rejected";
+  submitted = { platform: "Instagram", handle: "creator.rejected", profileUrl: "https://www.instagram.com/creator.rejected/", email: "", status: "Submitted", revision: 1, submittedAt: decisionTime, ownership: "unreadable" };
+  const result = await checkAccountOwnership({ ...actor, isAdmin: true }, applicationId);
+  assert.equal(result.proposal?.accountSetup?.ownership, "found");
+  assert.equal(result.proposal?.accountSetup?.status, "Submitted");
+  assert.equal(result.status, "Rejected");
+  assert.equal(result.decidedAt, decisionTime);
+  assert.equal(result.mailStatus, null);
   assert.equal(profileReads, 1); assert.equal(proposalWrites, 1);
 });
 afterEach(() => { release?.(); globalThis.fetch = originalFetch; process.env = { ...originalEnv }; });

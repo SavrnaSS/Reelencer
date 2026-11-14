@@ -10,11 +10,11 @@ const profile: InstagramProfile = { biography: "Creator RL-ABC234", followers: 1
 const fail = new SocialSyncError("Public profile requires login", "login_required");
 const unavailable = async (): Promise<never> => { throw fail; };
 
-test("readable public biographies need no credentials or official API lookup", async () => {
+test("public biographies work without an authenticated connection", async () => {
   let fallbackCalls = 0;
   const read = createInstagramAccountOwnershipReader({
     publicProfile: async (handle, expected) => { assert.equal(handle, "creator"); assert.equal(expected, code); return { ...profile, biography: "Creator ＲＬ－ＡＢＣ２３４", codeFound: false }; },
-    config: async () => { fallbackCalls++; return config; },
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
     businessProfile: async () => { fallbackCalls++; return profile; },
   });
   const result = await read("@Creator", code);
@@ -26,7 +26,7 @@ test("readable public biographies need no credentials or official API lookup", a
 test("a genuine empty public bio is a missing code, not an excuse to invent fallback ownership", async () => {
   const read = createInstagramAccountOwnershipReader({
     publicProfile: async () => ({ ...profile, biography: "", codeFound: true }),
-    config: async () => { throw new Error("must not load credentials"); },
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
     businessProfile: async () => { throw new Error("must not call official API"); },
   });
   assert.equal((await read("creator", code)).codeFound, false);
@@ -97,11 +97,11 @@ test("the total deadline bounds a stalled public read without starting another p
   let configCalls = 0;
   const read = createInstagramAccountOwnershipReader({
     publicProfile: async () => new Promise(() => {}),
-    config: async () => { configCalls++; return config; },
+    config: async () => { configCalls++; return { metaAccessToken: "", metaIgBusinessId: "" }; },
     businessProfile: async () => profile,
   }, { totalMs: 10 });
   await assert.rejects(read("creator", code), error => error instanceof SocialSyncError && error.code === "timeout");
-  assert.equal(configCalls, 0);
+  assert.equal(configCalls, 1);
 });
 
 test("a stalled official fallback is aborted at the shared deadline", async () => {
@@ -147,7 +147,7 @@ test("later checks fetch fresh evidence after a success or failure", async () =>
   });
   await assert.rejects(read("creator", code));
   assert.equal((await read("creator", code)).codeFound, true);
-  assert.equal((await read("creator", code)).codeFound, false);
+  assert.equal((await read("creator", code, { forceRefresh: true })).codeFound, false);
   assert.equal(calls, 3, "failed and successful reads must not freeze subsequent manual checks");
 });
 
@@ -160,4 +160,86 @@ test("timed-out public requests receive cancellation rather than continuing in t
   }, { totalMs: 10 });
   await assert.rejects(read("creator", code), error => error instanceof SocialSyncError && error.code === "timeout");
   assert.equal(signal?.aborted, true);
+});
+
+test("configured Meta access is tried before public pages", async () => {
+  const calls: string[] = [];
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => { calls.push("config"); return config; },
+    businessProfile: async () => { calls.push("meta"); return profile; },
+    publicProfile: async () => { calls.push("public"); throw fail; },
+  });
+  const result = await read("creator", code);
+  assert.deepEqual(calls, ["config", "meta"]);
+  assert.equal(result.source, "meta_api");
+  assert.equal(result.codeFound, true);
+});
+
+test("an authenticated empty bio is not overridden by stale public evidence", async () => {
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => config,
+    businessProfile: async () => ({ ...profile, biography: "" }),
+    publicProfile: async () => { assert.fail("An authenticated biography is authoritative"); },
+  });
+  const result = await read("creator", code);
+  assert.equal(result.source, "meta_api");
+  assert.equal(result.biography, "");
+  assert.equal(result.codeFound, false);
+});
+
+test("preview and submission reuse recent evidence while retaining its original read time", async () => {
+  let calls = 0;
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
+    publicProfile: async () => { calls++; return { ...profile, biography: calls === 1 ? profile.biography : "Updated bio" }; },
+    businessProfile: async () => profile,
+  });
+  const preview = await read("creator", code);
+  const submission = await read("@Creator", code);
+  const otherApplication = await read("creator", "RL-ZYX987");
+  assert.equal(calls, 1);
+  assert.equal(submission.codeFound, true);
+  assert.equal(otherApplication.codeFound, false);
+  assert.equal(submission.readAt, preview.readAt);
+  assert.ok(preview.readAt && Number.isFinite(Date.parse(preview.readAt)));
+  const manual = await read("creator", code, { forceRefresh: true });
+  assert.equal(calls, 2);
+  assert.equal(manual.biography, "Updated bio");
+  assert.equal(manual.codeFound, false);
+});
+
+test("expired evidence is fetched again without keeping a successful biography indefinitely", async () => {
+  let calls = 0;
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => ({ metaAccessToken: "", metaIgBusinessId: "" }),
+    publicProfile: async () => { calls++; return profile; },
+    businessProfile: async () => profile,
+  }, { cacheMs: 5 });
+  await read("creator", code);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await read("creator", code);
+  assert.equal(calls, 2);
+});
+
+test("a stalled Meta read leaves time for the public fallback", async () => {
+  let officialSignal: AbortSignal | undefined, publicCalls = 0;
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => config,
+    businessProfile: async (_handle, _config, signal) => { officialSignal = signal; return new Promise(() => {}); },
+    publicProfile: async () => { publicCalls++; return profile; },
+  }, { totalMs: 80 });
+  const result = await read("creator", code);
+  assert.equal(officialSignal?.aborted, true);
+  assert.equal(publicCalls, 1);
+  assert.equal(result.codeFound, true);
+  assert.equal(result.source, "public_profile");
+});
+
+test("expired Meta credentials remain actionable when public access is blocked", async () => {
+  const read = createInstagramAccountOwnershipReader({
+    config: async () => config,
+    businessProfile: async () => { throw new SocialSyncError("Reconnect Meta", "credentials"); },
+    publicProfile: unavailable,
+  });
+  await assert.rejects(read("creator", code), error => error instanceof SocialSyncError && error.code === "credentials");
 });

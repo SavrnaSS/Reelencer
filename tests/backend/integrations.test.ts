@@ -34,9 +34,18 @@ test('connection tests explain what is missing or wrong without exposing the key
 
   globalThis.fetch = (async (input) => {
     assert.equal(String(input), 'https://www.instagram.com/reelencer.hq/');
-    return new Response('<meta property="og:description" content="10 Followers, 2 Following, 3 Posts - Reelencer (@reelencer.hq)">', { headers: { 'content-type': 'text/html' } });
+    return new Response('<script type="application/json">{"user":{"username":"reelencer.hq","biography":"Reelencer"}}</script>', { headers: { 'content-type': 'text/html' } });
   }) as typeof fetch;
   const ok = await testSyncProvider('instagram', { instagramHandle: 'reelencer.hq' });
   assert.deepEqual(ok.ok, true);
-  assert.match(ok.message, /10 followers/);
+  assert.match(ok.message, /Public bio readable/);
+});
+
+test('Instagram connection tests reject readable counts when the biography is unavailable', async () => {
+  delete process.env.META_GRAPH_ACCESS_TOKEN;
+  delete process.env.META_IG_BUSINESS_ACCOUNT_ID;
+  globalThis.fetch = async () => new Response('<meta property="og:description" content="10 Followers, 2 Following, 3 Posts - Reelencer (@reelencer.hq)">', { headers: { 'content-type': 'text/html' } });
+  const result = await testSyncProvider('instagram', { instagramHandle: 'reelencer.hq' });
+  assert.equal(result.ok, false);
+  assert.match(result.message, /biography/);
 });

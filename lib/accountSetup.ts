@@ -14,6 +14,7 @@ export type AccountSetupStatus = "Submitted" | "ChangesRequested" | "Verified";
  */
 export type AccountOwnership = "found" | "missing" | "unreadable" | "manual";
 export type AccountOwnershipSource = "public_profile" | "public_embed" | "meta_api";
+export type AccountOwnershipError = "login_required" | "rate_limited" | "credentials" | "timeout" | "not_found" | "unavailable";
 
 /** What the browser sees. A legacy password never leaves the server; `hasPassword` says one is stored. */
 export type AccountSetupView = {
@@ -32,6 +33,7 @@ export type AccountSetupView = {
   /** Actual biography returned by the latest successful read; an empty string means a measured empty bio. */
   biography?: string;
   ownershipSource?: AccountOwnershipSource;
+  ownershipError?: AccountOwnershipError;
   /** Last automatic bio check. */
   checkedAt?: string;
   /** Earliest retry permitted after the profile reader requested a pause. */
@@ -76,6 +78,7 @@ export function readStoredAccountSetup(raw: unknown): StoredAccountSetup | undef
     ownershipDetail: text("ownershipDetail"),
     biography: typeof v.biography === "string" ? v.biography.slice(0, 4000) : undefined,
     ownershipSource: (["public_profile", "public_embed", "meta_api"] as const).find(source => source === v.ownershipSource),
+    ownershipError: (["login_required", "rate_limited", "credentials", "timeout", "not_found", "unavailable"] as const).find(error => error === v.ownershipError),
     checkedAt: text("checkedAt"),
     ownershipRetryAt: text("ownershipRetryAt") && Number.isFinite(Date.parse(String(v.ownershipRetryAt))) ? String(v.ownershipRetryAt) : undefined,
     followers: count("followers"),

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import type { AccountOwnership, AccountSetupView } from "@/lib/accountSetup";
+import Link from "next/link";
+import { adminSectionHref } from "@/lib/adminNavigation";
+import type { AccountOwnership, AccountOwnershipError, AccountSetupView } from "@/lib/accountSetup";
 import { ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, fieldClass, formatDateTime, formatRelative } from "./adminUi";
 
 // Content Posting applications: the account the creator made for the gig. Ownership is proven by the application's
@@ -24,6 +26,15 @@ const OWNERSHIP: Record<AccountOwnership, { label: string; tone: "info" | "warni
   missing: { label: "Not in bio yet", tone: "warning" },
   unreadable: { label: "Couldn't read", tone: "neutral" },
   manual: { label: "Check on profile", tone: "info" },
+};
+
+const READ_ERRORS: Record<AccountOwnershipError, { label: string; tone: "warning" | "neutral" }> = {
+  login_required: { label: "Instagram blocked access", tone: "warning" },
+  rate_limited: { label: "Instagram rate limit", tone: "warning" },
+  credentials: { label: "Reconnect Instagram", tone: "warning" },
+  timeout: { label: "Read timed out", tone: "neutral" },
+  not_found: { label: "Profile not found", tone: "warning" },
+  unavailable: { label: "Bio unavailable", tone: "neutral" },
 };
 
 const STATUS: Record<AccountSetupView["status"], { label: string; tone: "info" | "warning" | "success" }> = {
@@ -120,7 +131,9 @@ export default function AccountReview({
       setChecking(false);
     }
   };
-  const ownership = setup.ownership ? OWNERSHIP[setup.ownership] : null;
+  const ownership = setup.ownership === "unreadable" && setup.ownershipError
+    ? READ_ERRORS[setup.ownershipError]
+    : setup.ownership ? OWNERSHIP[setup.ownership] : null;
   const owned = setup.ownership === "found";
   // A code found in the bio is a fact, not a judgement: that check stays ticked, even if found after the panel opened.
   const ticked = checks.map((value, index) => value || (index === 0 && owned));
@@ -195,10 +208,10 @@ export default function AccountReview({
                 <button type="button" className={btnIcon} onClick={() => void copy("code", setup.verifyCode ?? "")} aria-label="Copy code" title="Copy">
                   <Icon d={copied === "code" ? ICONS.check : ICONS.copy} className={`h-4 w-4 ${copied === "code" ? "text-[#2e7d4f]" : ""}`} />
                 </button>
-                {setup.status !== "Verified" && setup.ownership !== "manual" ? (
+                {setup.ownership !== "manual" ? (
                   <button type="button" className={btnGhost} disabled={checking} onClick={() => void checkBio()}>
                     {checking ? <Spinner className="border-[#1a201c]/20 border-t-[#1a201c]" /> : <Icon d={ICONS.refresh} />}
-                    {checking ? "Reading…" : "Check bio now"}
+                    {checking ? "Reading…" : decided || setup.status === "Verified" ? "Refresh bio" : "Check bio now"}
                   </button>
                 ) : null}
               </>
@@ -215,7 +228,12 @@ export default function AccountReview({
           {setup.ownershipDetail || setup.checkedAt ? (
             <div className="bg-[#fafbf9] px-3.5 py-1.5 text-[11.5px] leading-5 text-[#616a64]">
               {setup.ownershipDetail}
-              {setup.checkedAt && setup.ownership !== "manual" ? <span className="text-[#9aa29c]"> · read {formatRelative(setup.checkedAt)}</span> : null}
+              {setup.checkedAt && setup.ownership !== "manual" ? <span className="text-[#9aa29c]"> · {setup.ownership === "unreadable" ? "checked" : "read"} {formatRelative(setup.checkedAt)}</span> : null}
+              {setup.ownership === "unreadable" && (setup.ownershipError === "login_required" || setup.ownershipError === "credentials") ? (
+                <Link href={adminSectionHref("linked-accounts")} className="mt-1 inline-flex items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
+                  Configure Instagram reader <Icon d={ICONS.chevronRight} className="h-3 w-3" />
+                </Link>
+              ) : null}
             </div>
           ) : null}
           {stats.length ? (

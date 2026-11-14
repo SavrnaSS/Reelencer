@@ -1,6 +1,6 @@
 import "server-only";
-import { fetchInstagramProfile } from "@/lib/api/instagramProfile";
-import { fetchInstagramBusinessProfile } from "@/lib/api/instagramGraph";
+import { fetchInstagramProfileSummary } from "@/lib/api/instagramProfile";
+import { fetchInstagramBusinessBiography } from "@/lib/api/instagramGraph";
 import { syncDueAt } from "@/lib/socialSyncSchedule";
 import { ApiError, databaseError } from "@/lib/api/errors";
 import { decryptSecretText, encryptSecretText } from "@/lib/secretCrypto";
@@ -150,11 +150,12 @@ export async function testSyncProvider(provider: "youtube" | "instagram" | "visi
     const metaAccessToken = candidate?.metaAccessToken?.trim() || config.metaAccessToken;
     const metaIgBusinessId = candidate?.metaIgBusinessId?.trim() || config.metaIgBusinessId;
     if (metaAccessToken || metaIgBusinessId) {
-      const profile = await fetchInstagramBusinessProfile(candidate?.instagramHandle || "instagram", { metaAccessToken, metaIgBusinessId });
-      return { ok: true, message: `Instagram API connected: ${profile.followers?.toLocaleString() ?? "hidden"} followers and ${profile.posts?.toLocaleString() ?? "hidden"} posts. Professional account statistics will sync automatically.` };
+      await fetchInstagramBusinessBiography(candidate?.instagramHandle || "instagram", { metaAccessToken, metaIgBusinessId });
+      return { ok: true, message: "Instagram API connected. The requested account's biography is readable." };
     }
-    const profile = await fetchInstagramProfile(candidate?.instagramHandle || "instagram");
-    return { ok: true, message: `Public profile readable: ${profile.followers?.toLocaleString() ?? "hidden"} followers, ${profile.posts?.toLocaleString() ?? "hidden"} posts, ${profile.media.length} exposed posts read. ${profile.note}` };
+    const handle = candidate?.instagramHandle || "instagram";
+    await fetchInstagramProfileSummary(handle, undefined, { requireBiography: true });
+    return { ok: true, message: `Public bio readable for @${handle}. Public access can vary by server and account; connect Meta for authenticated professional-account reads.` };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : "Could not read the Instagram profile." };
   }
