@@ -6,6 +6,7 @@ import { ACCOUNT_REQUEST_LIMITS } from "@/lib/accountRequests";
 import {
   ACCOUNT_SETUP_ANCHOR,
   ACCOUNT_LIMITS,
+  accountOwnershipDetail,
   accountPlatformFor,
   canReadBio,
   instructionLines,
@@ -277,7 +278,7 @@ function useSubmittedBioCheck(applicationId: string, setup: AccountSetupView | u
         return;
       }
       const ownership = nextSetup.ownership;
-      finish(ownership === "unreadable" ? "unreadable" : "found", ownership === "found" ? "Code found. Your account is now with the team." : ownership === "unreadable" ? "We couldn't read the bio yet. Keep the exact code in your saved bio; we'll retry after a short pause." : ownership === "manual" ? "Your account is with the team for an ownership check. Keep the code in your bio." : silent ? null : "The code isn't in the bio yet. Save it to your profile; changes can take a minute to appear.", retryAfterMs);
+      finish(ownership === "unreadable" ? "unreadable" : "found", ownership === "found" ? "Code found. Your account is now with the team." : ownership === "unreadable" ? accountOwnershipDetail(nextSetup) ?? null : ownership === "manual" ? "Your account is with the team for an ownership check. Keep the code in your bio." : silent ? null : "The code isn't in the bio yet. Save it to your profile; changes can take a minute to appear.", retryAfterMs);
       updatedRef.current(payload);
     } catch (error) {
       if (!controller.signal.aborted) finish("error", error instanceof Error && error.name === "TimeoutError" ? "The bio check took too long. We'll retry after a short pause." : "Couldn't connect to the bio checker. We'll retry after a short pause.");
@@ -596,9 +597,9 @@ export default function AccountSetupPanel({
         : ownership === "unreadable"
           ? {
               tone: "neutral" as const,
-              pill: "Retrying",
-              title: "We couldn't read your bio",
-              detail: setup.ownershipDetail ?? `${platform.label} didn't respond on the last check.`,
+              pill: "Pending",
+              title: "Bio verification pending",
+              detail: accountOwnershipDetail(setup),
             }
           : setup.isPrivate
             ? {
@@ -817,7 +818,7 @@ export default function AccountSetupPanel({
         : autoSending
           ? {
               tone: codeLive ? "good" : "active",
-              headline: codeLive ? `Code found in @${handleName}'s bio` : limited ? `${platform.label} is limiting lookups right now` : readable ? `Found @${handleName}` : `@${handleName} looks right`,
+              headline: codeLive ? `Code found in @${handleName}'s bio` : limited ? "Bio verification pending" : readable ? `Found @${handleName}` : `@${handleName} looks right`,
               detail: `Sending for verification automatically${codeLive || !readable ? "." : limited ? ". We'll keep checking the bio for you." : `. Add ${shownCodeLabel} to the bio any time; we'll spot it.`}`,
               action: (
                 <>

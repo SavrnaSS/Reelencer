@@ -2,6 +2,7 @@ import "server-only";
 import { ACCOUNT_REQUEST_LIMITS, makeVerifyCode } from "@/lib/accountRequests";
 import {
   ACCOUNT_SETUP_ANCHOR,
+  accountOwnershipDetail,
   accountPlatformFor,
   canReadBio,
   isContentPostingType,
@@ -115,15 +116,7 @@ async function readOwnership(platformName: string, handle: string, code: string,
       biography: undefined,
       ownershipSource: undefined,
       ownershipError,
-      ownershipDetail: error instanceof ProfileNotFoundError
-        ? `${platform.label} couldn't find @${handle}. Check that the username is spelled correctly.`
-        : ownershipError === "login_required"
-          ? `${platform.label} blocked public reads from this server. Keep the code in your bio. An admin can configure authenticated access or open the profile to review it.`
-          : ownershipError === "credentials"
-            ? "The Instagram connection needs to be renewed. An admin can reconnect it in Linked accounts, then check this bio again."
-            : ownershipError === "rate_limited"
-              ? `${platform.label} has temporarily limited bio checks. Keep the code in your bio; wait for the retry time before checking again.`
-              : `${platform.label} couldn't provide the bio on the last check. Keep the code saved in your bio and try again shortly.`,
+      ownershipDetail: accountOwnershipDetail({ handle, ownership: "unreadable", ownershipError }),
       checkedAt: new Date().toISOString(),
       ownershipRetryAt: new Date(Date.now() + (unreadablePreview(handle, error).retryAfterSeconds ?? 60) * 1000).toISOString(),
     };

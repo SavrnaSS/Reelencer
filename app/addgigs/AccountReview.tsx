@@ -1,9 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { adminSectionHref } from "@/lib/adminNavigation";
-import type { AccountOwnership, AccountOwnershipError, AccountSetupView } from "@/lib/accountSetup";
+import { accountOwnershipDetail, type AccountOwnership, type AccountSetupView } from "@/lib/accountSetup";
 import { ICONS, Icon, SectionLabel, Spinner, StatusChip, btnGhost, btnIcon, btnPrimary, fieldClass, formatDateTime, formatRelative } from "./adminUi";
 
 // Content Posting applications: the account the creator made for the gig. Ownership is proven by the application's
@@ -24,17 +22,8 @@ const CHECKS = ["Verification code is in the bio", "Username and profile match t
 const OWNERSHIP: Record<AccountOwnership, { label: string; tone: "info" | "warning" | "success" | "neutral" }> = {
   found: { label: "Found in bio", tone: "success" },
   missing: { label: "Not in bio yet", tone: "warning" },
-  unreadable: { label: "Couldn't read", tone: "neutral" },
+  unreadable: { label: "Verification pending", tone: "neutral" },
   manual: { label: "Check on profile", tone: "info" },
-};
-
-const READ_ERRORS: Record<AccountOwnershipError, { label: string; tone: "warning" | "neutral" }> = {
-  login_required: { label: "Instagram blocked access", tone: "warning" },
-  rate_limited: { label: "Instagram rate limit", tone: "warning" },
-  credentials: { label: "Reconnect Instagram", tone: "warning" },
-  timeout: { label: "Read timed out", tone: "neutral" },
-  not_found: { label: "Profile not found", tone: "warning" },
-  unavailable: { label: "Bio unavailable", tone: "neutral" },
 };
 
 const STATUS: Record<AccountSetupView["status"], { label: string; tone: "info" | "warning" | "success" }> = {
@@ -131,9 +120,10 @@ export default function AccountReview({
       setChecking(false);
     }
   };
-  const ownership = setup.ownership === "unreadable" && setup.ownershipError
-    ? READ_ERRORS[setup.ownershipError]
+  const ownership = setup.ownership === "unreadable" && setup.ownershipError === "not_found"
+    ? { label: "Check username", tone: "warning" as const }
     : setup.ownership ? OWNERSHIP[setup.ownership] : null;
+  const ownershipDetail = accountOwnershipDetail(setup, "admin");
   const owned = setup.ownership === "found";
   // A code found in the bio is a fact, not a judgement: that check stays ticked, even if found after the panel opened.
   const ticked = checks.map((value, index) => value || (index === 0 && owned));
@@ -225,15 +215,17 @@ export default function AccountReview({
               </dd>
             </div>
           ) : null}
-          {setup.ownershipDetail || setup.checkedAt ? (
-            <div className="bg-[#fafbf9] px-3.5 py-1.5 text-[11.5px] leading-5 text-[#616a64]">
-              {setup.ownershipDetail}
-              {setup.checkedAt && setup.ownership !== "manual" ? <span className="text-[#9aa29c]"> · {setup.ownership === "unreadable" ? "checked" : "read"} {formatRelative(setup.checkedAt)}</span> : null}
-              {setup.ownership === "unreadable" && (setup.ownershipError === "login_required" || setup.ownershipError === "credentials") ? (
-                <Link href={adminSectionHref("linked-accounts")} className="mt-1 inline-flex items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
-                  Configure Instagram reader <Icon d={ICONS.chevronRight} className="h-3 w-3" />
-                </Link>
-              ) : null}
+          {ownershipDetail || setup.checkedAt ? (
+            <div className="space-y-1 bg-[#fafbf9] px-3.5 py-2 text-[11.5px] leading-5 text-[#616a64]">
+              {ownershipDetail ? <p>{ownershipDetail}</p> : null}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {setup.checkedAt && setup.ownership !== "manual" ? <span className="text-[#8a928c]">Last checked {formatRelative(setup.checkedAt)}</span> : null}
+                {setup.ownership === "unreadable" && setup.profileUrl ? (
+                  <a href={setup.profileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[#2b5d4a] underline-offset-2 hover:underline">
+                    Review profile <Icon d={ICONS.open} className="h-3 w-3" />
+                  </a>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {stats.length ? (

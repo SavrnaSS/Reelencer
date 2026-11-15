@@ -53,6 +53,18 @@ export type AccountSetupView = {
 /** Server-side shape inside the stored proposal: the view fields plus the encrypted password. */
 export type StoredAccountSetup = Omit<AccountSetupView, "hasPassword"> & { passwordEnc?: string };
 
+/** Product copy for pending checks, including older saved provider messages. */
+export function accountOwnershipDetail(
+  setup: Pick<AccountSetupView, "handle" | "ownership" | "ownershipError" | "ownershipDetail">,
+  audience: "creator" | "admin" = "creator",
+) {
+  if (setup.ownership !== "unreadable") return setup.ownershipDetail;
+  if (setup.ownershipError === "not_found") return `This profile could not be found. Confirm @${setup.handle} is the correct username, then check again.`;
+  return audience === "admin"
+    ? "Bio verification is pending. Recheck shortly, or review the profile to confirm the verification code."
+    : "Your account details are saved. Keep the verification code in your bio and check again shortly.";
+}
+
 const STATUSES = ["Submitted", "ChangesRequested", "Verified"] as const;
 const OWNERSHIP = ["found", "missing", "unreadable", "manual"] as const;
 
@@ -96,7 +108,7 @@ export function publicAccountSetup(raw: unknown): AccountSetupView | undefined {
   const stored = readStoredAccountSetup(raw);
   if (!stored) return undefined;
   const { passwordEnc, ...rest } = stored;
-  return { ...rest, hasPassword: !!passwordEnc };
+  return { ...rest, ownershipDetail: accountOwnershipDetail(stored), hasPassword: !!passwordEnc };
 }
 
 /** Every application leaving the server goes through this: the encrypted password never reaches a browser. */
