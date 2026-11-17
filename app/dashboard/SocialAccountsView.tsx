@@ -400,11 +400,19 @@ function ReelTable({ posts, topPostId, rankOf, onScreenshot, cpmOf }: { posts: S
                   <a href={post.url} target="_blank" rel="noreferrer noopener" className="block truncate font-semibold text-[#1a201c] underline-offset-2 hover:underline">
                     {splitCaption(post.caption).title}
                   </a>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#8a928c]">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[#8a928c]">
                     {post.postedAt ? formatDate(post.postedAt) : "No date"}
                     {!post.submittedByWorker && (post.source === "profile" || post.source === "api") ? <span className="rounded-full bg-[#e0ecf8] px-1.5 py-px text-[10px] font-semibold text-[#1f4a73]">Auto-detected</span> : null}
                     {chip ? <span className={cx("rounded-full px-1.5 py-px text-[10px] font-semibold", chip.className)}>{chip.label}</span> : null}
                     {cpmOf?.get(post.id) ? <ReelCpmBadge reel={cpmOf.get(post.id)!} compact /> : null}
+                    {post.payoutBasis && post.status !== "rejected" ? (
+                      <span
+                        title={`The team moved this reel off your ${formatINR(post.payoutBasis.plan.baseINR)} base plan. It's paid per 1,000 views from the first view${post.payoutBasis.at ? ` since ${formatDate(post.payoutBasis.at)}` : ""}.`}
+                        className="whitespace-nowrap rounded-full bg-[#e3edf9] px-1.5 py-px text-[10px] font-semibold text-[#1f4a73]"
+                      >
+                        Per 1K views
+                      </span>
+                    ) : null}
                   </div>
                 </td>
                 {cols.map((c) => (

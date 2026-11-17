@@ -178,6 +178,44 @@ export default function PayoutPlanCard({ account }: { account: LinkedSocialAccou
           </button>
         ) : null}
 
+        {summary.switched.length ? (
+          <div className="mt-4" aria-labelledby={`${id}-switched`}>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+              <h4 id={`${id}-switched`} className="text-[13.5px] font-semibold text-[#1a201c]">Paid per 1,000 views instead</h4>
+              <span className="text-[11.5px] tabular-nums text-[#616a64]">{summary.switched.length} {summary.switched.length === 1 ? "reel" : "reels"}</span>
+            </div>
+            <p className="mt-1 text-[12px] leading-5 text-[#4d5a51]">
+              The team moved {summary.switched.length === 1 ? "this reel" : "these reels"} off your plan. {summary.switched.length === 1 ? "It earns" : "They earn"} {formatINR(summary.switched[0].rateINR)} for every 1,000 views from the first view, without the {formatINR(summary.switched[0].plan.baseINR)} base. Your other reels stay on your plan.
+            </p>
+            <ul className="mt-2.5 space-y-2">
+              {summary.switched.map(({ post, views, measured, earnsINR, rateINR, planINR, at }) => (
+                <li key={post.id} className="rounded-xl border border-[#d9e5f3] bg-[#f7faff] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <a href={post.url} target="_blank" rel="noreferrer noopener" className="block truncate text-[13px] font-semibold text-[#1a201c] underline-offset-2 hover:underline">{reelTitle(post.caption)}</a>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[#7a827c]">
+                        <span>{post.postedAt ? formatDate(post.postedAt) : "No date"}</span>
+                        <span className={cx("rounded-full px-1.5 py-px text-[10px] font-semibold", STATUS[post.status].className)}>{STATUS[post.status].label}</span>
+                        <span className="rounded-full bg-[#e3edf9] px-1.5 py-px text-[10px] font-semibold text-[#1f4a73]">{formatINR(rateINR)}/1K views</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <span className="block text-[15px] font-semibold tabular-nums text-[#1a201c]">{formatINR(earnsINR)}</span>
+                      <span className="block text-[10.5px] text-[#7a827c]">{post.status === "approved" ? "earned" : "once approved"}</span>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[11.5px] leading-5 text-[#4d5a51]">
+                    {measured ? `${views.toLocaleString("en-IN")} views × ${formatINR(rateINR)} per 1,000` : "Views will show once Instagram shares them"}
+                    {at ? ` · moved off your plan on ${formatDate(at)}` : ""}
+                    {measured && planINR > earnsINR ? <span className="text-[#7a827c]"> · on the plan it was {formatINR(planINR)}</span> : null}
+                  </p>
+                  {measured ? <p className="mt-0.5 text-[11px] leading-4 text-[#616a64]">Every 1,000 more views adds {formatINR(rateINR)}, with no view limit.</p> : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {summary.standard.reels ? (
           <p className="mt-3 flex items-start gap-2 rounded-xl bg-[#f7f8f6] px-3 py-2.5 text-[12px] leading-5 text-[#4d5a51]">
             <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#9aa29c]" aria-hidden="true" />

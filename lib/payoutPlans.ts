@@ -288,7 +288,9 @@ export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payo
   return applyCpmAdjustment(terms, post.cpmAdjustment);
 }
 
-type PlanPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment };
+type PlanPost = { id: string; status: "submitted" | "approved" | "rejected"; views?: number; postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment; payoutBasis?: PayoutBasisSwitch };
+/** A reel the team moved off the plan to plain CPM, with what it earns now and what the plan would have paid. */
+export type SwitchedReel<P> = { post: P; views: number; measured: boolean; earnsINR: number; rateINR: number; planINR: number; plan: PayoutTerms & { mode: PayoutPlanMode }; at?: string };
 export type PlanReel<P> = { post: P; views: number; measured: boolean; earnsINR: number; progress: number; remainingToBoost: number; boosted: boolean; rateINR: number; cpmAdjusted: boolean };
 
 /**
@@ -297,12 +299,17 @@ export type PlanReel<P> = { post: P; views: number; measured: boolean; earnsINR:
  */
 export function planReelSummary<P extends PlanPost>(posts: readonly P[], plan: AccountPayoutPlan, gigRate: number) {
   const reels: PlanReel<P>[] = [];
+  const switched: SwitchedReel<P>[] = [];
   let standardReels = 0, standardPaise = 0, standardViews = 0;
   for (const post of posts) {
     if (post.status === "rejected") continue;
     const terms = postPayoutTerms(post, plan, gigRate);
     const measured = Number.isSafeInteger(post.views) && post.views! >= 0;
     const views = measured ? post.views! : 0;
+    if (post.payoutBasis && terms.mode === "cpm") {
+      switched.push({ post, views, measured, earnsINR: reelPayoutINR(views, terms), rateINR: terms.rateINR, planINR: reelPayoutINR(views, post.payoutBasis.plan), plan: post.payoutBasis.plan, ...(post.payoutBasis.at ? { at: post.payoutBasis.at } : {}) });
+      continue;
+    }
     if (terms.mode === "cpm") {
       standardReels++;
       standardViews += views;
@@ -316,7 +323,7 @@ export function planReelSummary<P extends PlanPost>(posts: readonly P[], plan: A
   const approved = reels.filter(reel => reel.post.status === "approved");
   const inReview = reels.filter(reel => reel.post.status === "submitted");
   return {
-    reels, approved, inReview,
+    reels, approved, inReview, switched,
     approvedINR: sum(approved), inReviewINR: sum(inReview),
     boostedCount: reels.filter(reel => reel.boosted).length,
     standard: { reels: standardReels, views: standardViews, amountINR: standardPaise / 100 },

@@ -147,3 +147,20 @@ test("payoutBasisPreview estimates switching a plan reel to plain CPM and back",
   // Nothing credited yet: the wallet doesn't move.
   assert.equal(payoutBasisPreview({ views: 100 }, { ...switchPlan, started: false }, 49)!.walletChangeINR, 0);
 });
+
+test("planReelSummary lists reels switched to plain CPM on their own, not as earlier standard reels", async () => {
+  const { planReelSummary, readPayoutBasis } = await import("../../lib/payoutPlans");
+  const payoutBasis = readPayoutBasis({ basis: "cpm", plan: switchPlan, at: "2026-11-17T09:00:00Z" })!;
+  const posts = [
+    { id: "a", status: "approved" as const, views: 157, postedAt: "2026-11-12T00:00:00Z", payoutBasis, walletCredit: { payoutTerms: { mode: "cpm" as const, rateINR: 49, baseINR: 0, thresholdViews: 0, started: true } } },
+    { id: "b", status: "approved" as const, views: 500, postedAt: "2026-11-12T00:00:00Z" },
+    { id: "c", status: "rejected" as const, views: 900, postedAt: "2026-11-12T00:00:00Z", payoutBasis },
+  ];
+  const summary = planReelSummary(posts, plan, 49);
+  assert.deepEqual(summary.switched.map(reel => reel.post.id), ["a"]);
+  assert.equal(summary.switched[0].earnsINR, 7.69);
+  assert.equal(summary.switched[0].planINR, 200);
+  assert.equal(summary.switched[0].at, "2026-11-17T09:00:00Z");
+  assert.deepEqual(summary.reels.map(reel => reel.post.id), ["b"]);
+  assert.equal(summary.standard.reels, 0);
+});
