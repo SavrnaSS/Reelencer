@@ -4,7 +4,7 @@ import { authenticate } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/errors";
 import { NO_STORE_HEADERS } from "@/lib/api/gigApplications";
 import { withApi } from "@/lib/api/route";
-import { deleteSnapshot, removePost, restorePost, resumePostViews, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, setPostCpm, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
+import { deleteSnapshot, removePost, restorePost, resumePostViews, recordSnapshot, recoveredAccountView, reviewPost, setAccountStatus, setPostCpm, setPostPayoutBasis, syncAccountNow, upsertPost } from "@/lib/api/socialAccounts";
 import { reportMissingAccountProfile, restoreAccountProfile } from "@/lib/api/accountProfileRecovery";
 import { CPM_REASON_IDS } from "@/lib/cpmAdjustments";
 
@@ -57,6 +57,8 @@ const actions = z.discriminatedUnion("action", [
     /** Start at the reel's view count when saved (read in the database); nothing already earned changes. */
     fromNow: z.boolean().default(false),
   }),
+  // Pay one reel at the gig's plain CPM instead of the creator's base-pay plan, or put it back on the plan.
+  z.object({ action: z.literal("set_payout_basis"), id: z.uuid(), basis: z.enum(["cpm", "plan"]), reason: z.string().max(300).optional() }),
   z.object({ action: z.literal("review_post"), id: z.uuid(), status: z.enum(["approved", "rejected"]), note: z.string().max(500).optional() }),
   z.object({ action: z.literal("delete_snapshot"), id: z.uuid() }),
   z.object({ action: z.literal("sync"), accountId: z.uuid() }),
@@ -100,6 +102,8 @@ export const POST = withApi({ auth: "admin", rateLimit: 120 }, async (req) => {
       return NextResponse.json({ post: await restorePost(body.id) }, { headers: NO_STORE_HEADERS });
     case "set_cpm":
       return NextResponse.json(await setPostCpm(actor.user.id, body.id, { rateINR: body.rateINR, reasons: body.reasons, note: body.note, afterViews: body.afterViews, fromNow: body.fromNow }), { headers: NO_STORE_HEADERS });
+    case "set_payout_basis":
+      return NextResponse.json(await setPostPayoutBasis(actor.user.id, body.id, body.basis, body.reason), { headers: NO_STORE_HEADERS });
     case "resume_views":
       return NextResponse.json({ post: await resumePostViews(actor.user.id, body.id) }, { headers: NO_STORE_HEADERS });
     case "status":

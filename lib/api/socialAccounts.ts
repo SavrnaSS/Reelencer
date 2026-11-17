@@ -1,5 +1,5 @@
 import "server-only";
-import { readAccountPayoutPlan } from "@/lib/payoutPlans";
+import { readAccountPayoutPlan, readPayoutBasis } from "@/lib/payoutPlans";
 import { readCpmAdjustment, type CpmReason } from "@/lib/cpmAdjustments";
 import { accountPlatformFor, isPlatformProfileUrl, readStoredAccountSetup } from "@/lib/accountSetup";
 import { ApiError, databaseError } from "@/lib/api/errors";
@@ -66,6 +66,7 @@ const toPost = (r: Row): SocialPost => ({
   source: r.source === "api" || r.source === "screenshot" || r.source === "profile" ? r.source : "manual",
   ...(r.wallet_credit ? { walletCredit: readSocialPostWalletCredit(r.wallet_credit) } : {}),
   ...(() => { const cpmAdjustment = readCpmAdjustment(r); return cpmAdjustment ? { cpmAdjustment } : {}; })(),
+  ...(() => { const payoutBasis = readPayoutBasis(r); return payoutBasis ? { payoutBasis } : {}; })(),
   ...(r.removed_at ? { removedAt: String(r.removed_at), removalReason: str(r.removal_reason), ...(r.removal_silent ? { removedSilently: true } : {}) } : {}),
 });
 
@@ -104,6 +105,49 @@ async function linkMissing(sb: Sb, aliases: string[]) {
 }
 
 /** Accounts per wallet read-model call, and how many calls run at once. */
+const PAGE_SIZE = 1000;
+// ~37 URL characters per UUID: 150 keeps an `in(...)` filter near 6KB, well under the gateway's 16KB request limit.
+const ID_BATCH = 150;
+const ID_CONCURRENCY = 4;
+
+/** Reads every row of an ordered query, one `range` page at a time. */
+async function pagedRows(read: (from: number) => PromiseLike<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>) {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await read(from);
+    databaseError(error);
+    rows.push(...((data ?? []) as Row[]));
+    if ((data?.length ?? 0) < PAGE_SIZE) return rows;
+  }
+}
+
+/** Runs `read` over `ids` in URL-safe batches (a few at a time) and concatenates the results in batch order. */
+async function inBatches(ids: string[], read: (chunk: string[]) => Promise<Row[]>) {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += ID_BATCH) chunks.push(ids.slice(i, i + ID_BATCH));
+  const results: Row[][] = new Array(chunks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const index = next++;
+      results[index] = await read(chunks[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ID_CONCURRENCY, chunks.length) }, worker));
+  return results.flat();
+}
+
+function groupBy(rows: Row[], key: (row: Row) => string) {
+  const groups = new Map<string, Row[]>();
+  for (const row of rows) {
+    const k = key(row);
+    const list = groups.get(k);
+    if (list) list.push(row);
+    else groups.set(k, [row]);
+  }
+  return groups;
+}
+
 const WALLET_BATCH = 10;
 const WALLET_CONCURRENCY = 6;
 
@@ -150,29 +194,29 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
   const ids = rows.map((r) => String(r.id));
   const gigIds = [...new Set(rows.map((r) => String(r.gig_id)))];
   const since = new Date(Date.now() - 400 * 86_400_000).toISOString();
-  const loadPosts = async () => {
-    const data: Row[] = [];
-    for (let from = 0; ; from += 1000) {
-      const page = await sb.from("social_account_posts").select("*").in("account_id", ids)
-        .order("posted_at", { ascending: false, nullsFirst: false }).order("id").range(from, from + 999);
-      databaseError(page.error);
-      data.push(...(page.data ?? []));
-      if ((page.data?.length ?? 0) < 1000) return { data, error: null };
-    }
+  // IDs travel in the request URL, which the database gateway caps at ~16KB (about 400 UUIDs), so every
+  // `in(...)` filter is split into batches and the results are merged.
+  const loadPosts = (chunk: string[]) => pagedRows(page => sb.from("social_account_posts").select("*").in("account_id", chunk)
+    .order("posted_at", { ascending: false, nullsFirst: false }).order("id").range(page, page + PAGE_SIZE - 1));
+  // Newest readings per batch, capped by the database's row limit; chronological chart order is restored below.
+  const loadSnapshots = async (chunk: string[]) => {
+    const { data, error } = await sb.from("social_account_snapshots").select("*").in("account_id", chunk).gte("captured_at", since)
+      .order("captured_at", { ascending: false }).order("created_at", { ascending: false }).limit(5000);
+    databaseError(error);
+    return (data ?? []) as Row[];
   };
-  const [snapshots, posts, gigs] = await Promise.all([
-    // Apply the database's row cap to the newest readings, then restore chronological chart order below.
-    sb.from("social_account_snapshots").select("*").in("account_id", ids).gte("captured_at", since).order("captured_at", { ascending: false }).order("created_at", { ascending: false }).limit(5000),
-    loadPosts(),
-    sb.from("gigs").select("id,title,company,payout,payout_type").in("id", gigIds),
-  ]);
-  databaseError(snapshots.error);
-  databaseError(posts.error);
-  databaseError(gigs.error);
-  const wallet = await walletState(sb, ids, posts.data);
+  const loadGigs = async (chunk: string[]) => {
+    const { data, error } = await sb.from("gigs").select("id,title,company,payout,payout_type").in("id", chunk);
+    databaseError(error);
+    return (data ?? []) as Row[];
+  };
+  const [snapshots, posts, gigs] = await Promise.all([inBatches(ids, loadSnapshots), inBatches(ids, loadPosts), inBatches(gigIds, loadGigs)]);
+  const wallet = await walletState(sb, ids, posts);
   const postWallet = new Map<string, Row>(wallet.posts.map((state: Row) => [String(state.postId), state]));
   const accountWallet = new Map<string, Row>(wallet.accounts.map((state: Row) => [String(state.accountId), state]));
-  const gigById = new Map((gigs.data ?? []).map((g) => [String(g.id), g as Row]));
+  const gigById = new Map(gigs.map((g) => [String(g.id), g]));
+  const snapshotsByAccount = groupBy(snapshots, row => String(row.account_id));
+  const postsByAccount = groupBy(posts, row => String(row.account_id));
   const config = await resolveSyncConfig();
   return rows.map((r) => {
     const gig = gigById.get(String(r.gig_id));
@@ -195,9 +239,9 @@ async function hydrate(sb: Sb, rows: Row[], audience: Audience): Promise<LinkedS
       ...(accountWallet.has(String(r.id)) ? { walletCredits: readSocialAccountWalletCredits({ amountINR: accountWallet.get(String(r.id))?.creditedINR, reels: accountWallet.get(String(r.id))?.creditedReels }) } : {}),
       ...(() => { const payoutPlan = readAccountPayoutPlan(accountWallet.get(String(r.id))?.payoutPlan); return payoutPlan ? { payoutPlan } : {}; })(),
       sync: toSync(r, config),
-      snapshots: (snapshots.data ?? []).filter((s) => String(s.account_id) === String(r.id)).reverse().map(toSnapshot),
+      snapshots: [...(snapshotsByAccount.get(String(r.id)) ?? [])].reverse().map(toSnapshot),
       posts: (() => {
-        const own = (posts.data ?? []).filter((p) => String(p.account_id) === String(r.id)).map(post => toPost({ ...post, wallet_credit: postWallet.get(String(post.id)) }));
+        const own = (postsByAccount.get(String(r.id)) ?? []).map(post => toPost({ ...post, wallet_credit: postWallet.get(String(post.id)) }));
         return audience === "creator" ? countedReels(own, String(r.linked_at)) : own;
       })(),
     };
@@ -267,11 +311,9 @@ async function verifiedAccountsFromApplications(sb: Sb, aliases: string[]): Prom
 /** Every linked account, for the admin console. */
 export async function listAllAccounts(sync = false) {
   const sb = supabaseAdmin();
-  const load = async () => {
-    const { data, error } = await sb.from("linked_social_accounts").select("*").order("linked_at", { ascending: false }).limit(500);
-    databaseError(error);
-    return (data ?? []) as Row[];
-  };
+  // Every account, page by page (a single read is capped at the database's row limit).
+  const load = () => pagedRows(page => sb.from("linked_social_accounts").select("*")
+    .order("linked_at", { ascending: false }).order("id").range(page, page + PAGE_SIZE - 1));
   let rows = await load();
   if (sync) {
     const result = await syncStale(sb, rows, SYNC_STALE_HOURS * 3_600_000, 9_000);
@@ -407,6 +449,22 @@ export async function setPostCpm(actorId: string, postId: string, input: { rateI
   databaseError(error);
   if (!data?.post) throw new ApiError(503, "The CPM change could not be confirmed. Refresh and try again.");
   const wallet = { walletChangeINR: Number(data.wallet?.walletChangeINR ?? 0), unrecoveredINR: Number(data.wallet?.unrecoveredINR ?? 0) };
+  return { post: await hydratedWalletPost(sb, data.post as Row), wallet };
+}
+
+/**
+ * Pays one reel at the gig's plain CPM instead of the creator's base-pay plan (`cpm`), or puts it back on the plan
+ * terms it had (`plan`). Money already credited for the reel is repriced; the wallet result says how much moved and
+ * how much was already withdrawn. A lowered CPM that would now be a raise is cleared (`clearedCpmINR`).
+ */
+export async function setPostPayoutBasis(actorId: string, postId: string, basis: "cpm" | "plan", reason?: string) {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("admin_set_social_post_payout_basis", { p_actor: actorId, p_post: postId, p_basis: basis, p_reason: reason?.trim() ?? "" });
+  if (["PGRST202", "42883", "42703", "PGRST204"].includes(error?.code ?? "")) throw new ApiError(503, "Switching a reel between base pay and CPM needs the database update 202611170001_reel_payout_basis_switch.sql.", "schema_outdated");
+  databaseError(error);
+  if (!data?.post) throw new ApiError(503, "The pay change could not be confirmed. Refresh and try again.");
+  const cleared = Number(data.wallet?.clearedCpmINR);
+  const wallet = { walletChangeINR: Number(data.wallet?.walletChangeINR ?? 0), unrecoveredINR: Number(data.wallet?.unrecoveredINR ?? 0), ...(cleared > 0 ? { clearedCpmINR: cleared } : {}) };
   return { post: await hydratedWalletPost(sb, data.post as Row), wallet };
 }
 

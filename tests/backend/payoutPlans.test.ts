@@ -112,3 +112,38 @@ test("creator plan card: earlier reels stay standard and plan reels show progres
   assert.deepEqual(copy.examples.map(example => example.amountINR), [200, 200, 690]);
   assert.match(copy.boostText, /Every 1,000 views a reel gets after 10,000 adds ₹49 on top of its ₹200/);
 });
+
+test("payoutBasisPreview estimates switching a plan reel to plain CPM and back", async () => {
+  const { payoutBasisPreview, postPayoutTerms, readPayoutBasis } = await import("../../lib/payoutPlans");
+  const planTerms = { ...switchPlan, planName: "Premium", started: true };
+  // 338 views, ₹200 base credited for its first 12 views.
+  const reel = { views: 338, walletCredit: { creditedINR: 200, consumedViews: 12 } };
+  const toCpm = payoutBasisPreview(reel, planTerms, 49)!;
+  assert.equal(toCpm.to, "cpm");
+  assert.equal(toCpm.nowINR, 200);
+  assert.equal(toCpm.afterINR, 16.56);
+  assert.equal(toCpm.walletChangeINR, -199.41);
+  assert.equal(toCpm.plan.baseINR, 200);
+
+  // A lowered CPM below the gig rate stays; one at or above it is cleared.
+  const kept = payoutBasisPreview({ ...reel, cpmAdjustment: { rateINR: 20, reasons: [], afterViews: 0 } }, { ...planTerms, rateINR: 20, standardRateINR: 49, cpmAdjusted: true, cpmAfterViews: 0 }, 49)!;
+  assert.equal(kept.target.rateINR, 20);
+  assert.equal(kept.clearsCpmINR, undefined);
+  const cleared = payoutBasisPreview({ ...reel, cpmAdjustment: { rateINR: 45, reasons: [], afterViews: 0 } }, { ...planTerms, rateINR: 45, standardRateINR: 60, cpmAdjusted: true, cpmAfterViews: 0 }, 40)!;
+  assert.equal(cleared.clearsCpmINR, 45);
+  assert.equal(cleared.target.rateINR, 40);
+
+  // A switched reel previews going back to the plan it had, base included.
+  const payoutBasis = readPayoutBasis({ payout_basis: "cpm", payout_basis_plan: switchPlan, payout_basis_at: "2026-11-17T09:00:00Z" })!;
+  const switched = { ...reel, walletCredit: { creditedINR: 0.59, consumedViews: 12 }, payoutBasis };
+  const back = payoutBasisPreview(switched, { mode: "cpm", rateINR: 49, baseINR: 0, thresholdViews: 0, started: true }, 49)!;
+  assert.equal(back.to, "plan");
+  assert.equal(back.afterINR, 200);
+  assert.equal(back.walletChangeINR, 199.41);
+
+  // An unstarted switched reel never takes the account plan, and plain CPM reels can't be switched.
+  assert.equal(postPayoutTerms({ postedAt: "2026-11-01T00:00:00Z", payoutBasis }, plan, 49).mode, "cpm");
+  assert.equal(payoutBasisPreview({ views: 100 }, { mode: "cpm", rateINR: 49, baseINR: 0, thresholdViews: 0 }, 49), undefined);
+  // Nothing credited yet: the wallet doesn't move.
+  assert.equal(payoutBasisPreview({ views: 100 }, { ...switchPlan, started: false }, 49)!.walletChangeINR, 0);
+});

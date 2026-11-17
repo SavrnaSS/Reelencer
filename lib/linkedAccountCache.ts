@@ -1,5 +1,5 @@
 import type { LinkedSocialAccount } from "./socialAnalytics";
-import { readAccountPayoutPlan } from "./payoutPlans";
+import { readAccountPayoutPlan, readPayoutBasis } from "./payoutPlans";
 import { readCpmAdjustment } from "./cpmAdjustments";
 import { readProfileHealth } from "./accountProfileHealth";
 import { readSocialAccountWalletCredits, readSocialPostWalletCredit } from "./socialWallet";
@@ -52,7 +52,7 @@ export function linkedAccountsData(value: unknown): LinkedAccountsData {
         }),
         posts: account.posts.map(post => {
           if (!record(post)) throw new Error("Invalid account post.");
-          return { ...pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "viewsPinned", "syncedViews", "syncedViewsAt", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason", "removedSilently"]), ...(post.walletCredit !== undefined ? { walletCredit: readSocialPostWalletCredit(post.walletCredit) } : {}), ...(readCpmAdjustment(post.cpmAdjustment) ? { cpmAdjustment: readCpmAdjustment(post.cpmAdjustment) } : {}) };
+          return { ...pick(post, ["id", "url", "caption", "postedAt", ...postMetrics, "viewsCapturedAt", "viewsSource", "viewsPinned", "syncedViews", "syncedViewsAt", "updatedAt", "status", "submittedByWorker", "reviewNote", "reviewedAt", "createdAt", "source", "removedAt", "removalReason", "removedSilently"]), ...(post.walletCredit !== undefined ? { walletCredit: readSocialPostWalletCredit(post.walletCredit) } : {}), ...(readCpmAdjustment(post.cpmAdjustment) ? { cpmAdjustment: readCpmAdjustment(post.cpmAdjustment) } : {}), ...(readPayoutBasis(post.payoutBasis) ? { payoutBasis: readPayoutBasis(post.payoutBasis) } : {}) };
         }),
       };
     }),

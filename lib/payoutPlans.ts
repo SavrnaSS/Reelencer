@@ -42,6 +42,73 @@ export function applyCpmAdjustment(terms: PayoutTerms, adjustment: CpmAdjustment
   return { ...terms, rateINR: adjustment.rateINR, standardRateINR, cpmAdjusted: true, cpmAfterViews: Math.max(0, Math.trunc(adjustment.afterViews || 0)) };
 }
 
+/**
+ * The team moved this reel off the creator's base-pay plan: it earns the gig's plain CPM from its first view, with no
+ * base. `plan` is the plan terms it had, restored if the team switches it back
+ * (202611170001_reel_payout_basis_switch.sql).
+ */
+export type PayoutBasisSwitch = { basis: "cpm"; plan: PayoutTerms & { mode: PayoutPlanMode }; at?: string };
+
+/** Reads a switch from a database row (`payout_basis`…) or its API form; anything malformed is treated as absent. */
+export function readPayoutBasis(value: unknown): PayoutBasisSwitch | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if ((row.payout_basis ?? row.basis) !== "cpm") return undefined;
+  const plan = readPayoutTerms(row.payout_basis_plan ?? row.plan);
+  if (!plan || plan.mode === "cpm") return undefined;
+  const at = row.payout_basis_at ?? row.at;
+  const { started: _started, ...terms } = plan;
+  void _started;
+  return { basis: "cpm", plan: { ...terms, mode: plan.mode }, ...(typeof at === "string" && Number.isFinite(Date.parse(at)) ? { at } : {}) };
+}
+
+/** What switching a reel's pay basis would do, estimated the way the database reprices it. */
+export type PayoutBasisPreview = {
+  /** The basis the switch moves the reel to. */
+  to: "cpm" | "plan";
+  /** The terms the reel would earn under after the switch (a kept lowered CPM included). */
+  target: PayoutTerms;
+  /** The base-pay plan involved: the reel's current plan, or the one a switched reel would go back to. */
+  plan: PayoutTerms & { mode: PayoutPlanMode };
+  nowINR: number;
+  afterINR: number;
+  /** Estimated change to money already credited for the reel (negative is taken back). */
+  walletChangeINR: number;
+  /** A lowered CPM that's no longer below the new standard rate is cleared by the switch. */
+  clearsCpmINR?: number;
+};
+
+/**
+ * Previews moving one reel between its base-pay plan and the gig's plain CPM (202611170001_reel_payout_basis_switch.sql):
+ * the whole reel is repriced from its first view, credited money included. Undefined when the reel can't be switched.
+ */
+export function payoutBasisPreview(
+  post: { views?: number; walletCredit?: { creditedINR: number; consumedViews: number }; cpmAdjustment?: CpmAdjustment; payoutBasis?: PayoutBasisSwitch },
+  terms: PayoutTerms,
+  gigRate: number,
+): PayoutBasisPreview | undefined {
+  if (!(gigRate > 0)) return undefined;
+  const plan = post.payoutBasis ? post.payoutBasis.plan : terms.mode !== "cpm" ? { mode: terms.mode as PayoutPlanMode, rateINR: terms.standardRateINR ?? terms.rateINR, baseINR: terms.baseINR, thresholdViews: terms.thresholdViews, ...(terms.planId ? { planId: terms.planId } : {}), ...(terms.planName ? { planName: terms.planName } : {}) } : undefined;
+  if (!plan) return undefined;
+  const to = post.payoutBasis ? "plan" : "cpm";
+  const standard: PayoutTerms = to === "cpm" ? { mode: "cpm", rateINR: gigRate, baseINR: 0, thresholdViews: 0, started: terms.started } : { ...plan, started: terms.started };
+  const adjustment = post.cpmAdjustment;
+  const keeps = !!adjustment && adjustment.rateINR > 0 && adjustment.rateINR < standard.rateINR;
+  const target = keeps ? applyCpmAdjustment(standard, adjustment) : standard;
+  const views = Number.isSafeInteger(post.views) && post.views! >= 0 ? post.views! : 0;
+  const credit = post.walletCredit;
+  // A reel with frozen intervals (or money credited) is repriced from what it consumed; others have nothing credited.
+  const credited = !!credit && (credit.creditedINR > 0 || !!terms.started);
+  const walletChangeINR = credited ? Math.round(Number(cumulativePaise(credit!.consumedViews, target)) - credit!.creditedINR * 100) / 100 : 0;
+  return {
+    to, target, plan,
+    nowINR: Number(cumulativePaise(views, terms)) / 100,
+    afterINR: Number(cumulativePaise(views, target)) / 100,
+    walletChangeINR,
+    ...(adjustment && !keeps ? { clearsCpmINR: adjustment.rateINR } : {}),
+  };
+}
+
 /** A creator's current plan on one linked account, for reels that haven't started earning. */
 export type AccountPayoutPlan = PayoutTerms & { mode: PayoutPlanMode; appliesFrom: string };
 
@@ -215,8 +282,9 @@ export function readAccountPayoutPlan(value: unknown): AccountPayoutPlan | undef
  * The terms a reel earns under on the creator's side: the read model's frozen terms when present, plain pay for
  * other reels the wallet already knows, and otherwise the account's current plan if the reel falls in its window.
  */
-export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment }, plan: AccountPayoutPlan | undefined, gigRate: number): PayoutTerms {
-  const terms = post.walletCredit ? post.walletCredit.payoutTerms ?? termsForReel(undefined, gigRate) : termsForReel(plan, gigRate, post.postedAt);
+export function postPayoutTerms(post: { postedAt?: string; walletCredit?: { payoutTerms?: PayoutTerms }; cpmAdjustment?: CpmAdjustment; payoutBasis?: PayoutBasisSwitch }, plan: AccountPayoutPlan | undefined, gigRate: number): PayoutTerms {
+  // A reel the team switched to CPM never takes the plan, even before the wallet read model knows about it.
+  const terms = post.walletCredit ? post.walletCredit.payoutTerms ?? termsForReel(undefined, gigRate) : termsForReel(post.payoutBasis ? undefined : plan, gigRate, post.postedAt);
   return applyCpmAdjustment(terms, post.cpmAdjustment);
 }
 

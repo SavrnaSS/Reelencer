@@ -61,6 +61,8 @@ export function databaseError(error: { code?: string; message?: string } | null)
       cpm_after_views_invalid: [400, "Enter the view count the lower CPM starts after (0 for every view)."],
       cpm_note_too_long: [400, "Keep the note to the creator under 300 characters."],
       reel_before_link: [409, "This reel went live before the account was linked. Only reels posted from the day it was linked can be approved."],
+      payout_basis_not_plan: [409, "This reel is already paid per 1,000 views. Only reels on a base-pay plan can be switched to CPM."],
+      payout_basis_no_plan: [409, "The plan this reel was on is no longer known, so it can't be switched back. Refresh and check the creator's plan."],
     };
     const match = messages[error.message ?? ""];
     if (match) throw new ApiError(match[0], match[1], error.message);

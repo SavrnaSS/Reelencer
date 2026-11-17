@@ -6,6 +6,7 @@ import { compactViews, cumulativePaise, formatINR, type PayoutTerms } from "@/li
 import type { SocialPost } from "@/lib/socialAnalytics";
 import { ICONS, Icon, Spinner, btnGhost, btnPrimary, fieldClass } from "./adminUi";
 import CpmSplitBar from "@/app/_components/CpmSplitBar";
+import ReelPayBasis, { type PayoutBasisWalletResult } from "./ReelPayBasis";
 
 // Admin: lower one reel's CPM (rate per 1K views) from a view count on, with the reasons the creator will see, or
 // restore the standard rate. The database reprices the reel's credited earnings too
@@ -19,7 +20,7 @@ const START_PRESETS = [0, 5_000, 10_000] as const;
 const signed = (amount: number) => `${amount < 0 ? "−" : amount > 0 ? "+" : ""}${formatINR(Math.abs(amount))}`;
 
 /** The chip in a reel row: the reel's current CPM, highlighted when the team lowered it. */
-export function CpmChip({ terms, open, onClick, disabled }: { terms: PayoutTerms; open: boolean; onClick: () => void; disabled?: boolean }) {
+export function CpmChip({ terms, open, onClick, disabled, switched }: { terms: PayoutTerms; open: boolean; onClick: () => void; disabled?: boolean; switched?: boolean }) {
   const standard = terms.standardRateINR ?? terms.rateINR;
   const adjusted = !!terms.cpmAdjusted && standard > terms.rateINR;
   const drop = adjusted ? Math.round((1 - terms.rateINR / standard) * 100) : 0;
@@ -30,7 +31,7 @@ export function CpmChip({ terms, open, onClick, disabled }: { terms: PayoutTerms
       onClick={onClick}
       disabled={disabled}
       aria-expanded={open}
-      title={adjusted ? `CPM lowered from ${formatINR(standard)} to ${formatINR(terms.rateINR)} per 1K views${after ? ` after ${after.toLocaleString("en-IN")} views` : ""}. Click to change.` : `Standard CPM ${formatINR(standard)} per 1K views. Click to lower it for this reel.`}
+      title={switched ? `Switched off the base-pay plan: plain CPM ${formatINR(standard)} per 1K views. Click to change.` : terms.mode !== "cpm" && !adjusted ? `Base-pay plan: ${formatINR(terms.baseINR)} base up to ${compactViews(terms.thresholdViews)} views. Click to switch to CPM or lower the rate.` : adjusted ? `CPM lowered from ${formatINR(standard)} to ${formatINR(terms.rateINR)} per 1K views${after ? ` after ${after.toLocaleString("en-IN")} views` : ""}. Click to change.` : `Standard CPM ${formatINR(standard)} per 1K views. Click to lower it for this reel.`}
       className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-[999px] border px-2 text-[11.5px] font-semibold tabular-nums transition disabled:opacity-50 ${
         adjusted ? "border-[#f3c9a8] bg-[#fff4ea] text-[#9a3f0b] hover:bg-[#ffe9d6]" : open ? "border-[#1f2b24] bg-[#1f2b24] text-white" : "border-[#d9ddd8] bg-white text-[#3b443e] hover:bg-[#f5f6f4]"
       }`}
@@ -42,15 +43,22 @@ export function CpmChip({ terms, open, onClick, disabled }: { terms: PayoutTerms
           {after ? <span className="font-medium opacity-75">after {compactViews(after)}</span> : <span className="font-medium opacity-75">−{drop}%</span>}
         </>
       ) : (
-        <>CPM {formatINR(standard)}/1K</>
+        <>
+          {terms.mode !== "cpm" ? <>{formatINR(terms.baseINR)} base · {formatINR(standard)}/1K</> : <>CPM {formatINR(standard)}/1K</>}
+          {switched ? <span className={`rounded-[999px] px-1 text-[9.5px] font-bold uppercase tracking-wide ${open ? "bg-white/20" : "bg-[#eef3fb] text-[#1f5fa8]"}`}>no base</span> : null}
+        </>
       )}
     </button>
   );
 }
 
-export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
+export default function ReelCpmEditor({ post, terms, gigRate, onSave, onSwitchBasis, onClose }: {
   post: SocialPost;
   terms: PayoutTerms;
+  /** The gig's plain rate per 1K views: what a reel switched off the base-pay plan earns. */
+  gigRate?: number;
+  /** Moves the reel between the creator's base-pay plan and plain CPM (shown for plan reels and switched ones). */
+  onSwitchBasis?: (basis: "cpm" | "plan", reason?: string) => Promise<{ ok: true; wallet?: PayoutBasisWalletResult } | { error: string }>;
   onSave: (input: CpmInput) => Promise<{ ok: true } | { error: string }>;
   onClose: () => void;
 }) {
@@ -125,6 +133,7 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
           <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px] font-medium tabular-nums">
             <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#1a201c] ring-1 ring-[#ece4da]">Full rate {formatINR(standard)}/1K</span>
             {plan ? <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#3b443e] ring-1 ring-[#ece4da]">Plan: {formatINR(terms.baseINR)} base up to {compactViews(terms.thresholdViews)}</span> : null}
+            {post.payoutBasis ? <span className="rounded-[6px] bg-[#eef3fb] px-1.5 py-0.5 text-[#1f5fa8] ring-1 ring-[#d3e1f5]">Plain CPM · plan off</span> : null}
             <span className="rounded-[6px] bg-white px-1.5 py-0.5 text-[#3b443e] ring-1 ring-[#ece4da]">{views.toLocaleString("en-IN")} views</span>
             {current ? <span className="rounded-[6px] bg-[#fff1e6] px-1.5 py-0.5 text-[#9a3f0b] ring-1 ring-[#f6d5bb]">Now {formatINR(current.rateINR)}/1K{current.fromNow ? ` from ${compactViews(current.afterViews)} views` : current.afterViews ? ` after ${compactViews(current.afterViews)}` : ""}</span> : null}
           </div>
@@ -133,6 +142,8 @@ export default function ReelCpmEditor({ post, terms, onSave, onClose }: {
           <Icon d={ICONS.x} className="h-4 w-4" />
         </button>
       </div>
+
+      {onSwitchBasis && gigRate ? <ReelPayBasis post={post} terms={terms} gigRate={gigRate} onSwitch={onSwitchBasis} /> : null}
 
       <div className="grid gap-x-5 gap-y-4 border-t border-[#f3ece4] px-3.5 py-3.5 sm:px-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         {/* Left: rate and when it starts */}

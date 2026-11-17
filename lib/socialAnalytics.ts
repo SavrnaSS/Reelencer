@@ -1,7 +1,7 @@
 import { formatAmount } from "./money";
 import { countedReels } from "./reelTracking";
 import type { SocialAccountWalletCredits, SocialPostWalletCredit } from "./socialWallet";
-import { cumulativePaise, postPayoutTerms, type AccountPayoutPlan, type CpmAdjustment } from "./payoutPlans";
+import { cumulativePaise, postPayoutTerms, type AccountPayoutPlan, type CpmAdjustment, type PayoutBasisSwitch } from "./payoutPlans";
 
 // Linked social accounts (Content Posting gigs): the account a creator made, verified in screening, then linked to
 // their profile. Insights arrive as dated snapshots (recorded by the team from the platform's insights, or synced
@@ -64,6 +64,8 @@ export type SocialPost = {
   walletCredit?: SocialPostWalletCredit;
   /** The team lowered this reel's CPM (rate per 1K views), with the reasons the creator sees. */
   cpmAdjustment?: CpmAdjustment;
+  /** The team switched this reel off the creator's base-pay plan to plain CPM. */
+  payoutBasis?: PayoutBasisSwitch;
 };
 
 /** Per-reel measurements are independent of the last successful profile check. */

@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { reelTracking, trackingStartLabel, type ReelTracking } from "@/lib/reelTracking";
 import { formatCompact, isValidViewPayoutRate, parsePayoutAmount, type LinkedSocialAccount, type SocialPost } from "@/lib/socialAnalytics";
-import { postPayoutTerms } from "@/lib/payoutPlans";
+import { payoutBasisPreview, postPayoutTerms } from "@/lib/payoutPlans";
 import ReelCpmEditor, { CpmChip, type CpmInput, type CpmWalletResult } from "./ReelCpmEditor";
+import type { PayoutBasisWalletResult } from "./ReelPayBasis";
 import { CPM_REASONS, type CpmReason } from "@/lib/cpmAdjustments";
 import { BulkBar, ConfirmDialog, ICONS, Icon, SelectAllCheckbox, Spinner, StatusChip, btnBase, btnGhost, btnIcon, btnPrimary, bulkBtn, fieldClass, formatDate, formatRelative, runPool, usePersistedState, type BulkProgress } from "./adminUi";
 
@@ -47,6 +48,7 @@ export default function ReelList({
   onRestore,
   onResumeViews,
   onSetCpm,
+  onSetPayoutBasis,
 }: {
   account: LinkedSocialAccount;
   now: number;
@@ -60,6 +62,8 @@ export default function ReelList({
   onResumeViews: (post: SocialPost) => Promise<{ ok: true } | Failure>;
   /** Lowers a reel's CPM (rate per 1K views), or restores the standard rate with `rateINR: null`. */
   onSetCpm?: (post: SocialPost, input: CpmInput) => Promise<{ ok: true; wallet?: CpmWalletResult } | Failure>;
+  /** Moves a reel off the creator's base-pay plan onto plain CPM from its first view (`cpm`), or back (`plan`). */
+  onSetPayoutBasis?: (post: SocialPost, basis: "cpm" | "plan", reason?: string) => Promise<{ ok: true; wallet?: PayoutBasisWalletResult } | Failure>;
 }) {
   const [status, setStatus] = useState<StatusView>("tracked");
   const [source, setSource] = useState<SourceView>("all");
@@ -81,6 +85,7 @@ export default function ReelList({
   const [mode, setMode] = usePersistedState<RemovalMode>("reelencer.reelRemovalMode", "notify", ["notify", "silent"]);
 
   const [cpmOpen, setCpmOpen] = useState<string | null>(null);
+  const [basisBulk, setBasisBulk] = useState<{ basis: "cpm" | "plan"; posts: SocialPost[]; reason: string; busy: boolean; error: string | null } | null>(null);
   // Per-1K-views gigs only: each reel's CPM, after any adjustment the team made.
   const gigRate = String(account.payoutType ?? "").trim().toLowerCase() === "per 1k views" && isValidViewPayoutRate(account.payout) ? parsePayoutAmount(account.payout)?.amount : undefined;
   const termsOf = (post: SocialPost) => (gigRate ? postPayoutTerms(post, account.payoutPlan, gigRate) : undefined);
@@ -263,6 +268,62 @@ export default function ReelList({
     setNotice({
       text: [restored ? `${restored === 1 ? "Reel" : `${restored} reels`} restored to To review, so ${restored === 1 ? "it's" : "they're"} checked again before counting.` : "", failed.length ? `${plural(failed.length, "reel")} couldn't be restored: ${failed[0].error}` : ""].filter(Boolean).join(" "),
       tone: failed.length ? "warn" : "ok",
+    });
+  };
+
+  const rupee = (amount: number) => `₹${Math.abs(amount).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  const basisWalletText = (change: number, lost: number, cleared: number) =>
+    (change ? ` Wallet ${change > 0 ? "credited" : "reduced by"} ${rupee(change)}.` : " The wallet didn't change.")
+    + (lost > 0 ? ` ${rupee(lost)} was already withdrawn and couldn't be taken back.` : "")
+    + (cleared ? ` ${plural(cleared, "lowered CPM")} no longer below the new rate ${cleared === 1 ? "was" : "were"} cleared.` : "");
+
+  /** Moves one reel between the creator's base-pay plan and plain CPM, reporting what it did to the wallet. */
+  const switchBasis = async (post: SocialPost, basis: "cpm" | "plan", reason?: string, quiet = false): Promise<{ ok: true; wallet?: PayoutBasisWalletResult } | Failure> => {
+    if (!onSetPayoutBasis) return { error: "Switching pay basis isn't available here." };
+    setWorking((current) => new Set(current).add(post.id));
+    const result = await onSetPayoutBasis(post, basis, reason);
+    setWorking((current) => { const next = new Set(current); next.delete(post.id); return next; });
+    if (!quiet && !("error" in result)) {
+      const wallet = result.wallet;
+      setNotice({
+        text: (basis === "cpm" ? "Reel switched to plain CPM from its first view; the plan's base no longer applies." : "Reel back on the creator's base-pay plan, base included.")
+          + basisWalletText(wallet?.walletChangeINR ?? 0, wallet?.unrecoveredINR ?? 0, wallet?.clearedCpmINR ? 1 : 0),
+        tone: wallet && wallet.unrecoveredINR > 0 ? "warn" : "ok",
+      });
+    }
+    return result;
+  };
+
+  // Selected reels the bulk bar can switch: plan reels to CPM, switched reels back to their plan.
+  const basisEligible = (post: SocialPost, removedRow: boolean, tracking: ReelTracking) => !!onSetPayoutBasis && !!gigRate && !removedRow && tracking !== "before_link" && post.status !== "rejected";
+  const selectedToCpm = visible.filter((row) => selected.has(row.post.id) && basisEligible(row.post, row.removed, row.tracking) && !row.post.payoutBasis && termsOf(row.post)?.mode !== "cpm").map((row) => row.post);
+  const selectedToPlan = visible.filter((row) => selected.has(row.post.id) && basisEligible(row.post, row.removed, row.tracking) && row.post.payoutBasis).map((row) => row.post);
+  const basisEstimate = (posts: SocialPost[]) => posts.reduce((total, post) => {
+    const terms = termsOf(post);
+    const preview = terms && gigRate ? payoutBasisPreview(post, terms, gigRate) : undefined;
+    return { change: total.change + (preview?.walletChangeINR ?? 0), now: total.now + (preview?.nowINR ?? 0), after: total.after + (preview?.afterINR ?? 0) };
+  }, { change: 0, now: 0, after: 0 });
+
+  const confirmBasisBulk = async () => {
+    if (!basisBulk) return;
+    const { basis, posts, reason } = basisBulk;
+    setBasisBulk({ ...basisBulk, busy: true, error: null });
+    setProgress({ label: basis === "cpm" ? "Switching reels to CPM" : "Restoring base-pay plan", done: 0, total: posts.length });
+    const results = await runPool(posts, 2, (post) => switchBasis(post, basis, reason.trim() || undefined, true), (done) => setProgress((current) => (current ? { ...current, done } : current)));
+    setProgress(null);
+    const failed = results.filter((result): result is Failure => "error" in result);
+    const ok = results.filter((result): result is { ok: true; wallet?: PayoutBasisWalletResult } => !("error" in result));
+    if (!ok.length) return setBasisBulk((current) => (current ? { ...current, busy: false, error: failed[0]?.error ?? "The reels couldn't be switched." } : current));
+    setBasisBulk(null);
+    setSelected(new Set(posts.filter((_, index) => "error" in results[index]).map((post) => post.id)));
+    const change = Math.round(ok.reduce((total, result) => total + (result.wallet?.walletChangeINR ?? 0), 0) * 100) / 100;
+    const lost = Math.round(ok.reduce((total, result) => total + (result.wallet?.unrecoveredINR ?? 0), 0) * 100) / 100;
+    const cleared = ok.filter((result) => result.wallet?.clearedCpmINR).length;
+    setNotice({
+      text: (basis === "cpm" ? `${plural(ok.length, "reel")} switched to plain CPM from the first view.` : `${plural(ok.length, "reel")} back on the base-pay plan.`)
+        + basisWalletText(change, lost, cleared)
+        + (failed.length ? ` ${plural(failed.length, "reel")} couldn't be switched (still selected): ${failed[0].error}` : ""),
+      tone: failed.length || lost > 0 ? "warn" : "ok",
     });
   };
 
@@ -510,7 +571,7 @@ export default function ReelList({
                 </div>
                 {(() => {
                   const terms = termsOf(post);
-                  return terms && onSetCpm && !before && shownStatus !== "rejected" ? <CpmChip terms={terms} open={cpmOpen === post.id} disabled={busy || !!progress} onClick={() => setCpmOpen((open) => (open === post.id ? null : post.id))} /> : null;
+                  return terms && onSetCpm && !before && shownStatus !== "rejected" ? <CpmChip terms={terms} switched={!!post.payoutBasis} open={cpmOpen === post.id} disabled={busy || !!progress} onClick={() => setCpmOpen((open) => (open === post.id ? null : post.id))} /> : null;
                 })()}
                 {shownStatus === "submitted" && !before ? (
                   <div className="flex w-full gap-1.5 sm:w-auto">
@@ -541,6 +602,8 @@ export default function ReelList({
                   <ReelCpmEditor
                     post={post}
                     terms={termsOf(post)!}
+                    gigRate={gigRate}
+                    onSwitchBasis={onSetPayoutBasis ? (basis, reason) => switchBasis(post, basis, reason) : undefined}
                     onClose={() => setCpmOpen(null)}
                     onSave={async (input) => {
                       setWorking((current) => new Set(current).add(post.id));
@@ -744,6 +807,20 @@ export default function ReelList({
                 Approve {selectedApprovable.length}
               </button>
             ) : null}
+            {selectedToCpm.length ? (
+              <button type="button" className={bulkBtn.ghost} onClick={() => setBasisBulk({ basis: "cpm", posts: selectedToCpm, reason: "", busy: false, error: null })} title="Pay these reels at the gig's plain CPM from their first view, without the plan's base">
+                <Icon d={ICONS.refresh} className="h-4 w-4" />
+                <span className="sm:hidden">CPM {selectedToCpm.length}</span>
+                <span className="hidden sm:inline">Switch {selectedToCpm.length} to CPM</span>
+              </button>
+            ) : null}
+            {selectedToPlan.length ? (
+              <button type="button" className={bulkBtn.ghost} onClick={() => setBasisBulk({ basis: "plan", posts: selectedToPlan, reason: "", busy: false, error: null })} title="Put these reels back on the creator's base-pay plan">
+                <Icon d={ICONS.undo} className="h-4 w-4" />
+                <span className="sm:hidden">Plan {selectedToPlan.length}</span>
+                <span className="hidden sm:inline">Back to plan {selectedToPlan.length}</span>
+              </button>
+            ) : null}
             <button type="button" className={bulkBtn.danger} onClick={() => startRemove(selectedPosts)}>
               <Icon d={ICONS.trash} className="h-4 w-4" />
               Remove {selectedPosts.length}
@@ -763,6 +840,38 @@ export default function ReelList({
           onConfirm={() => void approveAll()}
         />
       ) : null}
+
+      {basisBulk ? (() => {
+        const estimate = basisEstimate(basisBulk.posts);
+        const toCpm = basisBulk.basis === "cpm";
+        return (
+          <ConfirmDialog
+            title={toCpm ? `Pay ${plural(basisBulk.posts.length, "reel")} at plain CPM?` : `Put ${plural(basisBulk.posts.length, "reel")} back on the plan?`}
+            body={
+              <>
+                {toCpm
+                  ? `Each reel earns ${gigRate ? `₹${gigRate.toLocaleString("en-IN")}` : "the gig's rate"} per 1K views from its first view, with no base. Money already credited is repriced.`
+                  : "Each reel goes back to the base-pay plan it had, base included. Money already credited is repriced."}
+                <span className="mt-2 block tabular-nums">
+                  At today&apos;s views: {rupee(estimate.now)} → <strong>{rupee(estimate.after)}</strong>.
+                  {estimate.change ? ` Wallet ${estimate.change > 0 ? "gains" : "loses"} about ${rupee(estimate.change)}.` : " The wallet doesn't change."}
+                  {estimate.change < 0 ? " Money already withdrawn can't be taken back." : ""}
+                </span>
+              </>
+            }
+            confirmLabel={toCpm ? `Switch ${basisBulk.posts.length} to CPM` : `Restore ${basisBulk.posts.length}`}
+            tone={toCpm && estimate.change < 0 ? "danger" : "primary"}
+            icon={toCpm ? ICONS.refresh : ICONS.undo}
+            busy={basisBulk.busy}
+            onCancel={() => setBasisBulk(null)}
+            onConfirm={() => void confirmBasisBulk()}
+          >
+            <input value={basisBulk.reason} maxLength={300} disabled={basisBulk.busy} onChange={(e) => setBasisBulk((current) => (current ? { ...current, reason: e.target.value } : current))}
+              placeholder="Reason for the record (optional, not shown to the creator)" aria-label="Reason for switching pay basis" className={`${fieldClass} mt-3 h-9 w-full`} />
+            {basisBulk.error ? <p role="alert" className="mt-2 text-[12px] text-[#b42318]">{basisBulk.error}</p> : null}
+          </ConfirmDialog>
+        );
+      })() : null}
     </div>
   );
 }

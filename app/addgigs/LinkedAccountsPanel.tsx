@@ -664,6 +664,12 @@ function AccountDetail({
                 replacePost(outcome.post);
                 return { ok: true as const, wallet: outcome.wallet };
               }}
+              onSetPayoutBasis={async (post, basis, reason) => {
+                const outcome = await reelAction<{ post: SocialPost; wallet?: { walletChangeINR: number; unrecoveredINR: number; clearedCpmINR?: number } }>(post.id, { action: "set_payout_basis", id: post.id, basis, reason });
+                if ("error" in outcome) return outcome;
+                replacePost(outcome.post);
+                return { ok: true as const, wallet: outcome.wallet };
+              }}
               onResumeViews={async (post) => {
                 const outcome = await reelAction<{ post: SocialPost }>(post.id, { action: "resume_views", id: post.id });
                 if ("error" in outcome) return outcome;
